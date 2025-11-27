@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AgroAmazonia - Sistema de Processamento</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="app-container">
+        <!-- Sidebar -->
+        <aside class="sidebar">
+            <div class="sidebar-header">
+                <h1>🌿 AgroAmazonia</h1>
+                <p>Sistema de Processamento</p>
+            </div>
+            
+            <nav class="sidebar-nav">
+                <a href="#" class="nav-item active" onclick="showPage('dashboard')">
+                    <span class="nav-icon">📊</span>
+                    <span>Dashboard</span>
+                </a>
+                <a href="#" class="nav-item" onclick="showPage('processes')">
+                    <span class="nav-icon">📋</span>
+                    <span>Processos</span>
+                </a>
+                <a href="#" class="nav-item" onclick="showPage('rules')">
+                    <span class="nav-icon">⚙️</span>
+                    <span>Regras</span>
+                </a>
+                <a href="#" class="nav-item" onclick="showPage('settings')">
+                    <span class="nav-icon">🔧</span>
+                    <span>Configurações</span>
+                </a>
+            </nav>
+        </aside>
+
+        <!-- Main Content -->
+        <main class="main-content">
+            <header class="topbar">
+                <h2 id="pageTitle">Dashboard</h2>
+                <div class="topbar-actions">
+                    <button class="btn-icon" onclick="loadProcesses()" title="Atualizar">🔄</button>
+                    <button class="btn-primary" onclick="showCreateModal()">+ Novo Processo</button>
+                </div>
+            </header>
+
+            <div class="content-area">
+                <!-- Dashboard Page -->
+                <div id="dashboardPage" class="page active">
+                    <div class="stats-grid">
+                        <div class="stat-card">
+                            <div class="stat-icon">📋</div>
+                            <div class="stat-info">
+                                <h3 id="totalProcesses">0</h3>
+                                <p>Total de Processos</p>
+                            </div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-icon">⏳</div>
+                            <div class="stat-info">
+                                <h3 id="pendingProcesses">0</h3>
+                                <p>Em Processamento</p>
+                            </div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-icon">✅</div>
+                            <div class="stat-info">
+                                <h3 id="completedProcesses">0</h3>
+                                <p>Concluídos</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="section">
+                        <h3>Processos Recentes</h3>
+                        <div id="recentProcesses" class="table-container"></div>
+                    </div>
+                </div>
+
+                <!-- Processes Page -->
+                <div id="processesPage" class="page">
+                    <div id="processesList" class="processes-grid"></div>
+                    <div id="processDetails" class="process-details" style="display: none;">
+                        <div class="details-header">
+                            <button class="btn-back" onclick="deselectProcess()">← Voltar</button>
+                            <div class="details-title">
+                                <h3 id="selectedProcessId"></h3>
+                                <span id="selectedProcessStatus" class="status-badge"></span>
+                            </div>
+                        </div>
+                        
+                        <div class="details-grid">
+                            <div class="details-card">
+                                <h4>Informações</h4>
+                                <div class="info-row">
+                                    <span>Tipo:</span>
+                                    <strong id="selectedProcessType"></strong>
+                                </div>
+                            </div>
+
+                            <div class="details-card">
+                                <h4>Upload de Arquivos</h4>
+                                <div class="upload-area">
+                                    <input type="file" id="fileInput" accept=".pdf,.xml" onchange="handleFileSelect()">
+                                    <label for="fileInput" class="upload-label">
+                                        <span class="upload-icon">📁</span>
+                                        <span>Clique ou arraste arquivos</span>
+                                    </label>
+                                </div>
+                                <div id="filesList"></div>
+                            </div>
+
+                            <div class="details-card full-width">
+                                <button onclick="startProcess()" id="startBtn" class="btn-success">
+                                    🚀 Iniciar Processamento
+                                </button>
+                            </div>
+
+                            <div class="details-card full-width">
+                                <h4>Resultados do Processamento</h4>
+                                <div id="textractResults"></div>
+                            </div>
+                        </div>
+                    </div>
+                    </div>
+                </div>
+
+                <!-- Rules Page -->
+                <div id="rulesPage" class="page">
+                    <div class="rules-tabs">
+                        <button class="rule-tab active" onclick="showRules('SEMENTES')">🌱 Sementes</button>
+                        <button class="rule-tab" onclick="showRules('AGROQUIMICOS')">🧪 Agroquímicos</button>
+                        <button class="rule-tab" onclick="showRules('FERTILIZANTES')">🌾 Fertilizantes</button>
+                    </div>
+                    <div id="rulesDisplay" class="rules-content"></div>
+                </div>
+
+                <!-- Settings Page -->
+                <div id="settingsPage" class="page">
+                    <div class="settings-card">
+                        <h3>Configuração da API</h3>
+                        <div class="form-group">
+                            <label>URL da API</label>
+                            <input type="text" id="apiUrl" placeholder="http://localhost:8001">
+                        </div>
+                        <button onclick="saveApiConfig()" class="btn-primary">Salvar Configurações</button>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <!-- Modal -->
+    <div id="createModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>Criar Novo Processo</h2>
+                <span class="modal-close" onclick="closeCreateModal()">&times;</span>
+            </div>
+            <div class="modal-body">
+                <div id="createAlert"></div>
+                <div class="form-group">
+                    <label>Tipo de Processo</label>
+                    <select id="processType" onchange="showRulesPreview()">
+                        <option value="">Selecione...</option>
+                        <option value="SEMENTES">🌱 Sementes</option>
+                        <option value="AGROQUIMICOS">🧪 Agroquímicos</option>
+                        <option value="FERTILIZANTES">🌾 Fertilizantes</option>
+                    </select>
+                </div>
+                <div id="rulesPreview"></div>
+            </div>
+            <div class="modal-footer">
+                <button onclick="closeCreateModal()" class="btn-secondary">Cancelar</button>
+                <button onclick="createProcess()" id="createBtn" class="btn-primary">Criar Processo</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>
