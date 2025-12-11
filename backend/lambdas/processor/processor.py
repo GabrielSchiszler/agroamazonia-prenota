@@ -21,10 +21,14 @@ def handler(event, context):
     logger.info(f"Processing {len(textract_results)} Textract results")
     
     timestamp = int(datetime.now().timestamp())
-    pk = f"PROCESS={process_id}"
+    pk = f"PROCESS#{process_id}"
     
     # Persiste resultados do Textract
     for result in textract_results:
+        if result.get('skipped'):
+            logger.info(f"Skipping XML: {result['file_name']}")
+            continue
+            
         sk = f"TEXTRACT={result['file_name']}"
         
         table.put_item(Item={
@@ -35,6 +39,7 @@ def handler(event, context):
             'JOB_ID': result['job_id'],
             'TABLE_COUNT': len(result.get('tables', [])),
             'TABLES_DATA': json.dumps(result.get('tables', [])),
+            'RAW_TEXT': result.get('raw_text', ''),
             'TIMESTAMP': timestamp
         })
         
@@ -47,9 +52,9 @@ def handler(event, context):
     )['Items']
     
     for item in items:
-        if 'METADATA=' in item['SK']:
+        if item['SK'] == 'METADATA':
             table.update_item(
-                Key={'PK': pk, 'SK': item['SK']},
+                Key={'PK': pk, 'SK': 'METADATA'},
                 UpdateExpression='SET #status = :status',
                 ExpressionAttributeNames={'#status': 'STATUS'},
                 ExpressionAttributeValues={':status': 'COMPLETED'}
@@ -59,6 +64,7 @@ def handler(event, context):
     
     result = {
         'process_id': process_id,
+        'process_type': process_type,
         'status': 'COMPLETED',
         'results_count': len(textract_results),
         'timestamp': timestamp

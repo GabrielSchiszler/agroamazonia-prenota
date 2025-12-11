@@ -40,7 +40,6 @@
             <header class="topbar">
                 <h2 id="pageTitle">Dashboard</h2>
                 <div class="topbar-actions">
-                    <button class="btn-icon" onclick="loadProcesses()" title="Atualizar">🔄</button>
                     <button class="btn-primary" onclick="showCreateModal()">+ Novo Processo</button>
                 </div>
             </header>
@@ -85,14 +84,20 @@
                         <div class="details-header">
                             <button class="btn-back" onclick="deselectProcess()">← Voltar</button>
                             <div class="details-title">
-                                <h3 id="selectedProcessId"></h3>
-                                <span id="selectedProcessStatus" class="status-badge"></span>
+                                <div>
+                                    <h3 id="selectedProcessId"></h3>
+                                    <div id="sctaskInfo"></div>
+                                </div>
+                                <div style="display: flex; gap: 10px; align-items: center;">
+                                    <button class="btn-icon" onclick="refreshProcess()" title="Atualizar processo">🔄</button>
+                                    <span id="selectedProcessStatus" class="status-badge"></span>
+                                </div>
                             </div>
                         </div>
                         
                         <div class="details-grid">
                             <div class="details-card">
-                                <h4>Informações</h4>
+                                <h4>Informações do Processo</h4>
                                 <div class="info-row">
                                     <span>Tipo:</span>
                                     <strong id="selectedProcessType"></strong>
@@ -100,15 +105,29 @@
                             </div>
 
                             <div class="details-card">
-                                <h4>Upload de Arquivos</h4>
+                                <h4>📄 DANFE (Obrigatório)</h4>
+                                <p style="color: #666; font-size: 0.9em; margin-bottom: 10px;">Upload do XML ou PDF da Nota Fiscal</p>
                                 <div class="upload-area">
-                                    <input type="file" id="fileInput" accept=".pdf,.xml" onchange="handleFileSelect()">
-                                    <label for="fileInput" class="upload-label">
-                                        <span class="upload-icon">📁</span>
-                                        <span>Clique ou arraste arquivos</span>
+                                    <input type="file" id="danfeInput" accept=".pdf,.xml" onchange="handleDanfeSelect()">
+                                    <label for="danfeInput" class="upload-label">
+                                        <span class="upload-icon">📋</span>
+                                        <span>Upload DANFE (XML)</span>
                                     </label>
                                 </div>
-                                <div id="filesList"></div>
+                                <div id="danfeList"></div>
+                            </div>
+
+                            <div class="details-card">
+                                <h4>📎 Documentos Adicionais</h4>
+                                <p style="color: #666; font-size: 0.9em; margin-bottom: 10px;">Pedidos de compra e outros documentos</p>
+                                <div class="upload-area">
+                                    <input type="file" id="docsInput" accept=".pdf" multiple onchange="handleDocsSelect()">
+                                    <label for="docsInput" class="upload-label">
+                                        <span class="upload-icon">📁</span>
+                                        <span>Upload Documentos</span>
+                                    </label>
+                                </div>
+                                <div id="docsList"></div>
                             </div>
 
                             <div class="details-card full-width">
@@ -118,7 +137,12 @@
                             </div>
 
                             <div class="details-card full-width">
-                                <h4>Resultados do Processamento</h4>
+                                <h4>📊 Dados Extraídos (JSON)</h4>
+                                <div id="extractedData"></div>
+                            </div>
+
+                            <div class="details-card full-width">
+                                <h4>✅ Resultados das Validações</h4>
                                 <div id="textractResults"></div>
                             </div>
                         </div>
@@ -128,12 +152,48 @@
 
                 <!-- Rules Page -->
                 <div id="rulesPage" class="page">
-                    <div class="rules-tabs">
-                        <button class="rule-tab active" onclick="showRules('SEMENTES')">🌱 Sementes</button>
-                        <button class="rule-tab" onclick="showRules('AGROQUIMICOS')">🧪 Agroquímicos</button>
-                        <button class="rule-tab" onclick="showRules('FERTILIZANTES')">🌾 Fertilizantes</button>
+                    <div class="rules-header">
+                        <div class="rules-tabs">
+                            <button class="rule-tab active" onclick="showRules('SEMENTES')">🌱 Sementes</button>
+                            <button class="rule-tab" onclick="showRules('AGROQUIMICOS')">🧪 Agroquímicos</button>
+                            <button class="rule-tab" onclick="showRules('FERTILIZANTES')">🌾 Fertilizantes</button>
+                        </div>
                     </div>
                     <div id="rulesDisplay" class="rules-content"></div>
+                </div>
+
+                <!-- Add Rule Modal -->
+                <div id="addRuleModal" class="modal">
+                    <div class="modal-content">
+                        <div class="modal-header">
+                            <h2>Adicionar Regra</h2>
+                            <span class="modal-close" onclick="closeAddRuleModal()">&times;</span>
+                        </div>
+                        <div class="modal-body">
+                            <div class="form-group">
+                                <label>Tipo de Processo</label>
+                                <input type="text" id="ruleProcessType" readonly>
+                            </div>
+                            <div class="form-group">
+                                <label>Regra</label>
+                                <select id="ruleSelect">
+                                    <option value="">Selecione...</option>
+                                    <option value="validar_numero_nota">Validar Número da Nota</option>
+                                    <option value="validar_serie">Validar Série</option>
+                                    <option value="validar_data_emissao">Validar Data de Emissão</option>
+                                    <option value="validar_cnpj_fornecedor">Validar CNPJ Fornecedor</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label>Ordem de Execução</label>
+                                <input type="number" id="ruleOrder" value="1" min="1">
+                            </div>
+                        </div>
+                        <div class="modal-footer">
+                            <button onclick="closeAddRuleModal()" class="btn-secondary">Cancelar</button>
+                            <button onclick="addRule()" class="btn-primary">Adicionar</button>
+                        </div>
+                    </div>
                 </div>
 
                 <!-- Settings Page -->
@@ -144,7 +204,21 @@
                             <label>URL da API</label>
                             <input type="text" id="apiUrl" placeholder="http://localhost:8001">
                         </div>
+                        <div class="form-group">
+                            <label>API Key</label>
+                            <input type="password" id="apiKey" placeholder="agroamazonia_key_...">
+                            <small style="color: #666; display: block; margin-top: 5px;">Exemplo: agroamazonia_key_UPXsb8Hb8sjbxWBQqouzYnTL5w-V_dJx</small>
+                        </div>
                         <button onclick="saveApiConfig()" class="btn-primary">Salvar Configurações</button>
+                    </div>
+                    
+                    <div class="settings-card" style="margin-top: 20px;">
+                        <h3>Como usar a API</h3>
+                        <p style="color: #666; margin-bottom: 15px;">Exemplo de requisição com cURL:</p>
+                        <div style="background: #f5f5f5; padding: 15px; border-radius: 8px; font-family: monospace; font-size: 0.9em; overflow-x: auto;">
+                            <code>curl -H 'x-api-key: agroamazonia_key_UPXsb8Hb8sjbxWBQqouzYnTL5w-V_dJx' \<br>
+     https://your-api.com/v1/process/presigned-url/xml</code>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -178,6 +252,13 @@
         </div>
     </div>
 
+    <script>
+        // Limpar localStorage antigo e forçar novos valores
+        localStorage.removeItem('apiUrl');
+        localStorage.removeItem('apiKey');
+    </script>
+    <script src="config.js"></script>
+    <script src="validation-renderer.js"></script>
     <script src="app.js"></script>
 </body>
 </html>

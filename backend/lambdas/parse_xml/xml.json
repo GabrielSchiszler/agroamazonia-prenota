@@ -1,0 +1,68 @@
+{
+    "process_id": "af4c14ca-5c5f-425e-8b08-a80d8d0d6d8d",
+    "process_type": "AGROQUIMICOS",
+    "parsed_data": {
+        "numero_nota": "275251",
+        "serie": "0",
+        "data_emissao": "2025-10-17T17:27:00-03:00",
+        "natureza_operacao": "RETORNO MERC DEPOS FECH ARM GERAL",
+        "emitente": {
+            "cnpj": "01759112000940",
+            "nome": "BRAVO ARMAZENS GERAIS LTDA",
+            "ie": "134013476"
+        },
+        "destinatario": {
+            "cnpj": "13563680001094",
+            "nome": "AGRO AMAZONIA PRODUTOS AGROPECUAIOS S.A",
+            "ie": "131790749"
+        },
+        "produtos": [
+            {
+                "item": "1",
+                "codigo": "AG5010464",
+                "descricao": "CLINCHER BTLCOX20L BRA",
+                "ncm": "38089329",
+                "cfop": "5906",
+                "unidade": "LT",
+                "quantidade": "940.0000",
+                "valor_unitario": "157.7000000000",
+                "valor_total": "148238.00",
+                "lote": "25D2887L32",
+                "data_fabricacao": "2025-04-21",
+                "data_validade": "2027-04-21",
+                "icms": {
+                    "cst": "41",
+                    "base_calculo": null,
+                    "aliquota": null,
+                    "valor": null
+                }
+            },
+            {
+                "item": "2",
+                "codigo": "AG5651364",
+                "descricao": "BIMMAX BTLHPE4X5L BRA",
+                "ncm": "38089299",
+                "cfop": "5906",
+                "unidade": "LT",
+                "quantidade": "3200.0000",
+                "valor_unitario": "115.6200000000",
+                "valor_total": "369984.00",
+                "lote": "25E2887O12",
+                "data_fabricacao": "2025-05-25",
+                "data_validade": "2028-05-24",
+                "icms": {
+                    "cst": "41",
+                    "base_calculo": null,
+                    "aliquota": null,
+                    "valor": null
+                }
+            }
+        ],
+        "totais": {
+            "valor_produtos": "518222.00",
+            "valor_icms": "0.00",
+            "valor_nota": "518222.00"
+        }
+    },
+    "source": "XML"
+}

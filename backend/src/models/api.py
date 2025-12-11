@@ -1,34 +1,156 @@
 from pydantic import BaseModel, Field
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any, List, Literal
+from enum import Enum
 
-class ProcessCreateRequest(BaseModel):
-    process_type: str = Field(..., description="SEMENTES, AGROQUIMICOS, FERTILIZANTES")
+class DocType(str, Enum):
+    DANFE = "DANFE"
+    ADDITIONAL = "ADDITIONAL"
 
-class ProcessCreateResponse(BaseModel):
-    process_id: str
-    process_type: str
-    status: str
+class ProcessType(str, Enum):
+    SEMENTES = "SEMENTES"
+    AGROQUIMICOS = "AGROQUIMICOS"
+    FERTILIZANTES = "FERTILIZANTES"
 
 class PresignedUrlRequest(BaseModel):
-    process_id: str
-    file_name: str
-    file_type: str
+    process_id: str = Field(..., description="ID do processo")
+    file_name: str = Field(..., description="Nome do arquivo")
+    file_type: str = Field(..., description="Content-Type do arquivo", example="application/pdf")
+    
+class XmlPresignedUrlRequest(BaseModel):
+    process_id: str = Field(..., description="ID do processo (UUID gerado pelo frontend)")
+    file_name: str = Field(..., description="Nome do arquivo XML")
+    file_type: str = Field(default="application/xml", description="Content-Type do arquivo")
+    
+    class Config:
+        schema_extra = {
+            "example": {
+                "process_id": "7d48cd96-c099-48dd-bbb6-d4fe8b2de318",
+                "file_name": "51251013563680006304550010000026551833379679.XML",
+                "file_type": "application/xml"
+            }
+        }
+
+class FileInfo(BaseModel):
+    file_name: str = Field(..., description="Nome do arquivo")
+
+class DocsPresignedUrlRequest(BaseModel):
+    process_id: str = Field(..., description="ID do processo (UUID gerado pelo frontend)")
+    files: List[FileInfo] = Field(..., description="Lista de arquivos para upload")
+    
+    class Config:
+        schema_extra = {
+            "example": {
+                "process_id": "7d48cd96-c099-48dd-bbb6-d4fe8b2de318",
+                "files": [
+                    {"file_name": "pedido_compra.pdf"},
+                    {"file_name": "nota_fiscal.pdf"}
+                ]
+            }
+        }
 
 class PresignedUrlResponse(BaseModel):
     upload_url: str
     file_key: str
+    file_name: str
+    content_type: str
+    doc_type: str
+    
+    class Config:
+        schema_extra = {
+            "example": {
+                "upload_url": "https://agroamazonia-raw-documents.s3.amazonaws.com/processes/7d48cd96-c099-48dd-bbb6-d4fe8b2de318/danfe/nota_fiscal.xml?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=...",
+                "file_key": "processes/7d48cd96-c099-48dd-bbb6-d4fe8b2de318/danfe/nota_fiscal.xml",
+                "file_name": "nota_fiscal.xml",
+                "content_type": "application/xml",
+                "doc_type": "DANFE"
+            }
+        }
+
+class DocsPresignedUrlResponse(BaseModel):
+    urls: List[PresignedUrlResponse]
+    
+    class Config:
+        schema_extra = {
+            "example": {
+                "urls": [
+                    {
+                        "upload_url": "https://agroamazonia-raw-documents.s3.amazonaws.com/processes/7d48cd96-c099-48dd-bbb6-d4fe8b2de318/docs/pedido.pdf?X-Amz-Algorithm=...",
+                        "file_key": "processes/7d48cd96-c099-48dd-bbb6-d4fe8b2de318/docs/pedido.pdf",
+                        "file_name": "pedido.pdf",
+                        "content_type": "application/pdf",
+                        "doc_type": "ADDITIONAL"
+                    },
+                    {
+                        "upload_url": "https://agroamazonia-raw-documents.s3.amazonaws.com/processes/7d48cd96-c099-48dd-bbb6-d4fe8b2de318/docs/nota.pdf?X-Amz-Algorithm=...",
+                        "file_key": "processes/7d48cd96-c099-48dd-bbb6-d4fe8b2de318/docs/nota.pdf",
+                        "file_name": "nota.pdf",
+                        "content_type": "application/pdf",
+                        "doc_type": "ADDITIONAL"
+                    }
+                ]
+            }
+        }
 
 class ProcessStartRequest(BaseModel):
-    process_id: str
+    process_id: str = Field(..., description="ID do processo a ser iniciado")
+    
+    class Config:
+        schema_extra = {
+            "example": {
+                "process_id": "7d48cd96-c099-48dd-bbb6-d4fe8b2de318"
+            }
+        }
 
 class ProcessStartResponse(BaseModel):
     execution_arn: str
     process_id: str
     status: str
+    
+    class Config:
+        schema_extra = {
+            "example": {
+                "execution_arn": "arn:aws:states:us-east-1:481665100875:execution:AgroAmazoniaStack-StateMachine:7d48cd96-c099-48dd-bbb6-d4fe8b2de318",
+                "process_id": "7d48cd96-c099-48dd-bbb6-d4fe8b2de318",
+                "status": "PROCESSING"
+            }
+        }
 
 class ProcessResponse(BaseModel):
     process_id: str
-    process_type: str
+    process_type: Optional[str] = None
     status: str
-    files: List[Dict[str, Any]]
+    sctask_id: Optional[str] = None
+    files: Dict[str, List[Dict[str, Any]]]
+    parsing_results: List[Dict[str, Any]] = []
     created_at: str
+    
+    class Config:
+        schema_extra = {
+            "example": {
+                "process_id": "7d48cd96-c099-48dd-bbb6-d4fe8b2de318",
+                "process_type": "SEMENTES",
+                "status": "COMPLETED",
+                "files": {
+                    "danfe": [
+                        {
+                            "file_name": "51251013563680006304550010000026551833379679.XML",
+                            "file_key": "processes/7d48cd96-c099-48dd-bbb6-d4fe8b2de318/danfe/51251013563680006304550010000026551833379679.XML",
+                            "status": "UPLOADED"
+                        }
+                    ],
+                    "additional": [
+                        {
+                            "file_name": "NF_000002655.PDF",
+                            "file_key": "processes/7d48cd96-c099-48dd-bbb6-d4fe8b2de318/docs/NF_000002655.PDF",
+                            "status": "UPLOADED"
+                        },
+                        {
+                            "file_name": "FIL_013_NF_000002655.PDF",
+                            "file_key": "processes/7d48cd96-c099-48dd-bbb6-d4fe8b2de318/docs/FIL_013_NF_000002655.PDF",
+                            "status": "UPLOADED"
+                        }
+                    ]
+                },
+                "created_at": "1733068800"
+            }
+        }

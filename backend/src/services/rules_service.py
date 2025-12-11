@@ -1,122 +1,64 @@
-from abc import ABC, abstractmethod
-from typing import Optional, Dict, Any, Callable
+import os
+import logging
+from typing import Dict, Any, List
+from src.repositories.dynamodb_repository import DynamoDBRepository
 
-class Rule(ABC):
-    """Regra base para Chain of Responsibility"""
-    def __init__(self):
-        self.next_rule: Optional[Rule] = None
-    
-    def set_next(self, rule: "Rule") -> "Rule":
-        self.next_rule = rule
-        return rule
-    
-    @abstractmethod
-    def check(self, data: Dict[str, Any]) -> bool:
-        """Retorna True se a condição da regra for atendida (erro encontrado)"""
-        pass
-    
-    @abstractmethod
-    def execute_action(self, data: Dict[str, Any]) -> Dict[str, Any]:
-        """Executa ação quando regra é verdadeira"""
-        pass
-    
-    def process(self, data: Dict[str, Any]) -> Dict[str, Any]:
-        """Processa a regra e passa para próxima se validação OK"""
-        if self.check(data):
-            return self.execute_action(data)
-        
-        if self.next_rule:
-            return self.next_rule.process(data)
-        
-        return {"status": "APPROVED", "message": "Todas as validações passaram"}
-
-# Regras para SEMENTES
-class SementesImpostoRule(Rule):
-    def check(self, data: Dict[str, Any]) -> bool:
-        imposto = data.get('imposto_total', 0)
-        return imposto > data.get('limite_imposto_sementes', 1000)
-    
-    def execute_action(self, data: Dict[str, Any]) -> Dict[str, Any]:
-        return {"status": "REJECTED", "rule": "IMPOSTO_INCORRETO", "message": "Imposto acima do limite para sementes"}
-
-class SementesDocumentacaoRule(Rule):
-    def check(self, data: Dict[str, Any]) -> bool:
-        return not data.get('certificado_fitossanitario')
-    
-    def execute_action(self, data: Dict[str, Any]) -> Dict[str, Any]:
-        return {"status": "PENDING", "rule": "DOCUMENTACAO_FALTANTE", "message": "Certificado fitossanitário ausente"}
-
-# Regras para AGROQUIMICOS
-class AgroquimicosLicencaRule(Rule):
-    def check(self, data: Dict[str, Any]) -> bool:
-        return not data.get('licenca_ibama')
-    
-    def execute_action(self, data: Dict[str, Any]) -> Dict[str, Any]:
-        return {"status": "REJECTED", "rule": "LICENCA_AUSENTE", "message": "Licença IBAMA obrigatória"}
-
-class AgroquimicosValorRule(Rule):
-    def check(self, data: Dict[str, Any]) -> bool:
-        valor = data.get('valor_total', 0)
-        return valor != data.get('valor_esperado', 0)
-    
-    def execute_action(self, data: Dict[str, Any]) -> Dict[str, Any]:
-        return {"status": "PENDING", "rule": "DIVERGENCIA_VALOR", "message": "Valor divergente do esperado"}
-
-# Regras para FERTILIZANTES
-class FertilizantesComposicaoRule(Rule):
-    def check(self, data: Dict[str, Any]) -> bool:
-        return not data.get('laudo_composicao')
-    
-    def execute_action(self, data: Dict[str, Any]) -> Dict[str, Any]:
-        return {"status": "REJECTED", "rule": "LAUDO_AUSENTE", "message": "Laudo de composição obrigatório"}
+logger = logging.getLogger(__name__)
 
 class RulesService:
-    """Serviço de regras dinâmicas por tipo de processo"""
+    def __init__(self):
+        self.repository = DynamoDBRepository()
     
-    @staticmethod
-    def get_rules_info(process_type: str) -> list[Dict[str, Any]]:
-        """Retorna informações sobre as regras de um processo"""
-        rules_map = {
-            "SEMENTES": [
-                {"name": "Validação de Imposto", "description": "Verifica se imposto está dentro do limite", "action": "REJECT"},
-                {"name": "Verificação de Documentação", "description": "Valida presença de Certificado Fitossanitário", "action": "PENDING"}
-            ],
-            "AGROQUIMICOS": [
-                {"name": "Validação de Licença IBAMA", "description": "Verifica presença de licença IBAMA", "action": "REJECT"},
-                {"name": "Verificação de Valor", "description": "Compara valor total com esperado", "action": "PENDING"}
-            ],
-            "FERTILIZANTES": [
-                {"name": "Validação de Laudo de Composição", "description": "Verifica presença de laudo", "action": "REJECT"}
-            ]
-        }
+    def list_rules(self, process_type: str) -> List[Dict[str, Any]]:
+        """Lista regras de um tipo de processo"""
+        pk = f"RULES#{process_type}"
+        items = self.repository.query_by_pk_and_sk_prefix(pk, 'RULE#')
         
-        if process_type not in rules_map:
-            raise ValueError(f"Process type não suportado: {process_type}")
+        rules = []
+        for item in items:
+            rules.append({
+                'rule_name': item.get('RULE_NAME'),
+                'order': item.get('ORDER'),
+                'enabled': item.get('ENABLED', True)
+            })
         
-        return rules_map[process_type]
+        # Ordenar tratando None como valor alto (999)
+        rules.sort(key=lambda x: x['order'] if x['order'] is not None else 999)
+        return rules
     
-    @staticmethod
-    def get_workflow(process_type: str) -> Rule:
-        """Retorna cadeia de regras para o tipo de processo"""
-        if process_type == "SEMENTES":
-            rule1 = SementesImpostoRule()
-            rule2 = SementesDocumentacaoRule()
-            rule1.set_next(rule2)
-            return rule1
+    def create_rule(self, process_type: str, rule_name: str, order: int, enabled: bool = True) -> Dict[str, Any]:
+        """Cria nova regra"""
+        pk = f"RULES#{process_type}"
+        sk = f"RULE#{rule_name}"
         
-        elif process_type == "AGROQUIMICOS":
-            rule1 = AgroquimicosLicencaRule()
-            rule2 = AgroquimicosValorRule()
-            rule1.set_next(rule2)
-            return rule1
+        self.repository.put_item(pk, sk, {
+            'RULE_NAME': rule_name,
+            'ORDER': order,
+            'ENABLED': enabled
+        })
         
-        elif process_type == "FERTILIZANTES":
-            return FertilizantesComposicaoRule()
-        
-        raise ValueError(f"Process type não suportado: {process_type}")
+        return {'status': 'created', 'rule_name': rule_name}
     
-    @staticmethod
-    def validate(process_type: str, data: Dict[str, Any]) -> Dict[str, Any]:
-        """Executa validação completa para o tipo de processo"""
-        workflow = RulesService.get_workflow(process_type)
-        return workflow.process(data)
+    def update_rule(self, process_type: str, rule_name: str, updates: Dict[str, Any]) -> Dict[str, Any]:
+        """Atualiza regra"""
+        pk = f"RULES#{process_type}"
+        sk = f"RULE#{rule_name}"
+        
+        update_data = {}
+        if 'order' in updates:
+            update_data['ORDER'] = updates['order']
+        if 'enabled' in updates:
+            update_data['ENABLED'] = updates['enabled']
+        
+        self.repository.update_item(pk, sk, update_data)
+        
+        return {'status': 'updated', 'rule_name': rule_name}
+    
+    def delete_rule(self, process_type: str, rule_name: str) -> Dict[str, Any]:
+        """Remove regra"""
+        pk = f"RULES#{process_type}"
+        sk = f"RULE#{rule_name}"
+        
+        self.repository.delete_item(pk, sk)
+        
+        return {'status': 'deleted', 'rule_name': rule_name}

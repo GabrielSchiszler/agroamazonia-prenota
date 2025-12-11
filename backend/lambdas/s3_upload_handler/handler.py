@@ -24,25 +24,22 @@ def handler(event, context):
             process_id = parts[1]
             file_name = parts[2]
             
-            pk = f"PROCESS={process_id}"
+            pk = f"PROCESS#{process_id}"
             
-            # Buscar arquivo com status PENDING
             response = table.query(
-                KeyConditionExpression='PK = :pk',
-                ExpressionAttributeValues={':pk': pk}
+                KeyConditionExpression='PK = :pk AND begins_with(SK, :sk)',
+                ExpressionAttributeValues={':pk': pk, ':sk': 'FILE#'}
             )
             
             for item in response.get('Items', []):
-                if 'FILE=' in item['SK'] and file_name in item['SK']:
-                    # Atualizar status para UPLOADED
+                if item.get('FILE_KEY') == key:
                     table.update_item(
                         Key={'PK': pk, 'SK': item['SK']},
                         UpdateExpression='SET #status = :status',
                         ExpressionAttributeNames={'#status': 'STATUS'},
                         ExpressionAttributeValues={':status': 'UPLOADED'}
                     )
-                    
-                    logger.info(f"Updated file status: {file_name} -> UPLOADED")
+                    logger.info(f"Updated file status: {key} -> UPLOADED")
                     break
     
     return {'statusCode': 200}

@@ -1,0 +1,125 @@
+{
+    "process_id": "af4c14ca-5c5f-425e-8b08-a80d8d0d6d8d",
+    "process_type": "AGROQUIMICOS",
+    "results": [
+        {
+            "file_name": "FIL_013_NF_000275251.PDF",
+            "parsed_data": {
+                "cnpjRemetente": "01759112000940",
+                "cnpjDestinatario": "13563680001094",
+                "filial": null,
+                "tipoDeDocumento": "Nota Fiscal Eletrônica",
+                "documento": "000275251",
+                "serie": "0",
+                "dataEmissao": "2025-10-17",
+                "dataDigitacao": null,
+                "fornecedor": {
+                    "codigo": null,
+                    "loja": null
+                },
+                "especie": null,
+                "chaveAcesso": "51251001759112000940550000002752511590752511",
+                "condicaoPagamento": null,
+                "tipoFrete": null,
+                "moeda": null,
+                "taxaCambio": null,
+                "duplicata": {
+                    "natureza": null,
+                    "itens": []
+                },
+                "itens": [
+                    {
+                        "item": "1",
+                        "codigoProduto": "AG5651364",
+                        "descricaoProduto": "BIMMAX BTLHPE4X5L BRA LT: 25E2887O12 dVal: 24/05/2028 NF: 154652-1 Cod ONU 3082 SUBSTÂNCIA QUE APRESENTA RISCO PARA o MEIO AMBIENTE LÍQUIDA N E N DE RISCO 90 OU SUBCL DE RISCO GRUPO DE EMBALAGEM III",
+                        "unidadeMedida": "LT",
+                        "armazem": null,
+                        "quantidade": "3.200,0000 640",
+                        "valorUnitario": "115,620000 galoes",
+                        "valorTotal": "369.984,00",
+                        "lote": null,
+                        "dataFabricacao": null,
+                        "dataValidade": "2028-05-24",
+                        "codigoOperacao": null,
+                        "tes": null,
+                        "pedidoDeCompra": {
+                            "pedidoFornecedor": null,
+                            "pedidoErp": null,
+                            "itemPedidoErp": null
+                        },
+                        "documentoOrigem": null,
+                        "itemDocumentoOrigem": null,
+                        "contaContabil": null,
+                        "centroCusto": null,
+                        "itemContaContabil": null
+                    },
+                    {
+                        "item": "2",
+                        "codigoProduto": "AG5010464",
+                        "descricaoProduto": "CLINCHER BTLCOX20L BRA LT: 25D2887L32 dVal: 24/05/2028 NF: 154652-1 Cod ONU 1993 LIQUIDO INFLAMAVEL N.E. N DE RISCO 33 OU SUBCL DE RISCO GRUPO DE EMBALAGEM III",
+                        "unidadeMedida": "LT",
+                        "armazem": null,
+                        "quantidade": "940,0000 47",
+                        "valorUnitario": "157,700000 Bd",
+                        "valorTotal": "148.238,00",
+                        "lote": null,
+                        "dataFabricacao": null,
+                        "dataValidade": "2028-05-24",
+                        "codigoOperacao": null,
+                        "tes": null,
+                        "pedidoDeCompra": {
+                            "pedidoFornecedor": null,
+                            "pedidoErp": null,
+                            "itemPedidoErp": null
+                        },
+                        "documentoOrigem": null,
+                        "itemDocumentoOrigem": null,
+                        "contaContabil": null,
+                        "centroCusto": null,
+                        "itemContaContabil": null
+                    }
+                ],
+                "rateioCentroCusto": [],
+                "impostos": {
+                    "cabecalho": {
+                        "desconto": "0,00",
+                        "despesas": "0,00",
+                        "frete": "0,00",
+                        "seguro": "0,00"
+                    },
+                    "itens": [
+                        {
+                            "item": "1",
+                            "baseICMS": "0,00",
+                            "aliquotaICMS": "0,00",
+                            "valorICMS": "0,00",
+                            "baseICMSST": "0,00",
+                            "aliquotaICMSST": "0,00",
+                            "valorICMSST": "0,00",
+                            "valorIPI": "0,00",
+                            "valorPIS": null,
+                            "valorCOFINS": null,
+                            "valorISSQN": null,
+                            "valorOutrosImpostos": null
+                        },
+                        {
+                            "item": "2",
+                            "baseICMS": "0,00",
+                            "aliquotaICMS": "0,00",
+                            "valorICMS": "0,00",
+                            "baseICMSST": "0,00",
+                            "aliquotaICMSST": "0,00",
+                            "valorICMSST": "0,00",
+                            "valorIPI": "0,00",
+                            "valorPIS": null,
+                            "valorCOFINS": null,
+                            "valorISSQN": null,
+                            "valorOutrosImpostos": null
+                        }
+                    ]
+                }
+            }
+        }
+    ],
+    "source": "OCR"
+}

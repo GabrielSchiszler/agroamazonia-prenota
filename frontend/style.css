@@ -27,6 +27,7 @@ body {
 .app-container {
     display: flex;
     min-height: 100vh;
+    align-items: flex-start;
 }
 
 /* Sidebar */
@@ -112,6 +113,7 @@ body {
 .content-area {
     padding: 30px;
     flex: 1;
+    overflow-y: auto;
 }
 
 /* Pages */
@@ -186,6 +188,11 @@ body {
     border-left: 4px solid var(--primary);
 }
 
+.process-item.failed {
+    border-left-color: var(--danger);
+    background: #fef2f2;
+}
+
 .process-item:hover {
     transform: translateY(-2px);
     box-shadow: 0 4px 12px rgba(0,0,0,0.15);
@@ -218,6 +225,17 @@ body {
     margin-bottom: 25px;
     padding-bottom: 20px;
     border-bottom: 1px solid var(--border);
+}
+
+.sctask-badge {
+    display: inline-block;
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+    padding: 8px 16px;
+    border-radius: 20px;
+    font-size: 0.9em;
+    font-weight: 600;
+    margin-top: 10px;
 }
 
 .details-title {
@@ -333,6 +351,17 @@ body {
     color: #065f46;
 }
 
+.status-badge.failed {
+    background: #fee2e2;
+    color: #991b1b;
+    font-weight: 700;
+}
+
+.status-badge.validated {
+    background: #e0e7ff;
+    color: #3730a3;
+}
+
 /* Buttons */
 button {
     padding: 10px 20px;
@@ -382,10 +411,18 @@ button:disabled {
 }
 
 /* Rules */
+.rules-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 20px;
+    gap: 20px;
+}
+
 .rules-tabs {
     display: flex;
     gap: 10px;
-    margin-bottom: 20px;
+    flex: 1;
 }
 
 .rule-tab {
@@ -406,6 +443,7 @@ button:disabled {
     background: white;
     padding: 25px;
     border-radius: 12px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.1);
 }
 
 .rule-item {
@@ -487,7 +525,7 @@ button:disabled {
 
 .modal-content {
     background: white;
-    margin: 5% auto;
+    margin: 50px auto;
     width: 90%;
     max-width: 600px;
     border-radius: 12px;
