@@ -38,6 +38,20 @@ def handler(event, context):
     
     danfe_data = None
     docs_data = []
+    file_metadata = {}  # Mapear file_name -> metadados JSON
+    
+    # Buscar metadados dos arquivos
+    for item in items:
+        if 'FILE#' in item['SK']:
+            file_name = item.get('FILE_NAME', '')
+            metadados_str = item.get('METADADOS', '')
+            if metadados_str:
+                try:
+                    metadados = json.loads(metadados_str) if isinstance(metadados_str, str) else metadados_str
+                    file_metadata[file_name] = metadados
+                    logger.info(f"Found metadata for file: {file_name}")
+                except Exception as e:
+                    logger.warning(f"Failed to parse metadata for {file_name}: {str(e)}")
     
     for item in items:
         if 'PARSED_XML=' in item['SK']:
@@ -61,8 +75,35 @@ def handler(event, context):
     results = []
     
     # Preparar dados no formato esperado pelas regras
+    # Mesclar metadados JSON com dados OCR, preservando dados OCR originais
     danfe_parsed = danfe_data['data'] if danfe_data else {}
-    ocr_docs = [{'file_name': doc['file_name'], **doc['data']} for doc in docs_data]
+    ocr_docs = []
+    
+    for doc in docs_data:
+        file_name = doc['file_name']
+        ocr_data = doc['data']
+        metadados = file_metadata.get(file_name, {})
+        
+        # Preparar documento com metadados mesclados
+        doc_prepared = {
+            'file_name': file_name,
+            '_has_metadata': bool(metadados),
+            '_ocr_data': ocr_data.copy(),  # Preservar dados OCR originais
+            **ocr_data  # Dados OCR como base
+        }
+        
+        # Mesclar metadados (sobrescrevendo campos do OCR se existirem nos metadados)
+        if metadados:
+            # Se metadados têm 'itens', usar isso (prioridade)
+            if 'itens' in metadados:
+                doc_prepared['itens'] = metadados['itens']
+            # Mesclar outros campos dos metadados
+            for key, value in metadados.items():
+                if key != 'itens':  # 'itens' já foi tratado acima
+                    doc_prepared[key] = value
+        
+        ocr_docs.append(doc_prepared)
+        logger.info(f"Prepared doc {file_name}: has_metadata={doc_prepared['_has_metadata']}, itens_count={len(doc_prepared.get('itens', []))}")
     
     for rule in rules:
         logger.info(f"Executing rule: {rule['rule_name']}")

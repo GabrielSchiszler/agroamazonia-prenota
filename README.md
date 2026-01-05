@@ -137,6 +137,23 @@ cdk deploy
 
 ### 3. Configurar Variáveis de Ambiente
 
+O CDK pode receber variáveis de ambiente para configuração do Lambda de reporte de falhas OCR. Configure as seguintes variáveis antes do deploy:
+
+```bash
+# OCR Failure API - ServiceNow
+export OCR_FAILURE_API_URL="https://agroamazoniad.service-now.com/api/x_aapas_fast_ocr/ocr/reportar-falha"
+export OCR_FAILURE_AUTH_URL="https://agroamazoniad.service-now.com/oauth_token.do"
+export OCR_FAILURE_CLIENT_ID="seu_client_id"
+export OCR_FAILURE_CLIENT_SECRET="seu_client_secret"
+export OCR_FAILURE_USERNAME="seu_username"
+export OCR_FAILURE_PASSWORD="sua_password"
+```
+
+**Nota**: As variáveis podem ser passadas via:
+- Variáveis de ambiente do sistema (`export`)
+- CDK Context (`cdk deploy -c ocrFailureApiUrl=...`)
+- Se não fornecidas, valores padrão serão usados (apenas para desenvolvimento)
+
 Após deploy, o CDK exibirá:
 - API URL
 - Bucket Name

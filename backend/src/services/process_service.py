@@ -36,7 +36,7 @@ class ProcessService:
         
         return {'process_id': process_id, 'process_type': process_type, 'status': 'CREATED'}
     
-    def generate_presigned_url(self, process_id: str, file_name: str, file_type: str, doc_type: str = 'ADDITIONAL') -> Dict[str, Any]:
+    def generate_presigned_url(self, process_id: str, file_name: str, file_type: str, doc_type: str = 'ADDITIONAL', metadados: Dict[str, Any] = None) -> Dict[str, Any]:
         import re
         
         # Criar processo se não existir
@@ -63,12 +63,19 @@ class ProcessService:
             ExpiresIn=3600
         )
         
-        self.repository.put_item(pk, f'FILE#{safe_name}', {
+        # Preparar dados do arquivo
+        file_data = {
             'FILE_NAME': safe_name,
             'FILE_KEY': file_key,
             'DOC_TYPE': doc_type,
             'STATUS': 'PENDING'
-        })
+        }
+        
+        # Adicionar metadados se fornecidos
+        if metadados:
+            file_data['METADADOS'] = json.dumps(metadados)
+        
+        self.repository.put_item(pk, f'FILE#{safe_name}', file_data)
         
         return {'upload_url': url, 'file_key': file_key, 'file_name': safe_name, 'content_type': file_type, 'doc_type': doc_type}
     
@@ -175,14 +182,32 @@ class ProcessService:
         if sctask_id is not None:
             sctask_id = str(sctask_id)
         
+        # Função para processar arquivos com metadados
+        def process_file_data(file_item):
+            file_data = {
+                'file_name': file_item.get('FILE_NAME'),
+                'file_key': file_item.get('FILE_KEY'),
+                'status': file_item.get('STATUS', 'UNKNOWN')
+            }
+            
+            # Adicionar metadados se existirem
+            if file_item.get('METADADOS'):
+                try:
+                    file_data['metadados'] = json.loads(file_item['METADADOS'])
+                except Exception as e:
+                    logger.error(f"Erro ao parsear metadados: {e}")
+                    file_data['metadados'] = {}
+            
+            return file_data
+        
         result = {
             'process_id': process_id,
             'process_type': metadata.get('PROCESS_TYPE'),
             'status': metadata.get('STATUS'),
             'sctask_id': sctask_id,
             'files': {
-                'danfe': [{'file_name': f.get('FILE_NAME'), 'file_key': f.get('FILE_KEY'), 'status': f.get('STATUS', 'UNKNOWN')} for f in danfe_files],
-                'additional': [{'file_name': f.get('FILE_NAME'), 'file_key': f.get('FILE_KEY'), 'status': f.get('STATUS', 'UNKNOWN')} for f in additional_files]
+                'danfe': [process_file_data(f) for f in danfe_files],
+                'additional': [process_file_data(f) for f in additional_files]
             },
             'parsing_results': parsing_results,
             'created_at': str(int(metadata.get('TIMESTAMP', 0)))
@@ -268,3 +293,32 @@ class ProcessService:
             ExpiresIn=3600
         )
         return url
+
+    def update_file_metadata(self, process_id: str, file_name: str, metadados: Dict[str, Any]) -> Dict[str, Any]:
+        """Atualiza metadados JSON de um arquivo"""
+        import re
+        
+        pk = f'PROCESS#{process_id}'
+        safe_name = re.sub(r'[^a-zA-Z0-9._-]', '_', file_name)
+        sk = f'FILE#{safe_name}'
+        
+        # Verificar se o arquivo existe
+        items = self.repository.query_by_pk(pk)
+        file_item = next((item for item in items if item['SK'] == sk), None)
+        
+        if not file_item:
+            raise ValueError(f"Arquivo {file_name} não encontrado no processo {process_id}")
+        
+        # Atualizar metadados
+        self.repository.update_item(pk, sk, {
+            'METADADOS': json.dumps(metadados)
+        })
+        
+        logger.info(f"Metadados atualizados para arquivo {file_name} no processo {process_id}")
+        
+        return {
+            'success': True,
+            'message': 'Metadados atualizados com sucesso',
+            'file_name': safe_name,
+            'metadados': metadados
+        }

@@ -20,31 +20,39 @@ class XmlPresignedUrlRequest(BaseModel):
     process_id: str = Field(..., description="ID do processo (UUID gerado pelo frontend)")
     file_name: str = Field(..., description="Nome do arquivo XML")
     file_type: str = Field(default="application/xml", description="Content-Type do arquivo")
+    metadados: Optional[Dict[str, Any]] = Field(default=None, description="Metadados adicionais do arquivo (JSON)")
     
     class Config:
         schema_extra = {
             "example": {
                 "process_id": "7d48cd96-c099-48dd-bbb6-d4fe8b2de318",
                 "file_name": "51251013563680006304550010000026551833379679.XML",
-                "file_type": "application/xml"
+                "file_type": "application/xml",
+                "metadados": {
+                    "moeda": "BRL",
+                    "pedidoFornecedor": "369763",
+                    "pedidoErp": "023037"
+                }
             }
         }
 
-class FileInfo(BaseModel):
-    file_name: str = Field(..., description="Nome do arquivo")
-
 class DocsPresignedUrlRequest(BaseModel):
     process_id: str = Field(..., description="ID do processo (UUID gerado pelo frontend)")
-    files: List[FileInfo] = Field(..., description="Lista de arquivos para upload")
+    file_name: str = Field(..., description="Nome do arquivo")
+    file_type: str = Field(default="application/pdf", description="Content-Type do arquivo")
+    metadados: Optional[Dict[str, Any]] = Field(default={}, description="Metadados adicionais do arquivo")
     
     class Config:
         schema_extra = {
             "example": {
                 "process_id": "7d48cd96-c099-48dd-bbb6-d4fe8b2de318",
-                "files": [
-                    {"file_name": "pedido_compra.pdf"},
-                    {"file_name": "nota_fiscal.pdf"}
-                ]
+                "file_name": "pedido_compra.pdf",
+                "file_type": "application/pdf",
+                "metadados": {
+                    "tipo_documento": "pedido_compra",
+                    "fornecedor": "Empresa XYZ",
+                    "valor_total": 15000.50
+                }
             }
         }
 
@@ -67,27 +75,20 @@ class PresignedUrlResponse(BaseModel):
         }
 
 class DocsPresignedUrlResponse(BaseModel):
-    urls: List[PresignedUrlResponse]
+    upload_url: str
+    file_key: str
+    file_name: str
+    content_type: str
+    doc_type: str
     
     class Config:
         schema_extra = {
             "example": {
-                "urls": [
-                    {
-                        "upload_url": "https://agroamazonia-raw-documents.s3.amazonaws.com/processes/7d48cd96-c099-48dd-bbb6-d4fe8b2de318/docs/pedido.pdf?X-Amz-Algorithm=...",
-                        "file_key": "processes/7d48cd96-c099-48dd-bbb6-d4fe8b2de318/docs/pedido.pdf",
-                        "file_name": "pedido.pdf",
-                        "content_type": "application/pdf",
-                        "doc_type": "ADDITIONAL"
-                    },
-                    {
-                        "upload_url": "https://agroamazonia-raw-documents.s3.amazonaws.com/processes/7d48cd96-c099-48dd-bbb6-d4fe8b2de318/docs/nota.pdf?X-Amz-Algorithm=...",
-                        "file_key": "processes/7d48cd96-c099-48dd-bbb6-d4fe8b2de318/docs/nota.pdf",
-                        "file_name": "nota.pdf",
-                        "content_type": "application/pdf",
-                        "doc_type": "ADDITIONAL"
-                    }
-                ]
+                "upload_url": "https://agroamazonia-raw-documents.s3.amazonaws.com/processes/7d48cd96-c099-48dd-bbb6-d4fe8b2de318/docs/pedido.pdf?X-Amz-Algorithm=...",
+                "file_key": "processes/7d48cd96-c099-48dd-bbb6-d4fe8b2de318/docs/pedido.pdf",
+                "file_name": "pedido.pdf",
+                "content_type": "application/pdf",
+                "doc_type": "ADDITIONAL"
             }
         }
 
@@ -152,5 +153,43 @@ class ProcessResponse(BaseModel):
                     ]
                 },
                 "created_at": "1733068800"
+            }
+        }
+
+class UpdateFileMetadataRequest(BaseModel):
+    process_id: str = Field(..., description="ID do processo")
+    file_name: str = Field(..., description="Nome do arquivo")
+    metadados: Dict[str, Any] = Field(..., description="Novos metadados JSON para o arquivo")
+    
+    class Config:
+        schema_extra = {
+            "example": {
+                "process_id": "7d48cd96-c099-48dd-bbb6-d4fe8b2de318",
+                "file_name": "pedido_compra.pdf",
+                "metadados": {
+                    "moeda": "BRL",
+                    "pedidoFornecedor": "369763",
+                    "pedidoErp": "023037",
+                    "itens": []
+                }
+            }
+        }
+
+class UpdateFileMetadataResponse(BaseModel):
+    success: bool
+    message: str
+    file_name: str
+    metadados: Dict[str, Any]
+    
+    class Config:
+        schema_extra = {
+            "example": {
+                "success": True,
+                "message": "Metadados atualizados com sucesso",
+                "file_name": "pedido_compra.pdf",
+                "metadados": {
+                    "moeda": "BRL",
+                    "pedidoFornecedor": "369763"
+                }
             }
         }

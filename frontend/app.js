@@ -2,6 +2,8 @@ let API_URL = localStorage.getItem('apiUrl') || window.ENV.API_URL;
 let API_KEY = localStorage.getItem('apiKey') || window.ENV.API_KEY;
 let selectedProcess = null;
 let refreshInterval = null;
+let currentPage = 'dashboard';
+let dailyProcessesChart, successErrorRateChart, hourlyChart, errorChart, typeChart, failedRulesChart, failedRulesByDayChart;
 
 const PROCESS_RULES = {
     SEMENTES: [
@@ -28,7 +30,7 @@ document.addEventListener('DOMContentLoaded', function() {
     document.getElementById('apiKey').value = API_KEY;
     showRules('SEMENTES');
     loadProcesses();
-    updateDashboard();
+    loadDashboardMetrics();
 });
 
 
@@ -47,50 +49,810 @@ function showPage(pageName) {
         settings: 'Configurações'
     };
     document.getElementById('pageTitle').textContent = titles[pageName];
+    
+    // Atualizar página atual
+    currentPage = pageName;
+    
+    // Mostrar/ocultar botão de refresh
+    const refreshBtn = document.getElementById('refreshBtn');
+    if (refreshBtn) {
+        refreshBtn.style.display = pageName === 'dashboard' ? 'inline-block' : 'none';
+    }
+    
+    // Gerenciar auto-refresh do dashboard
+    if (refreshInterval) {
+        clearInterval(refreshInterval);
+        refreshInterval = null;
+    }
+    
+    if (pageName === 'dashboard') {
+        loadDashboardMetrics();
+        // Auto-refresh a cada 60 segundos apenas no dashboard
+        refreshInterval = setInterval(() => {
+            if (currentPage === 'dashboard') {
+                loadDashboardMetrics();
+            }
+        }, 60000);
+    }
 }
 
-async function updateDashboard() {
+let currentStartDate = null;
+let currentEndDate = null;
+
+async function loadDashboardMetrics() {
     try {
-        const response = await fetch(`${API_URL}/api/process/`, {
+        let url = `${API_URL}/api/v1/dashboard/metrics`;
+        if (currentStartDate && currentEndDate) {
+            url += `?start_date=${currentStartDate}&end_date=${currentEndDate}`;
+        }
+        
+        const response = await fetch(url, {
             headers: { 'x-api-key': API_KEY }
         });
         if (!response.ok) return;
 
         const data = await response.json();
-        const processes = data.processes || [];
+        updateMetricCards(data);
+        createDailyProcessesChart(data);
+        createSuccessErrorRateChart(data);
+        createHourlyChart(data);
+        createErrorChart(data);
+        createTypeChart(data);
+        createFailedRulesChart(data);
+        createFailedRulesByDayChart(data);
         
-        document.getElementById('totalProcesses').textContent = processes.length;
-        document.getElementById('pendingProcesses').textContent = processes.filter(p => p.status === 'PROCESSING').length;
-        document.getElementById('completedProcesses').textContent = processes.filter(p => p.status === 'COMPLETED').length;
-        
-        const recent = processes.slice(0, 5);
-        const recentHtml = recent.length > 0 ? `
-            <table>
-                <thead>
-                    <tr>
-                        <th>ID</th>
-                        <th>Tipo</th>
-                        <th>Status</th>
-                        <th>Data</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    ${recent.map(p => `
-                        <tr onclick="showPage('processes'); selectProcess('${p.process_id}')" style="cursor: pointer;">
-                            <td>${p.process_id.substring(0, 13)}...</td>
-                            <td>${p.process_type}</td>
-                            <td><span class="status-badge ${p.status.toLowerCase()}">${p.status}</span></td>
-                            <td>${new Date(parseInt(p.created_at) * 1000).toLocaleString('pt-BR')}</td>
-                        </tr>
-                    `).join('')}
-                </tbody>
-            </table>
-        ` : '<p style="text-align: center; color: #999; padding: 40px;">Nenhum processo encontrado</p>';
-        
-        document.getElementById('recentProcesses').innerHTML = recentHtml;
     } catch (error) {
-        console.error('Erro ao atualizar dashboard:', error);
+        console.error('Erro ao carregar métricas:', error);
+        showToast('❌ Erro ao carregar métricas', 'error');
     }
+}
+
+function applyDateFilter() {
+    const startDate = document.getElementById('startDateFilter').value;
+    const endDate = document.getElementById('endDateFilter').value;
+    
+    if (!startDate || !endDate) {
+        showToast('⚠️ Selecione data inicial e final', 'error');
+        return;
+    }
+    
+    if (new Date(startDate) > new Date(endDate)) {
+        showToast('⚠️ Data inicial deve ser anterior à data final', 'error');
+        return;
+    }
+    
+    currentStartDate = startDate;
+    currentEndDate = endDate;
+    loadDashboardMetrics();
+    showToast('✓ Filtro aplicado', 'success');
+}
+
+function resetDateFilter() {
+    currentStartDate = null;
+    currentEndDate = null;
+    document.getElementById('startDateFilter').value = '';
+    document.getElementById('endDateFilter').value = '';
+    loadDashboardMetrics();
+    showToast('✓ Filtro resetado', 'success');
+}
+
+function setFilterPeriod(period) {
+    const today = new Date();
+    let startDate, endDate;
+    
+    switch(period) {
+        case 'today':
+            startDate = endDate = today.toISOString().split('T')[0];
+            break;
+        case 'week':
+            startDate = new Date(today.getTime() - 6 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+            endDate = today.toISOString().split('T')[0];
+            break;
+        case 'month':
+            startDate = new Date(today.getFullYear(), today.getMonth(), 1).toISOString().split('T')[0];
+            endDate = today.toISOString().split('T')[0];
+            break;
+        case 'lastMonth':
+            const lastMonth = new Date(today.getFullYear(), today.getMonth() - 1, 1);
+            startDate = lastMonth.toISOString().split('T')[0];
+            endDate = new Date(today.getFullYear(), today.getMonth(), 0).toISOString().split('T')[0];
+            break;
+    }
+    
+    document.getElementById('startDateFilter').value = startDate;
+    document.getElementById('endDateFilter').value = endDate;
+    applyDateFilter();
+}
+
+function refreshDashboard() {
+    loadDashboardMetrics();
+    showToast('✓ Dashboard atualizado', 'success');
+}
+
+function updateMetricCards(data) {
+    // Suportar tanto formato antigo (today) quanto novo (period)
+    const summary = data.summary || {};
+    const today = data.today || {};
+    
+    // Se há período filtrado, usar summary; senão usar today
+    const total = summary.total || today.total_count || 0;
+    const success = summary.success || today.success_count || 0;
+    const failed = summary.failed || today.failed_count || 0;
+    const successRate = summary.success_rate || summary.success_rate_week || today.success_rate || 0;
+    
+    document.getElementById('totalToday').textContent = total;
+    document.getElementById('successToday').textContent = success;
+    document.getElementById('failedToday').textContent = failed;
+    document.getElementById('successRate').textContent = successRate.toFixed(1) + '%';
+    
+    // Formatar tempo médio de processamento (usar summary quando disponível, senão today)
+    const avgTime = summary.avg_processing_time || today.avg_processing_time || 0;
+    let timeDisplay;
+    if (avgTime >= 60) {
+        const minutes = Math.floor(avgTime / 60);
+        const seconds = Math.round(avgTime % 60);
+        timeDisplay = `${minutes}m ${seconds}s`;
+    } else {
+        timeDisplay = `${Math.round(avgTime)}s`;
+    }
+    document.getElementById('avgTime').textContent = timeDisplay;
+}
+
+function createDailyProcessesChart(data) {
+    const ctx = document.getElementById('dailyProcessesChart').getContext('2d');
+    const periodData = data.period || data.last_7_days || [];
+    
+    if (dailyProcessesChart) dailyProcessesChart.destroy();
+    
+    // Formatar datas para exibição
+    const labels = periodData.map(d => {
+        const date = new Date(d.date);
+        return date.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
+    }).reverse();
+    
+    dailyProcessesChart = new Chart(ctx, {
+        type: 'bar',
+        data: {
+            labels: labels,
+            datasets: [{
+                label: 'Sucessos',
+                data: periodData.map(d => d.success).reverse(),
+                backgroundColor: 'rgba(16, 185, 129, 0.8)',
+                borderColor: '#10b981',
+                borderWidth: 2,
+                borderRadius: 6
+            }, {
+                label: 'Falhas',
+                data: periodData.map(d => d.failed).reverse(),
+                backgroundColor: 'rgba(239, 68, 68, 0.8)',
+                borderColor: '#ef4444',
+                borderWidth: 2,
+                borderRadius: 6
+            }, {
+                label: 'Total',
+                data: periodData.map(d => d.total).reverse(),
+                type: 'line',
+                borderColor: '#667eea',
+                backgroundColor: 'rgba(102, 126, 234, 0.1)',
+                borderWidth: 3,
+                tension: 0.4,
+                fill: false,
+                pointRadius: 5,
+                pointHoverRadius: 7
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: {
+                    position: 'top',
+                    labels: {
+                        usePointStyle: true,
+                        padding: 15,
+                        font: { size: 12, weight: '600' }
+                    }
+                },
+                tooltip: {
+                    mode: 'index',
+                    intersect: false,
+                    backgroundColor: 'rgba(0, 0, 0, 0.8)',
+                    padding: 12,
+                    titleFont: { size: 14, weight: 'bold' },
+                    bodyFont: { size: 13 }
+                }
+            },
+            scales: {
+                y: {
+                    beginAtZero: true,
+                    grid: {
+                        color: 'rgba(0, 0, 0, 0.05)'
+                    },
+                    ticks: {
+                        font: { size: 11 }
+                    }
+                },
+                x: {
+                    grid: {
+                        display: false
+                    },
+                    ticks: {
+                        font: { size: 11 }
+                    }
+                }
+            },
+            interaction: {
+                mode: 'index',
+                intersect: false
+            }
+        }
+    });
+}
+
+function createSuccessErrorRateChart(data) {
+    const ctx = document.getElementById('successErrorRateChart').getContext('2d');
+    const summary = data.summary || {};
+    const today = data.today || {};
+    
+    const total = summary.total || today.total_count || 0;
+    const success = summary.success || today.success_count || 0;
+    const failed = summary.failed || today.failed_count || 0;
+    
+    if (successErrorRateChart) successErrorRateChart.destroy();
+    
+    successErrorRateChart = new Chart(ctx, {
+        type: 'doughnut',
+        data: {
+            labels: ['Sucessos', 'Falhas'],
+            datasets: [{
+                data: [success, failed],
+                backgroundColor: [
+                    'rgba(16, 185, 129, 0.9)',
+                    'rgba(239, 68, 68, 0.9)'
+                ],
+                borderColor: [
+                    '#10b981',
+                    '#ef4444'
+                ],
+                borderWidth: 3,
+                hoverOffset: 10
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: {
+                    position: 'bottom',
+                    labels: {
+                        padding: 15,
+                        usePointStyle: true,
+                        font: { size: 12, weight: '600' }
+                    }
+                },
+                tooltip: {
+                    callbacks: {
+                        label: function(context) {
+                            const label = context.label || '';
+                            const value = context.parsed || 0;
+                            const total = context.dataset.data.reduce((a, b) => a + b, 0);
+                            const percentage = total > 0 ? ((value / total) * 100).toFixed(1) : 0;
+                            return `${label}: ${value} (${percentage}%)`;
+                        }
+                    },
+                    backgroundColor: 'rgba(0, 0, 0, 0.8)',
+                    padding: 12
+                }
+            },
+            cutout: '60%'
+        }
+    });
+}
+
+function createHourlyChart(data) {
+    const ctx = document.getElementById('hourlyChart').getContext('2d');
+    const hourly = data.today?.processes_by_hour || {};
+    
+    if (hourlyChart) hourlyChart.destroy();
+    
+    const hours = Array.from({length: 24}, (_, i) => i.toString().padStart(2, '0'));
+    const counts = hours.map(h => hourly[h] || 0);
+    
+    hourlyChart = new Chart(ctx, {
+        type: 'bar',
+        data: {
+            labels: hours.map(h => h + ':00'),
+            datasets: [{
+                label: 'Processos',
+                data: counts,
+                backgroundColor: '#667eea',
+                borderColor: '#5568d3',
+                borderWidth: 1
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            scales: {
+                y: { beginAtZero: true }
+            }
+        }
+    });
+}
+
+function createErrorChart(data) {
+    const ctx = document.getElementById('errorChart').getContext('2d');
+    const errors = data.today?.failure_reasons || {};
+    
+    if (errorChart) errorChart.destroy();
+    
+    const labels = Object.keys(errors);
+    const values = Object.values(errors);
+    
+    // Se não há erros, criar gráfico vazio
+    if (labels.length === 0) {
+        errorChart = new Chart(ctx, {
+            type: 'doughnut',
+            data: {
+                labels: ['Sem erros'],
+                datasets: [{
+                    data: [1],
+                    backgroundColor: ['#10b981']
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { display: false },
+                    tooltip: { enabled: false }
+                }
+            }
+        });
+        return;
+    }
+    
+    const colorPalette = [
+        'rgba(239, 68, 68, 0.9)',   // Vermelho
+        'rgba(245, 158, 11, 0.9)',  // Laranja
+        'rgba(139, 92, 246, 0.9)',  // Roxo
+        'rgba(236, 72, 153, 0.9)',  // Rosa
+        'rgba(6, 182, 212, 0.9)',   // Ciano
+        'rgba(34, 197, 94, 0.9)'    // Verde
+    ];
+    
+    errorChart = new Chart(ctx, {
+        type: 'doughnut',
+        data: {
+            labels: labels.map(label => {
+                const translations = {
+                    'VALIDATION_FAILED': 'Validação Falhou',
+                    'TEXTRACT_ERROR': 'Erro OCR',
+                    'PROCESSING_ERROR': 'Erro Processamento',
+                    'API_ERROR': 'Erro API',
+                    'TIMEOUT_ERROR': 'Timeout'
+                };
+                return translations[label] || label;
+            }),
+            datasets: [{
+                data: values,
+                backgroundColor: colorPalette.slice(0, labels.length),
+                borderColor: colorPalette.slice(0, labels.length).map(c => c.replace('0.9', '1')),
+                borderWidth: 3,
+                hoverOffset: 8
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: {
+                    position: 'bottom',
+                    labels: {
+                        padding: 12,
+                        usePointStyle: true,
+                        font: { size: 12, weight: '600' }
+                    }
+                },
+                tooltip: {
+                    callbacks: {
+                        label: function(context) {
+                            const label = context.label || '';
+                            const value = context.parsed || 0;
+                            const total = context.dataset.data.reduce((a, b) => a + b, 0);
+                            const percentage = total > 0 ? ((value / total) * 100).toFixed(1) : 0;
+                            return `${label}: ${value} (${percentage}%)`;
+                        }
+                    },
+                    backgroundColor: 'rgba(0, 0, 0, 0.8)',
+                    padding: 12
+                }
+            },
+            cutout: '60%'
+        }
+    });
+}
+
+function createTypeChart(data) {
+    const ctx = document.getElementById('typeChart').getContext('2d');
+    const types = data.processes_by_type || data.processes_by_type_week || data.today?.processes_by_type || {};
+    
+    if (typeChart) typeChart.destroy();
+    
+    const labels = ['Sementes', 'Agroquímicos', 'Fertilizantes'];
+    const values = [
+        types.SEMENTES || 0,
+        types.AGROQUIMICOS || 0,
+        types.FERTILIZANTES || 0
+    ];
+    
+    typeChart = new Chart(ctx, {
+        type: 'doughnut',
+        data: {
+            labels: labels,
+            datasets: [{
+                data: values,
+                backgroundColor: [
+                    'rgba(16, 185, 129, 0.9)',
+                    'rgba(59, 130, 246, 0.9)',
+                    'rgba(245, 158, 11, 0.9)'
+                ],
+                borderColor: [
+                    '#10b981',
+                    '#3b82f6',
+                    '#f59e0b'
+                ],
+                borderWidth: 3,
+                hoverOffset: 8
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: { 
+                    position: 'bottom',
+                    labels: {
+                        padding: 12,
+                        usePointStyle: true,
+                        font: { size: 12, weight: '600' }
+                    }
+                },
+                tooltip: {
+                    callbacks: {
+                        label: function(context) {
+                            const label = context.label || '';
+                            const value = context.parsed || 0;
+                            const total = context.dataset.data.reduce((a, b) => a + b, 0);
+                            const percentage = total > 0 ? ((value / total) * 100).toFixed(1) : 0;
+                            return `${label}: ${value} (${percentage}%)`;
+                        }
+                    },
+                    backgroundColor: 'rgba(0, 0, 0, 0.8)',
+                    padding: 12
+                }
+            },
+            cutout: '60%'
+        }
+    });
+}
+
+function createFailedRulesChart(data) {
+    const ctx = document.getElementById('failedRulesChart').getContext('2d');
+    const failedRules = data.failed_rules || data.failed_rules_week || {};
+    
+    if (failedRulesChart) failedRulesChart.destroy();
+    
+    const labels = Object.keys(failedRules);
+    const values = Object.values(failedRules);
+    
+    // Se não há regras que falharam, criar gráfico vazio
+    if (labels.length === 0) {
+        failedRulesChart = new Chart(ctx, {
+            type: 'bar',
+            data: {
+                labels: ['Nenhuma regra falhou'],
+                datasets: [{
+                    data: [0],
+                    backgroundColor: ['rgba(16, 185, 129, 0.8)']
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: { legend: { display: false } },
+                scales: { y: { beginAtZero: true } }
+            }
+        });
+        return;
+    }
+    
+    // Ordenar por valor (maior para menor) e pegar top 10
+    const sorted = labels.map((label, i) => ({ label, value: values[i] }))
+        .sort((a, b) => b.value - a.value)
+        .slice(0, 10);
+    
+    // Traduzir nomes de regras
+    const ruleTranslations = {
+        'validar_produtos': 'Validar Produtos',
+        'validar_cnpj_fornecedor': 'Validar CNPJ Fornecedor',
+        'validar_numero_pedido': 'Validar Número Pedido',
+        'validar_valor_total': 'Validar Valor Total',
+        'validar_data_emissao': 'Validar Data Emissão'
+    };
+    
+    failedRulesChart = new Chart(ctx, {
+        type: 'bar',
+        data: {
+            labels: sorted.map(item => ruleTranslations[item.label] || item.label),
+            datasets: [{
+                label: 'Falhas',
+                data: sorted.map(item => item.value),
+                backgroundColor: 'rgba(239, 68, 68, 0.8)',
+                borderColor: '#ef4444',
+                borderWidth: 2,
+                borderRadius: 6
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            indexAxis: 'y',
+            plugins: {
+                legend: { display: false },
+                tooltip: {
+                    backgroundColor: 'rgba(0, 0, 0, 0.8)',
+                        padding: 10,
+                    callbacks: {
+                        label: function(context) {
+                            return `Falhas: ${context.parsed.x}`;
+                        }
+                    }
+                }
+            },
+            scales: {
+                x: {
+                    beginAtZero: true,
+                    grid: { color: 'rgba(0, 0, 0, 0.05)' },
+                    ticks: { font: { size: 11 }, stepSize: 1 }
+                },
+                y: {
+                    grid: { display: false },
+                    ticks: { font: { size: 11 } }
+                }
+            }
+        }
+    });
+}
+
+function createFailedRulesByDayChart(data) {
+    const ctx = document.getElementById('failedRulesByDayChart').getContext('2d');
+    const periodData = data.period || data.last_7_days || [];
+    
+    if (failedRulesByDayChart) failedRulesByDayChart.destroy();
+    
+    // Coletar todas as regras que falharam no período
+    const allRules = new Set();
+    periodData.forEach(day => {
+        Object.keys(day.failed_rules || {}).forEach(rule => allRules.add(rule));
+    });
+    
+    if (allRules.size === 0) {
+        failedRulesByDayChart = new Chart(ctx, {
+            type: 'bar',
+            data: {
+                labels: ['Nenhuma regra falhou no período'],
+                datasets: [{
+                    data: [0],
+                    backgroundColor: ['rgba(16, 185, 129, 0.8)']
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: { legend: { display: false } },
+                scales: { y: { beginAtZero: true } }
+            }
+        });
+        return;
+    }
+    
+    // Traduzir nomes de regras
+    const ruleTranslations = {
+        'validar_produtos': 'Validar Produtos',
+        'validar_cnpj_fornecedor': 'Validar CNPJ Fornecedor',
+        'validar_numero_pedido': 'Validar Número Pedido',
+        'validar_valor_total': 'Validar Valor Total',
+        'validar_data_emissao': 'Validar Data Emissão'
+    };
+    
+    const rulesArray = Array.from(allRules);
+    const colorPalette = [
+        'rgba(239, 68, 68, 0.8)',
+        'rgba(245, 158, 11, 0.8)',
+        'rgba(139, 92, 246, 0.8)',
+        'rgba(236, 72, 153, 0.8)',
+        'rgba(6, 182, 212, 0.8)',
+        'rgba(34, 197, 94, 0.8)',
+        'rgba(251, 146, 60, 0.8)',
+        'rgba(99, 102, 241, 0.8)'
+    ];
+    
+    // Formatar datas
+    const dates = periodData.map(d => {
+        const date = new Date(d.date);
+        return date.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
+    }).reverse();
+    
+    // Criar datasets para cada regra
+    const datasets = rulesArray.slice(0, 8).map((rule, index) => ({
+        label: ruleTranslations[rule] || rule,
+        data: periodData.map(d => (d.failed_rules || {})[rule] || 0).reverse(),
+        backgroundColor: colorPalette[index % colorPalette.length],
+        borderColor: colorPalette[index % colorPalette.length].replace('0.8', '1'),
+        borderWidth: 2,
+        borderRadius: 4
+    }));
+    
+    failedRulesByDayChart = new Chart(ctx, {
+        type: 'bar',
+        data: {
+            labels: dates,
+            datasets: datasets
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: {
+                    position: 'top',
+                    labels: {
+                        usePointStyle: true,
+                        padding: 12,
+                        font: { size: 11, weight: '600' }
+                    }
+                },
+                tooltip: {
+                    mode: 'index',
+                    intersect: false,
+                    backgroundColor: 'rgba(0, 0, 0, 0.8)',
+                    padding: 10
+                }
+            },
+            scales: {
+                x: {
+                    stacked: true,
+                    grid: { display: false },
+                    ticks: { font: { size: 11 } }
+                },
+                y: {
+                    stacked: true,
+                    beginAtZero: true,
+                    grid: { color: 'rgba(0, 0, 0, 0.05)' },
+                    ticks: { font: { size: 11 }, stepSize: 1 }
+                }
+            },
+            interaction: {
+                mode: 'index',
+                intersect: false
+            }
+        }
+    });
+}
+
+function createFailedRulesByDayChart(data) {
+    const ctx = document.getElementById('failedRulesByDayChart').getContext('2d');
+    const periodData = data.period || data.last_7_days || [];
+    
+    if (failedRulesByDayChart) failedRulesByDayChart.destroy();
+    
+    // Coletar todas as regras que falharam no período
+    const allRules = new Set();
+    periodData.forEach(day => {
+        Object.keys(day.failed_rules || {}).forEach(rule => allRules.add(rule));
+    });
+    
+    if (allRules.size === 0) {
+        failedRulesByDayChart = new Chart(ctx, {
+            type: 'bar',
+            data: {
+                labels: ['Nenhuma regra falhou no período'],
+                datasets: [{
+                    data: [0],
+                    backgroundColor: ['rgba(16, 185, 129, 0.8)']
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: { legend: { display: false } },
+                scales: { y: { beginAtZero: true } }
+            }
+        });
+        return;
+    }
+    
+    // Traduzir nomes de regras
+    const ruleTranslations = {
+        'validar_produtos': 'Validar Produtos',
+        'validar_cnpj_fornecedor': 'Validar CNPJ Fornecedor',
+        'validar_numero_pedido': 'Validar Número Pedido',
+        'validar_valor_total': 'Validar Valor Total',
+        'validar_data_emissao': 'Validar Data Emissão'
+    };
+    
+    const rulesArray = Array.from(allRules);
+    const colorPalette = [
+        'rgba(239, 68, 68, 0.8)',
+        'rgba(245, 158, 11, 0.8)',
+        'rgba(139, 92, 246, 0.8)',
+        'rgba(236, 72, 153, 0.8)',
+        'rgba(6, 182, 212, 0.8)',
+        'rgba(34, 197, 94, 0.8)',
+        'rgba(251, 146, 60, 0.8)',
+        'rgba(99, 102, 241, 0.8)'
+    ];
+    
+    // Formatar datas
+    const dates = periodData.map(d => {
+        const date = new Date(d.date);
+        return date.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
+    }).reverse();
+    
+    // Criar datasets para cada regra
+    const datasets = rulesArray.slice(0, 8).map((rule, index) => ({
+        label: ruleTranslations[rule] || rule,
+        data: periodData.map(d => (d.failed_rules || {})[rule] || 0).reverse(),
+        backgroundColor: colorPalette[index % colorPalette.length],
+        borderColor: colorPalette[index % colorPalette.length].replace('0.8', '1'),
+        borderWidth: 2,
+        borderRadius: 4
+    }));
+    
+    failedRulesByDayChart = new Chart(ctx, {
+        type: 'bar',
+        data: {
+            labels: dates,
+            datasets: datasets
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: {
+                    position: 'top',
+                    labels: {
+                        usePointStyle: true,
+                        padding: 12,
+                        font: { size: 11, weight: '600' }
+                    }
+                },
+                tooltip: {
+                    mode: 'index',
+                    intersect: false,
+                    backgroundColor: 'rgba(0, 0, 0, 0.8)',
+                    padding: 10
+                }
+            },
+            scales: {
+                x: {
+                    stacked: true,
+                    grid: { display: false },
+                    ticks: { font: { size: 11 } }
+                },
+                y: {
+                    stacked: true,
+                    beginAtZero: true,
+                    grid: { color: 'rgba(0, 0, 0, 0.05)' },
+                    ticks: { font: { size: 11 }, stepSize: 1 }
+                }
+            },
+            interaction: {
+                mode: 'index',
+                intersect: false
+            }
+        }
+    });
 }
 
 function saveApiConfig() {
@@ -253,13 +1015,46 @@ async function loadProcessFiles() {
             const statusClass = f.status === 'UPLOADED' ? 'uploaded' : 'pending';
             const statusIcon = f.status === 'UPLOADED' ? '✅' : '⏳';
             const downloadBtn = f.status === 'UPLOADED' ? `<button onclick="downloadFile('${f.file_key}', '${f.file_name}')" style="padding: 4px 8px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 0.85em;">📥 Baixar</button>` : '';
-            return `
-                <div class="file-item file-${statusClass}" style="display: flex; justify-content: space-between; align-items: center;">
-                    <span>${statusIcon} ${f.file_name}</span>
-                    <div style="display: flex; gap: 8px; align-items: center;">
-                        <span class="file-status">${f.status}</span>
-                        ${downloadBtn}
+            
+            // Exibir metadados se existirem
+            let metadataDisplay = '';
+            const fileNameEscaped = f.file_name.replace(/'/g, "\\'");
+            if (f.metadados && Object.keys(f.metadados).length > 0) {
+                const metadataJson = JSON.stringify(f.metadados, null, 2);
+                const metadataEscaped = metadataJson.replace(/</g, '&lt;').replace(/>/g, '&gt;');
+                metadataDisplay = `
+                    <div style="margin-top: 12px; padding: 12px; background: #f8f9fa; border: 1px solid #dee2e6; border-radius: 6px;">
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                            <strong style="color: #495057; font-size: 0.9em;">📊 Metadados JSON</strong>
+                            <button onclick="editMetadata('${fileNameEscaped}', 'DANFE')" 
+                                    style="padding: 4px 12px; background: #28a745; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 0.85em;">
+                                ✏️ Editar
+                            </button>
+                        </div>
+                        <pre style="background: white; padding: 10px; border-radius: 4px; overflow-x: auto; font-size: 0.85em; max-height: 200px; overflow-y: auto; margin: 0;">${metadataEscaped}</pre>
                     </div>
+                `;
+            } else {
+                metadataDisplay = `
+                    <div style="margin-top: 12px;">
+                        <button onclick="editMetadata('${fileNameEscaped}', 'DANFE')" 
+                                style="padding: 6px 12px; background: #17a2b8; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 0.85em;">
+                            ➕ Adicionar Metadados
+                        </button>
+                    </div>
+                `;
+            }
+            
+            return `
+                <div class="file-item file-${statusClass}" style="margin-bottom: 15px; padding: 15px; border: 1px solid #e0e0e0; border-radius: 8px; background: white;">
+                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                        <span style="font-weight: 500;">${statusIcon} ${f.file_name}</span>
+                        <div style="display: flex; gap: 8px; align-items: center;">
+                            <span class="file-status">${f.status}</span>
+                            ${downloadBtn}
+                        </div>
+                    </div>
+                    ${metadataDisplay}
                 </div>
             `;
         }).join('');
@@ -273,13 +1068,46 @@ async function loadProcessFiles() {
             const statusClass = f.status === 'UPLOADED' ? 'uploaded' : 'pending';
             const statusIcon = f.status === 'UPLOADED' ? '✅' : '⏳';
             const downloadBtn = f.status === 'UPLOADED' ? `<button onclick="downloadFile('${f.file_key}', '${f.file_name}')" style="padding: 4px 8px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 0.85em;">📥 Baixar</button>` : '';
-            return `
-                <div class="file-item file-${statusClass}" style="display: flex; justify-content: space-between; align-items: center;">
-                    <span>${statusIcon} ${f.file_name}</span>
-                    <div style="display: flex; gap: 8px; align-items: center;">
-                        <span class="file-status">${f.status}</span>
-                        ${downloadBtn}
+            
+            // Exibir metadados se existirem
+            let metadataDisplay = '';
+            const fileNameEscaped = f.file_name.replace(/'/g, "\\'");
+            if (f.metadados && Object.keys(f.metadados).length > 0) {
+                const metadataJson = JSON.stringify(f.metadados, null, 2);
+                const metadataEscaped = metadataJson.replace(/</g, '&lt;').replace(/>/g, '&gt;');
+                metadataDisplay = `
+                    <div style="margin-top: 12px; padding: 12px; background: #f8f9fa; border: 1px solid #dee2e6; border-radius: 6px;">
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                            <strong style="color: #495057; font-size: 0.9em;">📊 Metadados JSON</strong>
+                            <button onclick="editMetadata('${fileNameEscaped}', 'ADDITIONAL')" 
+                                    style="padding: 4px 12px; background: #28a745; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 0.85em;">
+                                ✏️ Editar
+                            </button>
+                        </div>
+                        <pre style="background: white; padding: 10px; border-radius: 4px; overflow-x: auto; font-size: 0.85em; max-height: 200px; overflow-y: auto; margin: 0;">${metadataEscaped}</pre>
                     </div>
+                `;
+            } else {
+                metadataDisplay = `
+                    <div style="margin-top: 12px;">
+                        <button onclick="editMetadata('${fileNameEscaped}', 'ADDITIONAL')" 
+                                style="padding: 6px 12px; background: #17a2b8; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 0.85em;">
+                            ➕ Adicionar Metadados
+                        </button>
+                    </div>
+                `;
+            }
+            
+            return `
+                <div class="file-item file-${statusClass}" style="margin-bottom: 15px; padding: 15px; border: 1px solid #e0e0e0; border-radius: 8px; background: white;">
+                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                        <span style="font-weight: 500;">${statusIcon} ${f.file_name}</span>
+                        <div style="display: flex; gap: 8px; align-items: center;">
+                            <span class="file-status">${f.status}</span>
+                            ${downloadBtn}
+                        </div>
+                    </div>
+                    ${metadataDisplay}
                 </div>
             `;
         }).join('');
@@ -355,16 +1183,38 @@ async function loadValidationResults() {
 function handleDanfeSelect() {
     const fileInput = document.getElementById('danfeInput');
     const file = fileInput.files[0];
-    if (file) uploadFile(file, 'DANFE', fileInput);
+    if (file) {
+        const metadataText = document.getElementById('danfeMetadata').value.trim();
+        let metadados = null;
+        if (metadataText) {
+            try {
+                metadados = JSON.parse(metadataText);
+            } catch (e) {
+                showToast(`❌ Erro ao parsear JSON de metadados: ${e.message}`, 'error');
+                return;
+            }
+        }
+        uploadFile(file, 'DANFE', fileInput, metadados);
+    }
 }
 
 function handleDocsSelect() {
     const fileInput = document.getElementById('docsInput');
     const files = Array.from(fileInput.files);
-    files.forEach(file => uploadFile(file, 'ADDITIONAL', fileInput));
+    const metadataText = document.getElementById('docsMetadata').value.trim();
+    let metadados = null;
+    if (metadataText) {
+        try {
+            metadados = JSON.parse(metadataText);
+        } catch (e) {
+            showToast(`❌ Erro ao parsear JSON de metadados: ${e.message}`, 'error');
+            return;
+        }
+    }
+    files.forEach(file => uploadFile(file, 'ADDITIONAL', fileInput, metadados));
 }
 
-async function uploadFile(file, docType, fileInput) {
+async function uploadFile(file, docType, fileInput, userMetadata = null) {
     if (!file || !selectedProcess) return;
 
     try {
@@ -373,22 +1223,40 @@ async function uploadFile(file, docType, fileInput) {
         let urlResponse, upload_url;
         
         if (docType === 'DANFE') {
+            const requestBody = {
+                process_id: selectedProcess.process_id,
+                file_name: file.name,
+                file_type: contentType
+            };
+            
+            // Adicionar metadados se fornecidos pelo usuário
+            if (userMetadata) {
+                requestBody.metadados = userMetadata;
+            }
+            
             urlResponse = await fetch(`${API_URL}/api/process/presigned-url/xml`, {
                 method: 'POST',
                 headers: { 
                     'Content-Type': 'application/json',
                     'x-api-key': API_KEY
                 },
-                body: JSON.stringify({
-                    process_id: selectedProcess.process_id,
-                    file_name: file.name,
-                    file_type: contentType
-                })
+                body: JSON.stringify(requestBody)
             });
             if (!urlResponse.ok) throw new Error('Falha ao gerar URL');
             const data = await urlResponse.json();
             upload_url = data.upload_url;
         } else {
+            // Preparar metadados: usar metadados do usuário se fornecidos, senão gerar automáticos
+            let metadados = userMetadata;
+            if (!metadados) {
+                // Gerar metadados baseados no nome do arquivo apenas se usuário não forneceu
+                metadados = {
+                tipo_documento: file.name.toLowerCase().includes('pedido') ? 'pedido_compra' : 'documento_adicional',
+                tamanho_arquivo: file.size,
+                data_upload: new Date().toISOString()
+            };
+            }
+            
             urlResponse = await fetch(`${API_URL}/api/process/presigned-url/docs`, {
                 method: 'POST',
                 headers: { 
@@ -397,15 +1265,14 @@ async function uploadFile(file, docType, fileInput) {
                 },
                 body: JSON.stringify({
                     process_id: selectedProcess.process_id,
-                    files: [{
-                        file_name: file.name,
-                        file_type: contentType
-                    }]
+                    file_name: file.name,
+                    file_type: contentType,
+                    metadados: metadados
                 })
             });
             if (!urlResponse.ok) throw new Error('Falha ao gerar URL');
             const data = await urlResponse.json();
-            upload_url = data.urls[0].upload_url;
+            upload_url = data.upload_url;
         }
 
         await new Promise((resolve, reject) => {
@@ -417,8 +1284,16 @@ async function uploadFile(file, docType, fileInput) {
             xhr.send(file);
         });
 
-        showToast(`✓ ${docType === 'DANFE' ? 'DANFE' : 'Documento'} enviado!`, 'success');
+        const metadataMsg = userMetadata ? ' com metadados' : '';
+        showToast(`✓ ${docType === 'DANFE' ? 'DANFE' : 'Documento'} enviado${metadataMsg}!`, 'success');
         fileInput.value = '';
+        
+        // Limpar campos de metadados após upload bem-sucedido
+        if (docType === 'DANFE') {
+            document.getElementById('danfeMetadata').value = '';
+        } else {
+            document.getElementById('docsMetadata').value = '';
+        }
         
         setTimeout(() => selectProcess(selectedProcess.process_id, true), 2000);
 
@@ -632,5 +1507,100 @@ async function downloadFile(fileKey, fileName) {
         showToast('✓ Abrindo arquivo...', 'success');
     } catch (error) {
         showToast(`❌ Erro: ${error.message}`, 'error');
+    }
+}
+
+let currentEditingFile = null;
+let currentEditingFileType = null;
+
+function editMetadata(fileName, fileType) {
+    if (!selectedProcess) return;
+    
+    currentEditingFile = fileName;
+    currentEditingFileType = fileType;
+    
+    // Buscar metadados existentes do arquivo
+    let currentMetadata = null;
+    const files = fileType === 'DANFE' 
+        ? selectedProcess.files.danfe 
+        : selectedProcess.files.additional;
+    const file = files.find(f => f.file_name === fileName);
+    if (file && file.metadados) {
+        currentMetadata = file.metadados;
+    }
+    
+    // Preencher textarea com metadados existentes ou JSON vazio
+    const metadataTextarea = document.getElementById('editMetadataTextarea');
+    if (currentMetadata) {
+        metadataTextarea.value = JSON.stringify(currentMetadata, null, 2);
+    } else {
+        metadataTextarea.value = '{\n  \n}';
+    }
+    
+    // Mostrar modal
+    document.getElementById('editMetadataModal').style.display = 'block';
+    document.getElementById('editMetadataFileName').textContent = fileName;
+}
+
+function closeEditMetadataModal() {
+    document.getElementById('editMetadataModal').style.display = 'none';
+    currentEditingFile = null;
+    currentEditingFileType = null;
+}
+
+async function saveMetadata() {
+    if (!selectedProcess || !currentEditingFile) return;
+    
+    const metadataTextarea = document.getElementById('editMetadataTextarea');
+    const metadataText = metadataTextarea.value.trim();
+    
+    if (!metadataText) {
+        showToast('❌ Metadados não podem estar vazios', 'error');
+        return;
+    }
+    
+    let metadados;
+    try {
+        metadados = JSON.parse(metadataText);
+    } catch (e) {
+        showToast(`❌ JSON inválido: ${e.message}`, 'error');
+        return;
+    }
+    
+    const saveBtn = document.getElementById('saveMetadataBtn');
+    saveBtn.disabled = true;
+    saveBtn.textContent = 'Salvando...';
+    
+    try {
+        const response = await fetch(`${API_URL}/api/process/file/metadata`, {
+            method: 'PUT',
+            headers: {
+                'Content-Type': 'application/json',
+                'x-api-key': API_KEY
+            },
+            body: JSON.stringify({
+                process_id: selectedProcess.process_id,
+                file_name: currentEditingFile,
+                metadados: metadados
+            })
+        });
+        
+        if (!response.ok) {
+            const errorData = await response.json();
+            throw new Error(errorData.detail || 'Falha ao atualizar metadados');
+        }
+        
+        const data = await response.json();
+        showToast('✓ Metadados atualizados com sucesso!', 'success');
+        closeEditMetadataModal();
+        
+        // Recarregar processo para mostrar metadados atualizados
+        setTimeout(() => selectProcess(selectedProcess.process_id, true), 1000);
+        
+    } catch (error) {
+        showToast(`❌ Erro: ${error.message}`, 'error');
+    } finally {
+        saveBtn.disabled = false;
+        saveBtn.textContent = 'Salvar';
     }
 }

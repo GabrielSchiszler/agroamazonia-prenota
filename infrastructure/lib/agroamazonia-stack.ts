@@ -8,6 +8,7 @@ import * as iam from 'aws-cdk-lib/aws-iam';
 import * as apigateway from 'aws-cdk-lib/aws-apigateway';
 import * as s3n from 'aws-cdk-lib/aws-s3-notifications';
 import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
+import * as sns from 'aws-cdk-lib/aws-sns';
 import { Construct } from 'constructs';
 
 export class AgroAmazoniaStack extends cdk.Stack {
@@ -40,6 +41,12 @@ export class AgroAmazoniaStack extends cdk.Stack {
           transitionAfter: cdk.Duration.days(30)
         }]
       }]
+    });
+
+    // SNS Topic para erros de Lambda
+    const errorTopic = new sns.Topic(this, 'LambdaErrorTopic', {
+      topicName: 'agroamazonia-lambda-errors',
+      displayName: 'AgroAmazonia Lambda Errors'
     });
 
     // DynamoDB Table
@@ -104,6 +111,14 @@ export class AgroAmazoniaStack extends cdk.Stack {
     }));
 
     // Lambda: Report OCR Failure
+    // OAuth2 credentials from environment variables or CDK context
+    const ocrFailureApiUrl = this.node.tryGetContext('ocrFailureApiUrl') || process.env.OCR_FAILURE_API_URL || 'https://agroamazoniad.service-now.com/api/x_aapas_fast_ocr/ocr/reportar-falha';
+    const ocrFailureAuthUrl = this.node.tryGetContext('ocrFailureAuthUrl') || process.env.OCR_FAILURE_AUTH_URL || 'https://agroamazoniad.service-now.com/oauth_token.do';
+    const ocrFailureClientId = this.node.tryGetContext('ocrFailureClientId') || process.env.OCR_FAILURE_CLIENT_ID || '';
+    const ocrFailureClientSecret = this.node.tryGetContext('ocrFailureClientSecret') || process.env.OCR_FAILURE_CLIENT_SECRET || '';
+    const ocrFailureUsername = this.node.tryGetContext('ocrFailureUsername') || process.env.OCR_FAILURE_USERNAME || '';
+    const ocrFailurePassword = this.node.tryGetContext('ocrFailurePassword') || process.env.OCR_FAILURE_PASSWORD || '';
+
     const reportOcrFailureLambda = new lambda.Function(this, 'ReportOcrFailureFunction', {
       runtime: lambda.Runtime.PYTHON_3_11,
       handler: 'handler.lambda_handler',
@@ -118,7 +133,12 @@ export class AgroAmazoniaStack extends cdk.Stack {
       }),
       environment: {
         TABLE_NAME: documentTable.tableName,
-        OCR_FAILURE_API_URL: 'https://virtserver.swaggerhub.com/agroamazonia/fast-ocr/1.0.0/reportar-falha-ocr'
+        OCR_FAILURE_API_URL: ocrFailureApiUrl,
+        OCR_FAILURE_AUTH_URL: ocrFailureAuthUrl,
+        OCR_FAILURE_CLIENT_ID: ocrFailureClientId,
+        OCR_FAILURE_CLIENT_SECRET: ocrFailureClientSecret,
+        OCR_FAILURE_USERNAME: ocrFailureUsername,
+        OCR_FAILURE_PASSWORD: ocrFailurePassword
       },
       timeout: cdk.Duration.seconds(60),
       memorySize: 256
@@ -148,6 +168,20 @@ export class AgroAmazoniaStack extends cdk.Stack {
     });
 
     documentTable.grantReadWriteData(sendToProtheusLambda);
+
+    // Lambda: Update Metrics
+    const updateMetricsLambda = new lambda.Function(this, 'UpdateMetricsFunction', {
+      runtime: lambda.Runtime.PYTHON_3_11,
+      handler: 'handler.lambda_handler',
+      code: lambda.Code.fromAsset('../backend/lambdas/update_metrics'),
+      environment: {
+        TABLE_NAME: documentTable.tableName
+      },
+      timeout: cdk.Duration.seconds(30),
+      memorySize: 256
+    });
+
+    documentTable.grantReadWriteData(updateMetricsLambda);
 
     // Lambda: Check Textract
     const checkTextractLambda = new lambda.Function(this, 'CheckTextractFunction', {
@@ -232,14 +266,15 @@ export class AgroAmazoniaStack extends cdk.Stack {
     );
 
     // Step Functions State Machine
+    // Nota: start_time é salvo no DynamoDB pelo notifyTask, não precisa passar entre estados
     const notifyTask = new tasks.LambdaInvoke(this, 'NotifyReceipt', {
       lambdaFunction: notifyReceiptLambda,
-      outputPath: '$.Payload'
+      resultPath: '$.notify_result'
     });
 
     const checkTextractTask = new tasks.LambdaInvoke(this, 'CheckTextract', {
       lambdaFunction: checkTextractLambda,
-      outputPath: '$.Payload'
+      resultPath: '$.textract_check'
     });
 
     // Textract Start Job
@@ -281,12 +316,12 @@ export class AgroAmazoniaStack extends cdk.Stack {
     });
 
     const checkChoice = new sfn.Choice(this, 'NeedsTextract?')
-      .when(sfn.Condition.booleanEquals('$.needs_textract', true), mapState)
+      .when(sfn.Condition.booleanEquals('$.textract_check.Payload.needs_textract', true), mapState)
       .otherwise(skipTextract);
 
     const processorTask = new tasks.LambdaInvoke(this, 'ProcessResults', {
       lambdaFunction: processorLambda,
-      outputPath: '$.Payload'
+      resultPath: '$.processor_result'
     });
 
     const parseXmlTask = new tasks.LambdaInvoke(this, 'ParseXml', {
@@ -308,17 +343,61 @@ export class AgroAmazoniaStack extends cdk.Stack {
 
     const validateTask = new tasks.LambdaInvoke(this, 'ValidateRules', {
       lambdaFunction: validateRulesLambda,
-      outputPath: '$.Payload'
+      resultPath: '$.validation_result'
     });
 
     const reportFailureTask = new tasks.LambdaInvoke(this, 'ReportOcrFailure', {
       lambdaFunction: reportOcrFailureLambda,
-      outputPath: '$.Payload'
+      resultPath: '$.failure_result'
     });
 
     const sendToProtheusTask = new tasks.LambdaInvoke(this, 'SendToProtheus', {
       lambdaFunction: sendToProtheusLambda,
+      resultPath: '$.protheus_result'
+    });
+
+    // Preparar dados para UpdateMetrics quando há sucesso (protheus_result)
+    // start_time será buscado do DynamoDB pelo Lambda, não precisa passar
+    const prepareMetricsDataSuccess = new sfn.Pass(this, 'PrepareMetricsDataSuccess', {
+      parameters: {
+        'process_id.$': '$.process_id',
+        'status': 'COMPLETED',
+        'protheus_response.$': '$.protheus_result.Payload',
+        'failure_result': {}
+      },
+      resultPath: '$.metrics_input'
+    });
+
+    // Preparar dados para UpdateMetrics quando há falha (failure_result)
+    // start_time será buscado do DynamoDB pelo Lambda, não precisa passar
+    const prepareMetricsDataFailure = new sfn.Pass(this, 'PrepareMetricsDataFailure', {
+      parameters: {
+        'process_id.$': '$.process_id',
+        'status': 'FAILED',
+        'protheus_response': {},
+        'failure_result.$': '$.failure_result.Payload'
+      },
+      resultPath: '$.metrics_input'
+    });
+
+    // Usar fromJsonPathAt para passar todo o objeto metrics_input diretamente
+    // Isso evita ter que acessar campos individuais que podem não existir
+    const updateMetricsTask = new tasks.LambdaInvoke(this, 'UpdateMetrics', {
+      lambdaFunction: updateMetricsLambda,
+      payload: sfn.TaskInput.fromJsonPathAt('$.metrics_input'),
       outputPath: '$.Payload'
+    });
+
+    const notifyErrorTask = new tasks.SnsPublish(this, 'NotifyError', {
+      topic: errorTopic,
+      subject: 'Lambda Error - AgroAmazonia',
+      message: sfn.TaskInput.fromObject({
+        'error': sfn.JsonPath.stringAt('$.error.Error'),
+        'cause': sfn.JsonPath.stringAt('$.error.Cause'),
+        'process_id': sfn.JsonPath.stringAt('$.process_id'),
+        'timestamp': sfn.JsonPath.stringAt('$$.State.EnteredTime'),
+        'state_name': sfn.JsonPath.stringAt('$$.State.Name')
+      })
     });
 
     const successState = new sfn.Succeed(this, 'ProcessSuccess');
@@ -326,11 +405,26 @@ export class AgroAmazoniaStack extends cdk.Stack {
 
     // Choice após validação
     const validationChoice = new sfn.Choice(this, 'HasValidationFailures?')
-      .when(sfn.Condition.stringEquals('$.validation_status', 'FAILED'), reportFailureTask)
+      .when(sfn.Condition.stringEquals('$.validation_result.Payload.validation_status', 'FAILED'), reportFailureTask)
       .otherwise(sendToProtheusTask);
 
-    sendToProtheusTask.next(successState);
-    reportFailureTask.next(failureState);
+    sendToProtheusTask.next(prepareMetricsDataSuccess);
+    reportFailureTask.next(prepareMetricsDataFailure);
+    prepareMetricsDataSuccess.next(updateMetricsTask);
+    prepareMetricsDataFailure.next(updateMetricsTask);
+    updateMetricsTask.next(successState);
+    
+    // Catch para capturar falhas e enviar para SNS
+    updateMetricsTask.addCatch(notifyErrorTask, { resultPath: '$.error' });
+    notifyErrorTask.next(failureState);
+    
+    // Adicionar catch em todos os tasks principais para notificar erros
+    notifyTask.addCatch(notifyErrorTask, { resultPath: '$.error' });
+    checkTextractTask.addCatch(notifyErrorTask, { resultPath: '$.error' });
+    processorTask.addCatch(notifyErrorTask, { resultPath: '$.error' });
+    parallelParsing.addCatch(notifyErrorTask, { resultPath: '$.error' });
+    validateTask.addCatch(notifyErrorTask, { resultPath: '$.error' });
+    sendToProtheusTask.addCatch(notifyErrorTask, { resultPath: '$.error' });
 
     mapState.next(processorTask);
     skipTextract.next(processorTask);
@@ -344,12 +438,7 @@ export class AgroAmazoniaStack extends cdk.Stack {
       .next(checkTextractTask)
       .next(checkChoice);
 
-    // Adicionar catch em cada task principal
-    notifyTask.addCatch(reportFailureTask, { resultPath: '$.error' });
-    checkTextractTask.addCatch(reportFailureTask, { resultPath: '$.error' });
-    processorTask.addCatch(reportFailureTask, { resultPath: '$.error' });
-    parallelParsing.addCatch(reportFailureTask, { resultPath: '$.error' });
-    validateTask.addCatch(reportFailureTask, { resultPath: '$.error' });
+
 
     const stateMachine = new sfn.StateMachine(this, 'DocumentProcessorStateMachine', {
       stateMachineName: 'DocumentProcessorWorkflow',
@@ -460,6 +549,11 @@ export class AgroAmazoniaStack extends cdk.Stack {
     new cdk.CfnOutput(this, 'ApiKeysSecretArn', {
       value: apiKeysSecret.secretArn,
       description: 'Secrets Manager ARN for API Keys'
+    });
+
+    new cdk.CfnOutput(this, 'ErrorTopicArn', {
+      value: errorTopic.topicArn,
+      description: 'SNS Topic ARN for Lambda Errors'
     });
   }
 }

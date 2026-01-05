@@ -4,7 +4,7 @@ from fastapi import APIRouter, HTTPException
 from src.models.api import (
     XmlPresignedUrlRequest, DocsPresignedUrlRequest, DocsPresignedUrlResponse,
     ProcessStartRequest, ProcessStartResponse,
-    ProcessResponse
+    ProcessResponse, UpdateFileMetadataRequest, UpdateFileMetadataResponse
 )
 from src.services.process_service import ProcessService
 
@@ -74,7 +74,8 @@ async def get_xml_presigned_url(request: XmlPresignedUrlRequest):
             request.process_id,
             request.file_name,
             request.file_type,
-            'DANFE'
+            'DANFE',
+            request.metadados
         )
         return result
     except ValueError as e:
@@ -82,33 +83,22 @@ async def get_xml_presigned_url(request: XmlPresignedUrlRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.post("/presigned-url/docs", response_model=DocsPresignedUrlResponse, summary="2. Upload Documentos Adicionais", 
-    description="""Segundo passo: gera URLs para upload de documentos extras (PDFs).
+@router.post("/presigned-url/docs", response_model=DocsPresignedUrlResponse, summary="2. Upload Documento Adicional", 
+    description="""Segundo passo: gera URL para upload de um documento extra (PDF).
     
     **Autenticação**: Requer header `x-api-key: agroamazonia_key_<codigo>`
     """,
     responses={
         200: {
-            "description": "URLs de upload geradas com sucesso",
+            "description": "URL de upload gerada com sucesso",
             "content": {
                 "application/json": {
                     "example": {
-                        "urls": [
-                            {
-                                "upload_url": "https://agroamazonia-raw-documents-481665100875.s3.amazonaws.com/processes/7d48cd96-c099-48dd-bbb6-d4fe8b2de318/docs/pedido.pdf?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=AKIAXAJL2FRFUBK54PNR%2F20251201%2Fus-east-1%2Fs3%2Faws4_request&X-Amz-Date=20251201T160000Z&X-Amz-Expires=3600&X-Amz-SignedHeaders=content-type%3Bhost&X-Amz-Signature=abc123def456",
-                                "file_key": "processes/7d48cd96-c099-48dd-bbb6-d4fe8b2de318/docs/pedido.pdf",
-                                "file_name": "pedido.pdf",
-                                "content_type": "application/pdf",
-                                "doc_type": "ADDITIONAL"
-                            },
-                            {
-                                "upload_url": "https://agroamazonia-raw-documents-481665100875.s3.amazonaws.com/processes/7d48cd96-c099-48dd-bbb6-d4fe8b2de318/docs/nota.pdf?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=AKIAXAJL2FRFUBK54PNR%2F20251201%2Fus-east-1%2Fs3%2Faws4_request&X-Amz-Date=20251201T160000Z&X-Amz-Expires=3600&X-Amz-SignedHeaders=content-type%3Bhost&X-Amz-Signature=def789ghi012",
-                                "file_key": "processes/7d48cd96-c099-48dd-bbb6-d4fe8b2de318/docs/nota.pdf",
-                                "file_name": "nota.pdf",
-                                "content_type": "application/pdf",
-                                "doc_type": "ADDITIONAL"
-                            }
-                        ]
+                        "upload_url": "https://agroamazonia-raw-documents-481665100875.s3.amazonaws.com/processes/7d48cd96-c099-48dd-bbb6-d4fe8b2de318/docs/pedido.pdf?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=AKIAXAJL2FRFUBK54PNR%2F20251201%2Fus-east-1%2Fs3%2Faws4_request&X-Amz-Date=20251201T160000Z&X-Amz-Expires=3600&X-Amz-SignedHeaders=content-type%3Bhost&X-Amz-Signature=abc123def456",
+                        "file_key": "processes/7d48cd96-c099-48dd-bbb6-d4fe8b2de318/docs/pedido.pdf",
+                        "file_name": "pedido.pdf",
+                        "content_type": "application/pdf",
+                        "doc_type": "ADDITIONAL"
                     }
                 }
             }
@@ -123,12 +113,14 @@ async def get_xml_presigned_url(request: XmlPresignedUrlRequest):
         }
     })
 async def get_docs_presigned_url(request: DocsPresignedUrlRequest):
-    """Gera URLs para upload de múltiplos documentos adicionais.
+    """Gera URL para upload de um documento adicional.
     
     - **process_id**: ID do processo
-    - **files**: Array de arquivos com file_name e file_type
+    - **file_name**: Nome do arquivo
+    - **file_type**: Content-Type do arquivo (padrão: application/pdf)
+    - **metadados**: Metadados adicionais do arquivo (opcional)
     
-    **Após receber as URLs**, faça um PUT request para cada uma:
+    **Após receber a URL**, faça um PUT request:
     ```bash
     curl -X PUT "<upload_url>" \
       -H "Content-Type: application/pdf" \
@@ -136,16 +128,14 @@ async def get_docs_presigned_url(request: DocsPresignedUrlRequest):
     ```
     """
     try:
-        urls = []
-        for file_info in request.files:
-            result = service.generate_presigned_url(
-                request.process_id,
-                file_info.file_name,
-                'application/pdf',
-                'ADDITIONAL'
-            )
-            urls.append(result)
-        return {"urls": urls}
+        result = service.generate_presigned_url(
+            request.process_id,
+            request.file_name,
+            "application/pdf",
+            "ADDITIONAL",
+            request.metadados
+        )
+        return result
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
@@ -322,4 +312,52 @@ async def get_validations(process_id: str):
         results = service.get_validation_results(process_id)
         return {"validations": results}
     except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.put("/file/metadata", response_model=UpdateFileMetadataResponse, summary="Atualizar Metadados de Arquivo",
+    description="""Atualiza os metadados JSON de um arquivo específico.
+    
+    **Autenticação**: Requer header `x-api-key: agroamazonia_key_<codigo>`
+    
+    Útil para corrigir ou atualizar metadados após o upload do arquivo.
+    """,
+    responses={
+        200: {
+            "description": "Metadados atualizados com sucesso",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "success": True,
+                        "message": "Metadados atualizados com sucesso",
+                        "file_name": "pedido_compra.pdf",
+                        "metadados": {
+                            "moeda": "BRL",
+                            "pedidoFornecedor": "369763"
+                        }
+                    }
+                }
+            }
+        },
+        404: {
+            "description": "Arquivo não encontrado",
+            "content": {"application/json": {"example": {"detail": "Arquivo não encontrado"}}}
+        },
+        500: {
+            "description": "Erro ao atualizar metadados",
+            "content": {"application/json": {"example": {"detail": "Erro ao atualizar metadados"}}}
+        }
+    })
+async def update_file_metadata(request: UpdateFileMetadataRequest):
+    """Atualiza metadados JSON de um arquivo específico"""
+    try:
+        result = service.update_file_metadata(
+            request.process_id,
+            request.file_name,
+            request.metadados
+        )
+        return result
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error updating file metadata: {traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=str(e))

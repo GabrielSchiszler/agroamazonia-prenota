@@ -19,6 +19,7 @@ logger.info("Environment variables loaded")
 from src.controllers.document_controller import router as document_router
 from src.controllers.process_controller import router as process_router
 from src.controllers.rules_controller import router as rules_router
+from src.controllers.dashboard_controller import router as dashboard_router
 from src.security import get_api_key_scheme
 from fastapi import Request, HTTPException
 import json
@@ -180,6 +181,7 @@ async def auth_middleware(request: Request, call_next):
 app.include_router(process_router)
 app.include_router(rules_router)
 app.include_router(document_router)
+app.include_router(dashboard_router)
 
 @app.get("/health")
 async def health():

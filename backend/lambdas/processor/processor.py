@@ -45,27 +45,14 @@ def handler(event, context):
         
         logger.info(f"Saved Textract result for {result['file_name']}")
     
-    # Atualiza status do processo para COMPLETED
-    items = table.query(
-        KeyConditionExpression='PK = :pk',
-        ExpressionAttributeValues={':pk': pk}
-    )['Items']
-    
-    for item in items:
-        if item['SK'] == 'METADATA':
-            table.update_item(
-                Key={'PK': pk, 'SK': 'METADATA'},
-                UpdateExpression='SET #status = :status',
-                ExpressionAttributeNames={'#status': 'STATUS'},
-                ExpressionAttributeValues={':status': 'COMPLETED'}
-            )
-            logger.info(f"Updated process status to COMPLETED")
-            break
+    # NOTA: Não atualizar status aqui - o status deve permanecer PROCESSING
+    # até o final do fluxo (COMPLETED em send_to_protheus ou FAILED em report_ocr_failure)
+    # Isso garante que o frontend veja o status correto durante todo o processamento
     
     result = {
         'process_id': process_id,
         'process_type': process_type,
-        'status': 'COMPLETED',
+        'status': 'PROCESSING',  # Manter como PROCESSING, não COMPLETED
         'results_count': len(textract_results),
         'timestamp': timestamp
     }

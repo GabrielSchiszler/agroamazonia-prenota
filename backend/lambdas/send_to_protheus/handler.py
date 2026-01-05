@@ -164,7 +164,7 @@ def lambda_handler(event, context):
                 codigo = codigo.lstrip('0') or '0'
             
             item = {
-                "item": produto.get('item', '').zfill(4),
+                "item": (produto.get('item') or '').zfill(4),
                 "codigoProduto": codigo,
                 "descricaoProduto": produto.get('descricao') or "",
                 "unidadeMedida": produto.get('unidade') or "",
