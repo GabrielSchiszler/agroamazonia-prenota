@@ -30,6 +30,7 @@ infrastructure/*.d.ts
 # Environment
 .env
 .env.local
+.env.homolog
 .env.*.local
 
 # Logs
