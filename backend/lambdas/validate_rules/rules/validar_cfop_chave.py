@@ -1,0 +1,262 @@
+import logging
+import os
+import boto3
+
+logger = logging.getLogger()
+
+def normalize_cfop(cfop):
+    """Normaliza o CFOP removendo espaços e caracteres especiais"""
+    if not cfop:
+        return ""
+    return str(cfop).strip()
+
+def get_all_cfop_mappings_direct(table, cfop):
+    """Busca TODOS os mapeamentos CFOP diretamente no DynamoDB usando boto3
+    Retorna lista de mapeamentos encontrados (pode ter 0, 1 ou mais)
+    """
+    try:
+        # Buscar registro CFOP#{cfop}
+        pk = "CFOP_OPERATION"
+        sk = f"CFOP#{cfop}"
+        
+        response = table.get_item(Key={'PK': pk, 'SK': sk})
+        
+        if 'Item' not in response:
+            logger.info(f"[validar_cfop_chave] CFOP {cfop} não encontrado no DynamoDB")
+            return []
+        
+        cfop_item = response['Item']
+        
+        # Verificar se está ativo
+        if not cfop_item.get('ATIVO', True):
+            logger.info(f"[validar_cfop_chave] CFOP {cfop} encontrado mas está inativo")
+            return []
+        
+        # Buscar TODOS os mapping_ids (pode ter MAPPING_ID ou MAPPING_IDS)
+        mapping_ids = []
+        if cfop_item.get('MAPPING_ID'):
+            mapping_ids.append(cfop_item.get('MAPPING_ID'))
+        if cfop_item.get('MAPPING_IDS'):
+            mapping_ids.extend(cfop_item.get('MAPPING_IDS', []))
+        
+        # Remover duplicatas
+        mapping_ids = list(set(mapping_ids))
+        
+        if not mapping_ids:
+            logger.info(f"[validar_cfop_chave] CFOP {cfop} encontrado mas sem mapping_ids")
+            return []
+        
+        logger.info(f"[validar_cfop_chave] CFOP {cfop} encontrado com {len(mapping_ids)} mapeamento(s): {mapping_ids}")
+        
+        # Buscar todos os registros principais
+        mappings = []
+        for mapping_id in mapping_ids:
+            mapping_sk = f"MAPPING#{mapping_id}"
+            mapping_response = table.get_item(Key={'PK': pk, 'SK': mapping_sk})
+            
+            if 'Item' not in mapping_response:
+                continue
+            
+            mapping_item = mapping_response['Item']
+            
+            # Verificar se o registro principal está ativo
+            if not mapping_item.get('ATIVO', True):
+                continue
+            
+            # Adicionar à lista de mapeamentos encontrados
+            mappings.append({
+                'id': mapping_id,
+                'chave': mapping_item.get('CHAVE', ''),
+                'descricao': mapping_item.get('DESCRICAO', ''),
+                'cfop': mapping_item.get('CFOP', ''),
+                'operacao': mapping_item.get('OPERACAO', ''),
+                'regra': mapping_item.get('REGRA', ''),
+                'observacao': mapping_item.get('OBSERVACAO', ''),
+                'pedido_compra': mapping_item.get('PEDIDO_COMPRA', False),
+                'ativo': mapping_item.get('ATIVO', True)
+            })
+        
+        return mappings
+    except Exception as e:
+        logger.error(f"[validar_cfop_chave] Erro ao buscar CFOP no DynamoDB: {str(e)}")
+        return []
+
+def validate(danfe_data, ocr_docs):
+    """
+    Valida se o CFOP do DANFE está mapeado na tabela Chave x CFOP
+    e retorna a chave correspondente.
+    """
+    logger.info(f"[validar_cfop_chave.py] Starting validation with {len(ocr_docs)} docs")
+    
+    # Usar boto3 diretamente para acessar DynamoDB
+    dynamodb = boto3.resource('dynamodb', region_name='us-east-1')
+    table = dynamodb.Table(os.environ.get('TABLE_NAME', 'DocumentProcessorTable'))
+    
+    # Extrair CFOP do DANFE
+    danfe_cfop = None
+    
+    # Tentar extrair CFOP do DANFE (pode estar em diferentes locais)
+    # O XML parseado pode ter 'produtos' ou 'itens'
+    produtos = danfe_data.get('produtos', []) or danfe_data.get('itens', [])
+    
+    if produtos and len(produtos) > 0:
+        # Pegar CFOP do primeiro produto/item (geralmente todos têm o mesmo CFOP)
+        first_item = produtos[0]
+        danfe_cfop = first_item.get('cfop') or first_item.get('CFOP') or first_item.get('codigoOperacao')
+        logger.info(f"[validar_cfop_chave] CFOP encontrado no primeiro produto: {danfe_cfop}")
+    
+    # Se não encontrou no produto/item, tentar no nível do documento
+    if not danfe_cfop:
+        danfe_cfop = danfe_data.get('cfop') or danfe_data.get('CFOP')
+        if danfe_cfop:
+            logger.info(f"[validar_cfop_chave] CFOP encontrado no nível do documento: {danfe_cfop}")
+    
+    # Log da estrutura para debug
+    logger.info(f"[validar_cfop_chave] Estrutura danfe_data keys: {list(danfe_data.keys())}")
+    if produtos:
+        logger.info(f"[validar_cfop_chave] Primeiro produto keys: {list(produtos[0].keys()) if produtos else 'N/A'}")
+    
+    if not danfe_cfop:
+        logger.warning("[validar_cfop_chave] CFOP não encontrado no DANFE")
+        return {
+            'rule': 'validar_cfop_chave',
+            'status': 'FAILED',
+            'danfe_value': 'NÃO ENCONTRADO',
+            'message': 'CFOP não encontrado no DANFE',
+            'comparisons': [],
+            'corrections': []
+        }
+    
+    danfe_cfop_normalized = normalize_cfop(danfe_cfop)
+    logger.info(f"[validar_cfop_chave] DANFE CFOP: {danfe_cfop_normalized}")
+    
+    # Buscar TODOS os mapeamentos correspondentes no DynamoDB
+    cfop_mappings = get_all_cfop_mappings_direct(table, danfe_cfop_normalized)
+    
+    comparisons = []
+    all_match = True
+    corrections = []
+    
+    # Validar quantidade de mapeamentos encontrados
+    if len(cfop_mappings) == 0:
+        # Nenhum mapeamento encontrado = ERRO
+        logger.warning(f"[validar_cfop_chave] CFOP {danfe_cfop_normalized} NÃO encontrado na tabela Chave x CFOP")
+        all_match = False
+        
+        comparisons.append({
+            'doc_file': 'DANFE',
+            'doc_value': f"CFOP: {danfe_cfop_normalized}",
+            'chave': None,
+            'descricao': None,
+            'operacao': None,
+            'status': 'MISMATCH',
+            'source': 'DynamoDB',
+            'message': 'CFOP não encontrado na tabela de mapeamento'
+        })
+        
+        message = f"CFOP {danfe_cfop_normalized} não encontrado na tabela Chave x CFOP"
+        danfe_value = f"{danfe_cfop_normalized} (NÃO MAPEADO)"
+        cfop_data = None
+        
+    elif len(cfop_mappings) == 1:
+        # Exatamente 1 mapeamento encontrado = SUCESSO
+        cfop_mapping = cfop_mappings[0]
+        chave_encontrada = cfop_mapping.get('chave', '')
+        descricao = cfop_mapping.get('descricao', '')
+        operacao = cfop_mapping.get('operacao', '')
+        regra_text = cfop_mapping.get('regra', '')
+        observacao = cfop_mapping.get('observacao', '')
+        
+        logger.info(f"[validar_cfop_chave] CFOP {danfe_cfop_normalized} encontrado! Chave: {chave_encontrada}, Descrição: {descricao}")
+        
+        comparisons.append({
+            'doc_file': 'DANFE',
+            'doc_value': f"CFOP: {danfe_cfop_normalized} → Chave: {chave_encontrada}",
+            'chave': chave_encontrada,
+            'descricao': descricao,
+            'operacao': operacao,
+            'regra': regra_text,
+            'observacao': observacao,
+            'cfop_encontrado': danfe_cfop_normalized,
+            'status': 'MATCH',
+            'source': 'DynamoDB'
+        })
+        
+        message = f"CFOP {danfe_cfop_normalized} mapeado para chave {chave_encontrada}"
+        danfe_value = f"{danfe_cfop_normalized} → {chave_encontrada}"
+        
+        cfop_data = {
+            'cfop': danfe_cfop_normalized,
+            'chave': chave_encontrada,
+            'operacao': operacao,
+            'descricao': descricao,
+            'regra': regra_text,
+            'observacao': observacao
+        }
+        
+    else:
+        # Mais de 1 mapeamento encontrado = ERRO (ambiguidade)
+        logger.error(f"[validar_cfop_chave] CFOP {danfe_cfop_normalized} encontrado com MÚLTIPLOS mapeamentos ({len(cfop_mappings)})! Isso causa ambiguidade.")
+        all_match = False
+        
+        # Adicionar todos os mapeamentos encontrados para exibição no frontend
+        chaves_encontradas = []
+        for idx, mapping in enumerate(cfop_mappings, 1):
+            chave = mapping.get('chave', '')
+            descricao = mapping.get('descricao', '')
+            chaves_encontradas.append(f"{chave} ({descricao})")
+            
+            comparisons.append({
+                'doc_file': 'DANFE',
+                'doc_value': f"CFOP: {danfe_cfop_normalized} → Chave {idx}: {chave}",
+                'chave': chave,
+                'descricao': descricao,
+                'operacao': mapping.get('operacao', ''),
+                'regra': mapping.get('regra', ''),
+                'observacao': mapping.get('observacao', ''),
+                'cfop_encontrado': danfe_cfop_normalized,
+                'status': 'MISMATCH',
+                'source': 'DynamoDB',
+                'message': f'Mapeamento {idx} de {len(cfop_mappings)} encontrados'
+            })
+        
+        message = f"CFOP {danfe_cfop_normalized} encontrado com MÚLTIPLOS mapeamentos ({len(cfop_mappings)}): {', '.join(chaves_encontradas)}"
+        danfe_value = f"{danfe_cfop_normalized} (MÚLTIPLOS MAPEAMENTOS: {len(cfop_mappings)})"
+        
+        # Salvar todos os mapeamentos encontrados para exibição no frontend
+        cfop_data = {
+            'cfop': danfe_cfop_normalized,
+            'chave': None,  # Não há chave única
+            'operacao': None,
+            'descricao': None,
+            'regra': None,
+            'observacao': None,
+            'multiple_mappings': True,
+            'mappings_count': len(cfop_mappings),
+            'mappings': [
+                {
+                    'chave': m.get('chave', ''),
+                    'descricao': m.get('descricao', ''),
+                    'operacao': m.get('operacao', ''),
+                    'regra': m.get('regra', ''),
+                    'observacao': m.get('observacao', '')
+                }
+                for m in cfop_mappings
+            ]
+        }
+    
+    result = {
+        'rule': 'validar_cfop_chave',
+        'status': 'PASSED' if all_match else 'FAILED',
+        'danfe_value': danfe_value,
+        'message': message,
+        'comparisons': comparisons,
+        'corrections': corrections
+    }
+    
+    # Adicionar dados encontrados no nível raiz para facilitar acesso no Protheus
+    if cfop_data:
+        result['cfop_data'] = cfop_data
+    
+    return result
+

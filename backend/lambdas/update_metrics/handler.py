@@ -248,7 +248,7 @@ def update_daily_metrics(date_key, status, processing_time, error_type, hour, pr
         print(f"[update_daily_metrics] Resposta do get_item: Item existe = {'Item' in response}")
         
         if 'Item' not in response:
-            # Criar item inicial
+            # Criar item inicial com todos os mapas vazios
             print(f"[update_daily_metrics] Item não existe, criando novo item inicial")
             table.put_item(
                 Item={
@@ -273,70 +273,104 @@ def update_daily_metrics(date_key, status, processing_time, error_type, hour, pr
             print(f"  - failed_count: {existing_item.get('failed_count', 0)}")
             print(f"  - processes_by_type: {existing_item.get('processes_by_type', {})}")
             print(f"  - failed_rules: {existing_item.get('failed_rules', {})}")
+            
+            # Verificar se os mapas existem (podem não existir em itens criados antes)
+            needs_map_init = False
+            set_parts = []
+            
+            if 'processes_by_hour' not in existing_item:
+                set_parts.append('processes_by_hour = :empty_map')
+                needs_map_init = True
+            if 'failure_reasons' not in existing_item:
+                set_parts.append('failure_reasons = :empty_map')
+                needs_map_init = True
+            if 'processes_by_type' not in existing_item:
+                set_parts.append('processes_by_type = :empty_map')
+                needs_map_init = True
+            if 'failed_rules' not in existing_item:
+                set_parts.append('failed_rules = :empty_map')
+                needs_map_init = True
+            
+            if needs_map_init:
+                # Criar mapas faltantes em uma atualização separada (antes de usar ADD)
+                print(f"[update_daily_metrics] Inicializando mapas faltantes: {', '.join(set_parts)}")
+                table.update_item(
+                    Key={'PK': f'METRICS#{date_key}', 'SK': 'SUMMARY'},
+                    UpdateExpression='SET ' + ', '.join(set_parts),
+                    ExpressionAttributeValues={':empty_map': {}}
+                )
+                print(f"[update_daily_metrics] ✓ Mapas inicializados")
         
         # Agora fazer o update
         # Usar ADD para campos numéricos simples e SET para mapas aninhados
-        update_expr = 'ADD total_count :inc, total_time :time'
         expr_names = {}
         expr_values = {
             ':inc': 1,
             ':time': Decimal(str(processing_time))
         }
         
-        # Contadores por status (ADD funciona para campos numéricos)
-        if status == 'SUCCESS':
-            update_expr += ', success_count :succ'
-            expr_values[':succ'] = 1
-        elif status == 'FAILED':
-            update_expr += ', failed_count :fail'
-            expr_values[':fail'] = 1
-        
-        # Para mapas aninhados, precisamos garantir que os mapas existam primeiro
-        # Usar SET para garantir que os mapas existam, depois ADD para incrementar valores
-        set_parts = []
+        # Coletar todos os campos ADD em uma única lista
         add_parts = []
         
-        # Garantir que os mapas existam (criar se não existirem)
-        set_parts.append('processes_by_hour = if_not_exists(processes_by_hour, :empty_map)')
-        set_parts.append('failure_reasons = if_not_exists(failure_reasons, :empty_map)')
-        set_parts.append('processes_by_type = if_not_exists(processes_by_type, :empty_map)')
-        set_parts.append('failed_rules = if_not_exists(failed_rules, :empty_map)')
-        expr_values[':empty_map'] = {}
+        # Campos numéricos simples (ADD)
+        add_parts.append('total_count :inc')
+        add_parts.append('total_time :time')
         
-        # Contador por hora (usar ADD para incrementar valores em mapas)
+        # Contadores por status (ADD funciona para campos numéricos)
+        if status == 'SUCCESS':
+            add_parts.append('success_count :succ')
+            expr_values[':succ'] = 1
+        elif status == 'FAILED':
+            add_parts.append('failed_count :fail')
+            expr_values[':fail'] = 1
+        
+        # Para mapas aninhados, usar SET com if_not_exists para evitar sobreposição
+        # Separar SET e ADD em seções diferentes para evitar conflitos
+        
+        set_parts = []
+        
+        # Contador por hora (usar SET com if_not_exists e depois ADD)
         hour_key = f'#h{hour}'
-        add_parts.append(f'processes_by_hour.{hour_key} :hour_inc')
+        hour_path = f'processes_by_hour.{hour_key}'
+        set_parts.append(f'{hour_path} = if_not_exists({hour_path}, :zero) + :hour_inc')
         expr_names[hour_key] = str(hour)
         expr_values[':hour_inc'] = 1
+        expr_values[':zero'] = 0
         
         # Contador por tipo de erro
         if error_type:
             error_key = f'#e{len(expr_names)}'
-            add_parts.append(f'failure_reasons.{error_key} :error_inc')
+            error_path = f'failure_reasons.{error_key}'
+            set_parts.append(f'{error_path} = if_not_exists({error_path}, :zero) + :error_inc')
             expr_names[error_key] = error_type
             expr_values[':error_inc'] = 1
         
         # Contador por tipo de processo
         type_key = f'#t{len(expr_names)}'
-        add_parts.append(f'processes_by_type.{type_key} :type_inc')
+        type_path = f'processes_by_type.{type_key}'
+        set_parts.append(f'{type_path} = if_not_exists({type_path}, :zero) + :type_inc')
         expr_names[type_key] = process_type
         expr_values[':type_inc'] = 1
         
         # Contador por regra que falhou (cada regra que falhou conta +1)
         for idx, rule_name in enumerate(failed_rules):
             rule_key = f'#r{idx}'
+            rule_path = f'failed_rules.{rule_key}'
             rule_inc_key = f':rule_inc_{idx}'
             
-            add_parts.append(f'failed_rules.{rule_key} {rule_inc_key}')
+            set_parts.append(f'{rule_path} = if_not_exists({rule_path}, :zero) + {rule_inc_key}')
             expr_names[rule_key] = rule_name
             expr_values[rule_inc_key] = 1
             print(f"Incrementando contador para regra: {rule_name} (chave: {rule_key}, valor: 1)")
         
-        # Combinar ADD e SET
-        if set_parts:
-            update_expr += ' SET ' + ', '.join(set_parts)
+        # Construir UpdateExpression: SET para mapas, ADD para campos numéricos
+        update_expr_parts = []
         if add_parts:
-            update_expr += ' ADD ' + ', '.join(add_parts)
+            update_expr_parts.append('ADD ' + ', '.join(add_parts))
+        if set_parts:
+            update_expr_parts.append('SET ' + ', '.join(set_parts))
+        
+        update_expr = ' '.join(update_expr_parts)
         
         print(f"\n[update_daily_metrics] Construindo UpdateExpression...")
         print(f"[update_daily_metrics] UpdateExpression final: {update_expr}")
@@ -404,25 +438,33 @@ def update_monthly_metrics(month_key, status, processing_time, process_type='UNK
                 }
             )
         
-        update_expr = 'ADD total_count :inc, total_time :time'
+        # Coletar todos os campos ADD em uma única lista
+        add_parts = []
         expr_names = {}
         expr_values = {
             ':inc': 1,
             ':time': Decimal(str(processing_time))
         }
         
+        # Campos numéricos simples (ADD)
+        add_parts.append('total_count :inc')
+        add_parts.append('total_time :time')
+        
         if status == 'SUCCESS':
-            update_expr += ', success_count :succ'
+            add_parts.append('success_count :succ')
             expr_values[':succ'] = 1
         elif status == 'FAILED':
-            update_expr += ', failed_count :fail'
+            add_parts.append('failed_count :fail')
             expr_values[':fail'] = 1
         
         # Contador por tipo de processo
         type_key = f'#t{len(expr_names)}'
-        update_expr += f', processes_by_type.{type_key} :type_inc'
+        add_parts.append(f'processes_by_type.{type_key} :type_inc')
         expr_names[type_key] = process_type
         expr_values[':type_inc'] = 1
+        
+        # Construir UpdateExpression com uma única seção ADD
+        update_expr = 'ADD ' + ', '.join(add_parts)
         
         table.update_item(
             Key={'PK': f'METRICS#{month_key}', 'SK': 'MONTHLY_SUMMARY'},

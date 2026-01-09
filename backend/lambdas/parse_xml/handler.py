@@ -19,52 +19,119 @@ def handler(event, context):
     bucket = os.environ['BUCKET_NAME']
     pk = f"PROCESS#{process_id}"
     
-    # Buscar arquivo XML
-    items = table.query(
-        KeyConditionExpression='PK = :pk',
-        ExpressionAttributeValues={':pk': pk}
-    )['Items']
+    try:
+        # Buscar arquivo XML
+        items = table.query(
+            KeyConditionExpression='PK = :pk',
+            ExpressionAttributeValues={':pk': pk}
+        )['Items']
+        
+        xml_file = None
+        for item in items:
+            if item.get('SK', '').startswith('FILE#') and item.get('FILE_NAME', '').lower().endswith('.xml'):
+                xml_file = item
+                break
+        
+        if not xml_file:
+            error_msg = "XML não encontrado"
+            logger.error(error_msg)
+            update_process_status_to_failed(pk, process_id, error_msg, "XML_NOT_FOUND")
+            raise Exception(error_msg)
+        
+        # Baixar XML do S3
+        file_key = xml_file['FILE_KEY']
+        logger.info(f"Downloading XML: {file_key}")
+        
+        response = s3.get_object(Bucket=bucket, Key=file_key)
+        xml_content = response['Body'].read().decode('utf-8')
+        
+        # Parse XML
+        parsed_data = parse_nfe_xml(xml_content)
+        
+        # Salvar no DynamoDB
+        sk = f"PARSED_XML={xml_file['FILE_NAME']}"
+        parsed_json = json.dumps(parsed_data)
+        logger.info(f"Parsed data size: {len(parsed_json)} bytes")
+        
+        table.put_item(Item={
+            'PK': pk,
+            'SK': sk,
+            'FILE_NAME': xml_file['FILE_NAME'],
+            'PARSED_DATA': parsed_json,
+            'SOURCE': 'XML'
+        })
+        
+        logger.info(f"XML parsed and saved to DynamoDB successfully")
+        
+        return {
+            'process_id': process_id,
+            'process_type': event.get('process_type'),
+            'parsed_data': parsed_data,
+            'source': 'XML'
+        }
     
-    xml_file = None
-    for item in items:
-        if item.get('SK', '').startswith('FILE#') and item.get('FILE_NAME', '').lower().endswith('.xml'):
-            xml_file = item
-            break
-    
-    if not xml_file:
-        raise Exception("XML não encontrado")
-    
-    # Baixar XML do S3
-    file_key = xml_file['FILE_KEY']
-    logger.info(f"Downloading XML: {file_key}")
-    
-    response = s3.get_object(Bucket=bucket, Key=file_key)
-    xml_content = response['Body'].read().decode('utf-8')
-    
-    # Parse XML
-    parsed_data = parse_nfe_xml(xml_content)
-    
-    # Salvar no DynamoDB
-    sk = f"PARSED_XML={xml_file['FILE_NAME']}"
-    parsed_json = json.dumps(parsed_data)
-    logger.info(f"Parsed data size: {len(parsed_json)} bytes")
-    
-    table.put_item(Item={
-        'PK': pk,
-        'SK': sk,
-        'FILE_NAME': xml_file['FILE_NAME'],
-        'PARSED_DATA': parsed_json,
-        'SOURCE': 'XML'
-    })
-    
-    logger.info(f"XML parsed and saved to DynamoDB successfully")
-    
-    return {
-        'process_id': process_id,
-        'process_type': event.get('process_type'),
-        'parsed_data': parsed_data,
-        'source': 'XML'
-    }
+    except Exception as e:
+        error_msg = str(e)
+        error_type = "PARSE_XML_ERROR"
+        logger.error(f"Error parsing XML: {error_msg}")
+        logger.exception("Full traceback:")
+        
+        # Atualizar status para FAILED e salvar erro
+        update_process_status_to_failed(pk, process_id, error_msg, error_type)
+        
+        # Re-raise para que Step Functions capture o erro
+        raise Exception(f"Parse XML failed: {error_msg}")
+
+def update_process_status_to_failed(pk, process_id, error_message, error_type):
+    """Atualiza o status do processo para FAILED e salva informações do erro"""
+    try:
+        from datetime import datetime
+        timestamp = datetime.utcnow().isoformat() + 'Z'
+        
+        # Buscar item METADATA para atualizar
+        metadata_sk = "METADATA"
+        metadata_item = table.get_item(Key={'PK': pk, 'SK': metadata_sk})
+        
+        if 'Item' in metadata_item:
+            # Atualizar status e adicionar erro
+            table.update_item(
+                Key={'PK': pk, 'SK': metadata_sk},
+                UpdateExpression='SET #status = :status, error_info = :error, updated_at = :timestamp',
+                ExpressionAttributeNames={
+                    '#status': 'STATUS'
+                },
+                ExpressionAttributeValues={
+                    ':status': 'FAILED',
+                    ':error': {
+                        'message': error_message,
+                        'type': error_type,
+                        'timestamp': timestamp,
+                        'lambda': 'parse_xml'
+                    },
+                    ':timestamp': timestamp
+                }
+            )
+            logger.info(f"Status atualizado para FAILED para processo {process_id}")
+        else:
+            # Se não existe METADATA, criar
+            table.put_item(Item={
+                'PK': pk,
+                'SK': metadata_sk,
+                'STATUS': 'FAILED',
+                'PROCESS_ID': process_id,
+                'error_info': {
+                    'message': error_message,
+                    'type': error_type,
+                    'timestamp': timestamp,
+                    'lambda': 'parse_xml'
+                },
+                'updated_at': timestamp
+            })
+            logger.info(f"Item METADATA criado com status FAILED para processo {process_id}")
+            
+    except Exception as update_error:
+        logger.error(f"Erro ao atualizar status para FAILED: {update_error}")
+        # Não re-raise para não mascarar o erro original
 
 def parse_nfe_xml(xml_content):
     """Parse XML NFe para estrutura JSON"""

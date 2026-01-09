@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AgroAmazonia - Processos</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="app-container">
+        <!-- Sidebar -->
+        <aside class="sidebar">
+            <div class="sidebar-header">
+                <h1>🌿 AgroAmazonia</h1>
+                <p>Sistema de Processamento</p>
+            </div>
+            
+            <nav class="sidebar-nav">
+                <a href="index.html" class="nav-item">
+                    <span class="nav-icon">📊</span>
+                    <span>Dashboard</span>
+                </a>
+                <a href="processes.html" class="nav-item active">
+                    <span class="nav-icon">📋</span>
+                    <span>Processos</span>
+                </a>
+                <a href="rules.html" class="nav-item">
+                    <span class="nav-icon">⚙️</span>
+                    <span>Regras</span>
+                </a>
+                <a href="settings.html" class="nav-item">
+                    <span class="nav-icon">🔧</span>
+                    <span>Configurações</span>
+                </a>
+            </nav>
+        </aside>
+
+        <!-- Main Content -->
+        <main class="main-content">
+            <header class="topbar">
+                <h2>Processos</h2>
+                <div class="topbar-actions">
+                    <button class="btn-primary" onclick="createNewProcess()">+ Novo Processo</button>
+                </div>
+            </header>
+
+            <div class="content-area">
+                <div id="processesList" class="processes-grid"></div>
+                <div id="processDetails" class="process-details" style="display: none;">
+                    <div class="details-header">
+                        <button class="btn-back" onclick="deselectProcess()">← Voltar</button>
+                        <div class="details-title">
+                            <div>
+                                <h3 id="selectedProcessId"></h3>
+                                <div id="sctaskInfo"></div>
+                            </div>
+                            <div style="display: flex; gap: 10px; align-items: center;">
+                                <button class="btn-icon" onclick="refreshProcess()" title="Atualizar processo">🔄</button>
+                                <span id="selectedProcessStatus" class="status-badge"></span>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="details-grid">
+                        <div class="details-card">
+                            <h4>Informações do Processo</h4>
+                            <div class="info-row">
+                                <span>Tipo:</span>
+                                <strong id="selectedProcessType"></strong>
+                            </div>
+                        </div>
+
+                        <div class="details-card">
+                            <h4>📄 DANFE (Obrigatório)</h4>
+                            <p style="color: #666; font-size: 0.9em; margin-bottom: 10px;">Upload do XML ou PDF da Nota Fiscal</p>
+                            <div class="upload-area">
+                                <input type="file" id="danfeInput" accept=".pdf,.xml" onchange="handleDanfeSelect()">
+                                <label for="danfeInput" class="upload-label">
+                                    <span class="upload-icon">📋</span>
+                                    <span>Upload DANFE (XML)</span>
+                                </label>
+                            </div>
+                            <div style="margin-top: 15px;">
+                                <label style="display: block; margin-bottom: 5px; font-weight: bold; color: #333;">
+                                    📊 Metadados JSON (Opcional)
+                                </label>
+                                <textarea 
+                                    id="danfeMetadata" 
+                                    placeholder='{"moeda": "BRL", "pedidoFornecedor": "369763", "pedidoErp": "023037", ...}'
+                                    style="width: 100%; min-height: 80px; padding: 10px; border: 1px solid #ddd; border-radius: 4px; font-family: monospace; font-size: 0.9em; resize: vertical;"
+                                ></textarea>
+                                <small style="color: #666; display: block; margin-top: 5px;">
+                                    Metadados estruturados que serão usados nas validações (ex: moeda, pedidoFornecedor, pedidoErp, itens, etc.)
+                                </small>
+                            </div>
+                            <div id="danfeList"></div>
+                        </div>
+
+                        <div class="details-card">
+                            <h4>📎 Documentos Adicionais</h4>
+                            <p style="color: #666; font-size: 0.9em; margin-bottom: 10px;">Pedidos de compra e outros documentos</p>
+                            <div class="upload-area">
+                                <input type="file" id="docsInput" accept=".pdf" multiple onchange="handleDocsSelect()">
+                                <label for="docsInput" class="upload-label">
+                                    <span class="upload-icon">📁</span>
+                                    <span>Upload Documentos</span>
+                                </label>
+                            </div>
+                            <div style="margin-top: 15px;">
+                                <label style="display: block; margin-bottom: 5px; font-weight: bold; color: #333;">
+                                    📊 Metadados JSON (Opcional)
+                                </label>
+                                <textarea 
+                                    id="docsMetadata" 
+                                    placeholder='{"moeda": "BRL", "pedidoFornecedor": "369763", "pedidoErp": "023037", "itens": [{"codigoProduto": "...", ...}]}'
+                                    style="width: 100%; min-height: 120px; padding: 10px; border: 1px solid #ddd; border-radius: 4px; font-family: monospace; font-size: 0.9em; resize: vertical;"
+                                ></textarea>
+                                <small style="color: #666; display: block; margin-top: 5px;">
+                                    Metadados estruturados que serão usados nas validações. Exemplo: moeda, pedidoFornecedor, pedidoErp, duplicata, condicaoPagamento, itens, etc.
+                                </small>
+                            </div>
+                            <div id="docsList"></div>
+                        </div>
+
+                        <div class="details-card full-width">
+                            <button onclick="startProcess()" id="startBtn" class="btn-success">
+                                🚀 Iniciar Processamento
+                            </button>
+                        </div>
+
+                        <div class="details-card full-width">
+                            <h4>📊 Dados Extraídos (JSON)</h4>
+                            <div id="extractedData"></div>
+                        </div>
+
+                        <div class="details-card full-width">
+                            <h4>✅ Resultados das Validações</h4>
+                            <div id="textractResults"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <!-- Modal Editar Metadados -->
+    <div id="editMetadataModal" class="modal" style="display: none;">
+        <div class="modal-content" style="max-width: 800px;">
+            <div class="modal-header">
+                <h2>✏️ Editar Metadados JSON</h2>
+                <span class="modal-close" onclick="closeEditMetadataModal()">&times;</span>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label><strong>Arquivo:</strong> <span id="editMetadataFileName"></span></label>
+                </div>
+                <div class="form-group">
+                    <label>Metadados JSON</label>
+                    <textarea 
+                        id="editMetadataTextarea" 
+                        placeholder='{"moeda": "BRL", "pedidoFornecedor": "369763", "pedidoErp": "023037", "itens": [...]}'
+                        style="width: 100%; min-height: 300px; padding: 15px; border: 1px solid #ddd; border-radius: 4px; font-family: 'Courier New', monospace; font-size: 0.9em; resize: vertical; line-height: 1.5;"
+                    ></textarea>
+                    <small style="color: #666; display: block; margin-top: 5px;">
+                        Edite o JSON acima. Os metadados serão usados nas validações. Certifique-se de que o JSON está válido.
+                    </small>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button onclick="closeEditMetadataModal()" class="btn-secondary">Cancelar</button>
+                <button onclick="saveMetadata()" id="saveMetadataBtn" class="btn-primary">💾 Salvar</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        localStorage.removeItem('apiUrl');
+        localStorage.removeItem('apiKey');
+    </script>
+    <script src="config.js"></script>
+    <script src="validation-renderer.js"></script>
+    <script src="app.js"></script>
+    <script>
+        // Carregar processos ao iniciar
+        document.addEventListener('DOMContentLoaded', function() {
+            loadProcesses();
+        });
+    </script>
+</body>
+</html>
+

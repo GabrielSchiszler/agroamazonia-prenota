@@ -146,13 +146,27 @@ def handler(event, context):
     has_failures = any(r.get('status') == 'FAILED' for r in results)
     validation_status = 'FAILED' if has_failures else 'PASSED'
     
-    table.put_item(Item={
+    # Extrair dados do CFOP para facilitar acesso no Protheus
+    cfop_mapping_data = {}
+    for result in results:
+        if result.get('rule') == 'validar_cfop_chave' and result.get('cfop_data'):
+            cfop_mapping_data = result.get('cfop_data', {})
+            logger.info(f"CFOP mapping data found: {json.dumps(cfop_mapping_data)}")
+            break
+    
+    item_data = {
         'PK': pk,
         'SK': sk,
         'VALIDATION_RESULTS': json.dumps(results_clean),
         'VALIDATION_STATUS': validation_status,
         'TIMESTAMP': timestamp
-    })
+    }
+    
+    # Adicionar dados do CFOP se encontrado
+    if cfop_mapping_data:
+        item_data['CFOP_MAPPING'] = json.dumps(cfop_mapping_data)
+    
+    table.put_item(Item=item_data)
     
     return {
         'process_id': process_id,

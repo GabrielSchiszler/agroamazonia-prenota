@@ -18,6 +18,17 @@ function renderValidation(v) {
     }
     
     // Validação padrão
+    // Se for validar_cfop_chave, exibir dados encontrados de forma mais detalhada
+    const isCfopChave = ruleName === 'validar_cfop_chave';
+    const cfopData = v.cfop_data || (docs[0] && docs[0].chave ? {
+        chave: docs[0].chave,
+        operacao: docs[0].operacao,
+        descricao: docs[0].descricao,
+        regra: docs[0].regra,
+        observacao: docs[0].observacao,
+        cfop: docs[0].cfop_encontrado
+    } : null);
+    
     return `
         <div style="background: ${bgColor}; padding: 15px; border-radius: 8px; margin: 10px 0; border-left: 4px solid ${borderColor};">
             <h5 style="margin: 0 0 10px; color: ${textColor};">${icon} ${ruleName}</h5>
@@ -25,6 +36,83 @@ function renderValidation(v) {
                 <strong>DANFE:</strong> ${v.danfe_value}
             </div>
             ${v.message ? `<p style="color: ${textColor}; font-size: 0.9em; margin: 10px 0;">${v.message}</p>` : ''}
+            ${isCfopChave && cfopData ? `
+                <div style="background: white; padding: 12px; border-radius: 6px; margin-top: 10px; border: 1px solid ${borderColor};">
+                    ${cfopData.multiple_mappings ? `
+                        <h6 style="margin: 0 0 10px; color: #dc3545; font-size: 0.95em;">⚠️ ERRO: Múltiplos Mapeamentos Encontrados (${cfopData.mappings_count})</h6>
+                        <p style="color: #721c24; font-size: 0.9em; margin-bottom: 15px;">
+                            O CFOP <strong>${cfopData.cfop}</strong> foi encontrado com <strong>${cfopData.mappings_count} mapeamento(s)</strong> diferentes. 
+                            Isso causa ambiguidade e impede a validação. Por favor, corrija a configuração para que cada CFOP tenha apenas um mapeamento.
+                        </p>
+                        <div style="margin-top: 15px;">
+                            <strong style="display: block; margin-bottom: 10px; color: #333;">Mapeamentos Encontrados:</strong>
+                            ${cfopData.mappings.map((mapping, idx) => `
+                                <div style="background: #fff3cd; border-left: 3px solid #ffc107; padding: 10px; margin: 8px 0; border-radius: 4px;">
+                                    <strong style="color: #856404;">Mapeamento ${idx + 1}:</strong>
+                                    <table style="width: 100%; font-size: 0.9em; border-collapse: collapse; margin-top: 8px;">
+                                        <tr>
+                                            <td style="padding: 4px; font-weight: 600; color: #666; width: 100px;">Chave:</td>
+                                            <td style="padding: 4px; color: #333; font-weight: 600;">${mapping.chave || '-'}</td>
+                                        </tr>
+                                        <tr>
+                                            <td style="padding: 4px; font-weight: 600; color: #666;">Operação:</td>
+                                            <td style="padding: 4px; color: #333;">${mapping.operacao || '-'}</td>
+                                        </tr>
+                                        <tr>
+                                            <td style="padding: 4px; font-weight: 600; color: #666;">Descrição:</td>
+                                            <td style="padding: 4px; color: #333;">${mapping.descricao || '-'}</td>
+                                        </tr>
+                                        ${mapping.regra ? `
+                                        <tr>
+                                            <td style="padding: 4px; font-weight: 600; color: #666;">Regra:</td>
+                                            <td style="padding: 4px; color: #333;">${mapping.regra}</td>
+                                        </tr>
+                                        ` : ''}
+                                        ${mapping.observacao ? `
+                                        <tr>
+                                            <td style="padding: 4px; font-weight: 600; color: #666;">Observação:</td>
+                                            <td style="padding: 4px; color: #333;">${mapping.observacao}</td>
+                                        </tr>
+                                        ` : ''}
+                                    </table>
+                                </div>
+                            `).join('')}
+                        </div>
+                    ` : `
+                        <h6 style="margin: 0 0 10px; color: #333; font-size: 0.95em;">📋 Dados Encontrados:</h6>
+                        <table style="width: 100%; font-size: 0.9em; border-collapse: collapse;">
+                            <tr>
+                                <td style="padding: 6px; font-weight: 600; color: #666; width: 120px;">CFOP:</td>
+                                <td style="padding: 6px; color: #333;">${cfopData.cfop || '-'}</td>
+                            </tr>
+                            <tr>
+                                <td style="padding: 6px; font-weight: 600; color: #666;">Chave:</td>
+                                <td style="padding: 6px; color: #333; font-weight: 600;">${cfopData.chave || '-'}</td>
+                            </tr>
+                            <tr>
+                                <td style="padding: 6px; font-weight: 600; color: #666;">Operação:</td>
+                                <td style="padding: 6px; color: #333;">${cfopData.operacao || '-'}</td>
+                            </tr>
+                            <tr>
+                                <td style="padding: 6px; font-weight: 600; color: #666;">Descrição:</td>
+                                <td style="padding: 6px; color: #333;">${cfopData.descricao || '-'}</td>
+                            </tr>
+                            ${cfopData.regra ? `
+                            <tr>
+                                <td style="padding: 6px; font-weight: 600; color: #666;">Regra:</td>
+                                <td style="padding: 6px; color: #333;">${cfopData.regra}</td>
+                            </tr>
+                            ` : ''}
+                            ${cfopData.observacao ? `
+                            <tr>
+                                <td style="padding: 6px; font-weight: 600; color: #666;">Observação:</td>
+                                <td style="padding: 6px; color: #333;">${cfopData.observacao}</td>
+                            </tr>
+                            ` : ''}
+                        </table>
+                    `}
+                </div>
+            ` : ''}
             ${renderComparisons(docs)}
         </div>
     `;

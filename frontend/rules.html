@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AgroAmazonia - Regras</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="app-container">
+        <!-- Sidebar -->
+        <aside class="sidebar">
+            <div class="sidebar-header">
+                <h1>🌿 AgroAmazonia</h1>
+                <p>Sistema de Processamento</p>
+            </div>
+            
+            <nav class="sidebar-nav">
+                <a href="index.html" class="nav-item">
+                    <span class="nav-icon">📊</span>
+                    <span>Dashboard</span>
+                </a>
+                <a href="processes.html" class="nav-item">
+                    <span class="nav-icon">📋</span>
+                    <span>Processos</span>
+                </a>
+                <a href="rules.html" class="nav-item active">
+                    <span class="nav-icon">⚙️</span>
+                    <span>Regras</span>
+                </a>
+                <a href="settings.html" class="nav-item">
+                    <span class="nav-icon">🔧</span>
+                    <span>Configurações</span>
+                </a>
+            </nav>
+        </aside>
+
+        <!-- Main Content -->
+        <main class="main-content">
+            <header class="topbar">
+                <h2>Regras de Validação</h2>
+            </header>
+
+            <div class="content-area">
+                <div class="rules-header">
+                    <div class="rules-tabs">
+                        <button class="rule-tab active" onclick="showRules('SEMENTES')">🌱 Sementes</button>
+                        <button class="rule-tab" onclick="showRules('AGROQUIMICOS')">🧪 Agroquímicos</button>
+                        <button class="rule-tab" onclick="showRules('FERTILIZANTES')">🌾 Fertilizantes</button>
+                    </div>
+                </div>
+                <div id="rulesDisplay" class="rules-content"></div>
+            </div>
+        </main>
+    </div>
+
+    <!-- Add Rule Modal -->
+    <div id="addRuleModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>Adicionar Regra</h2>
+                <span class="modal-close" onclick="closeAddRuleModal()">&times;</span>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label>Tipo de Processo</label>
+                    <input type="text" id="ruleProcessType" readonly>
+                </div>
+                <div class="form-group">
+                    <label>Regra</label>
+                    <select id="ruleSelect">
+                        <option value="">Selecione...</option>
+                        <option value="validar_numero_nota">Validar Número da Nota</option>
+                        <option value="validar_serie">Validar Série</option>
+                        <option value="validar_data_emissao">Validar Data de Emissão</option>
+                        <option value="validar_cnpj_fornecedor">Validar CNPJ Fornecedor</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Ordem de Execução</label>
+                    <input type="number" id="ruleOrder" value="1" min="1">
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button onclick="closeAddRuleModal()" class="btn-secondary">Cancelar</button>
+                <button onclick="addRule()" class="btn-primary">Adicionar</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        localStorage.removeItem('apiUrl');
+        localStorage.removeItem('apiKey');
+    </script>
+    <script src="config.js"></script>
+    <script src="app.js"></script>
+    <script>
+        // Carregar regras ao iniciar
+        document.addEventListener('DOMContentLoaded', function() {
+            showRules('SEMENTES');
+        });
+    </script>
+</body>
+</html>
+

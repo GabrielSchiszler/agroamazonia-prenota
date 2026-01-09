@@ -1,0 +1,247 @@
+import * as cdk from 'aws-cdk-lib';
+import * as s3 from 'aws-cdk-lib/aws-s3';
+import * as s3deploy from 'aws-cdk-lib/aws-s3-deployment';
+import * as cloudfront from 'aws-cdk-lib/aws-cloudfront';
+import * as origins from 'aws-cdk-lib/aws-cloudfront-origins';
+import * as iam from 'aws-cdk-lib/aws-iam';
+import { Construct } from 'constructs';
+
+interface FrontendStackProps extends cdk.StackProps {
+  environment: string;
+  apiUrl?: string; // URL da API do backend (opcional, pode ser passada diretamente ou importada)
+  apiKey?: string; // API Key para autenticação (opcional)
+}
+
+export class FrontendStack extends cdk.Stack {
+  private readonly envName: string;
+
+  constructor(scope: Construct, id: string, props: FrontendStackProps) {
+    super(scope, id, props);
+    this.envName = props.environment || 'dev';
+
+    // Helper function para padronizar nomes
+    const name = (resourceType: string, resourceName: string): string => {
+      const normalizedName = resourceName.toLowerCase().replace(/_/g, '-');
+      return `${resourceType}-${normalizedName}-${this.envName}`;
+    };
+
+    // Obter URL da API do backend
+    // Se apiUrl foi passada diretamente, usar; senão, tentar importar do stack do backend
+    let apiUrl: string;
+    if (props.apiUrl) {
+      apiUrl = props.apiUrl;
+    } else {
+      // Tentar importar baseado no nome padrão do stack
+      const backendStackName = `agroamazonia-backend-${this.envName}`;
+      apiUrl = cdk.Fn.importValue(`${backendStackName}-ApiUrl`);
+    }
+
+    // API Key (pode vir de variável de ambiente ou ser definida)
+    const apiKey = props.apiKey || process.env.API_KEY || 'agroamazonia_key_UPXsb8Hb8sjbxWBQqouzYnTL5w-V_dJx';
+
+    // S3 Bucket para frontend (website estático)
+    // Nota: bucket names devem ser únicos globalmente, então incluímos account
+    // IMPORTANTE: Não usar website hosting quando usar OAI com CloudFront
+    const accountId = this.account || 'unknown';
+    const frontendBucket = new s3.Bucket(this, 'FrontendBucket', {
+      bucketName: `bucket-agroamazonia-frontend-${this.envName}-${accountId}`,
+      // Não usar websiteIndexDocument/websiteErrorDocument com OAI
+      publicReadAccess: false, // CloudFront vai servir o conteúdo via OAI
+      blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
+      removalPolicy: cdk.RemovalPolicy.DESTROY, // Pode deletar em dev/stg
+      autoDeleteObjects: true, // Limpar objetos ao deletar bucket
+      versioned: false, // Não precisa versionar frontend
+      encryption: s3.BucketEncryption.S3_MANAGED,
+      cors: [{
+        allowedMethods: [s3.HttpMethods.GET, s3.HttpMethods.HEAD],
+        allowedOrigins: ['*'],
+        allowedHeaders: ['*'],
+        maxAge: 3000
+      }]
+    });
+
+    // OAI (Origin Access Identity) para CloudFront acessar o bucket privado
+    const originAccessIdentity = new cloudfront.OriginAccessIdentity(this, 'FrontendOAI', {
+      comment: `OAI for AgroAmazonia Frontend - ${this.envName}`
+    });
+
+    // Permitir que CloudFront leia o bucket via OAI
+    // O grantRead() adiciona automaticamente a política de bucket necessária
+    frontendBucket.grantRead(originAccessIdentity);
+
+    // CloudFront Distribution
+    // Nota: CloudFront Distribution não suporta nome customizado diretamente
+    // O CDK gera um nome único automaticamente baseado no construct ID
+    const distribution = new cloudfront.Distribution(this, 'FrontendDistribution', {
+      defaultBehavior: {
+        origin: new origins.S3Origin(frontendBucket, {
+          originAccessIdentity: originAccessIdentity
+        }),
+        viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+        allowedMethods: cloudfront.AllowedMethods.ALLOW_GET_HEAD,
+        cachedMethods: cloudfront.CachedMethods.CACHE_GET_HEAD,
+        compress: true,
+        cachePolicy: cloudfront.CachePolicy.CACHING_OPTIMIZED,
+        // Invalidar cache para arquivos HTML e JS
+        responseHeadersPolicy: new cloudfront.ResponseHeadersPolicy(this, 'FrontendHeadersPolicy', {
+          responseHeadersPolicyName: name('response-headers-policy', 'agroamazonia-frontend'),
+          comment: `Headers policy for AgroAmazonia Frontend - ${this.envName}`,
+          securityHeadersBehavior: {
+            strictTransportSecurity: {
+              accessControlMaxAge: cdk.Duration.seconds(31536000),
+              includeSubdomains: true,
+              override: true
+            },
+            contentTypeOptions: {
+              override: true
+            },
+            frameOptions: {
+              frameOption: cloudfront.HeadersFrameOption.DENY,
+              override: true
+            },
+            referrerPolicy: {
+              referrerPolicy: cloudfront.HeadersReferrerPolicy.STRICT_ORIGIN_WHEN_CROSS_ORIGIN,
+              override: true
+            }
+          }
+        })
+      },
+      // Comportamento para arquivos estáticos (cache longo)
+      additionalBehaviors: {
+        '/assets/*': {
+          origin: new origins.S3Origin(frontendBucket, {
+            originAccessIdentity: originAccessIdentity
+          }),
+          viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+          allowedMethods: cloudfront.AllowedMethods.ALLOW_GET_HEAD,
+          cachedMethods: cloudfront.CachedMethods.CACHE_GET_HEAD,
+          compress: true,
+          // Cache longo para assets (CSS, JS, imagens)
+          cachePolicy: new cloudfront.CachePolicy(this, 'AssetsCachePolicy', {
+            cachePolicyName: name('cache-policy', 'assets-long-cache'),
+            defaultTtl: cdk.Duration.days(30),
+            minTtl: cdk.Duration.days(30),
+            maxTtl: cdk.Duration.days(365),
+            enableAcceptEncodingGzip: true,
+            enableAcceptEncodingBrotli: true
+          })
+        },
+        '*.html': {
+          origin: new origins.S3Origin(frontendBucket, {
+            originAccessIdentity: originAccessIdentity
+          }),
+          viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+          allowedMethods: cloudfront.AllowedMethods.ALLOW_GET_HEAD,
+          cachedMethods: cloudfront.CachedMethods.CACHE_GET_HEAD,
+          compress: true,
+          // Cache curto para HTML (para facilitar invalidação)
+          // Nota: Quando TTL = 0 (cache desabilitado), não podemos habilitar compressão
+          cachePolicy: new cloudfront.CachePolicy(this, 'HtmlCachePolicy', {
+            cachePolicyName: name('cache-policy', 'html-no-cache'),
+            defaultTtl: cdk.Duration.seconds(0), // Sem cache por padrão
+            minTtl: cdk.Duration.seconds(0),
+            maxTtl: cdk.Duration.seconds(0)
+            // enableAcceptEncodingGzip e enableAcceptEncodingBrotli não podem ser usados com TTL = 0
+          })
+        },
+        '*.js': {
+          origin: new origins.S3Origin(frontendBucket, {
+            originAccessIdentity: originAccessIdentity
+          }),
+          viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+          allowedMethods: cloudfront.AllowedMethods.ALLOW_GET_HEAD,
+          cachedMethods: cloudfront.CachedMethods.CACHE_GET_HEAD,
+          compress: true,
+          // Cache curto para JS (para facilitar invalidação)
+          // Nota: Quando TTL = 0 (cache desabilitado), não podemos habilitar compressão
+          cachePolicy: new cloudfront.CachePolicy(this, 'JsCachePolicy', {
+            cachePolicyName: name('cache-policy', 'js-short-cache'),
+            defaultTtl: cdk.Duration.seconds(0), // Sem cache por padrão
+            minTtl: cdk.Duration.seconds(0),
+            maxTtl: cdk.Duration.seconds(0)
+            // enableAcceptEncodingGzip e enableAcceptEncodingBrotli não podem ser usados com TTL = 0
+          })
+        }
+      },
+      errorResponses: [
+        {
+          httpStatus: 404,
+          responseHttpStatus: 200,
+          responsePagePath: '/index.html', // SPA fallback
+          ttl: cdk.Duration.seconds(0)
+        },
+        {
+          httpStatus: 403,
+          responseHttpStatus: 200,
+          responsePagePath: '/index.html', // SPA fallback
+          ttl: cdk.Duration.seconds(0)
+        }
+      ],
+      priceClass: cloudfront.PriceClass.PRICE_CLASS_100, // Apenas EUA e Europa
+      comment: `AgroAmazonia Frontend Distribution - ${this.envName}`
+    });
+
+    // Criar arquivo config.js dinâmico com a URL da API e API Key
+    // Este arquivo será gerado durante o deploy e sobrescreverá o config.js estático
+    // A URL será normalizada no JavaScript do frontend (removendo barra final)
+    const configContent = cdk.Fn.sub(
+      `// Configuração da API - gerada automaticamente durante o deploy
+// Environment: ${this.envName}
+// A URL será normalizada no app.js para remover barra final
+window.ENV = {
+    API_URL: '\${ApiUrl}',
+    API_KEY: '${apiKey}'
+};`,
+      {
+        ApiUrl: apiUrl
+      }
+    );
+
+    // Deploy do frontend para S3
+    // Este deployment vai:
+    // 1. Limpar o bucket antes de fazer upload (prune: true)
+    // 2. Fazer upload de todos os arquivos do diretório frontend
+    // 3. Criar arquivo config.js dinâmico com a URL da API (sobrescreve o estático)
+    // 4. Invalidar o cache do CloudFront após o deploy
+    const deployment = new s3deploy.BucketDeployment(this, 'FrontendDeployment', {
+      sources: [
+        s3deploy.Source.asset('../frontend'),
+        // Adicionar config.js dinâmico (sobrescreve o config.js estático se existir)
+        s3deploy.Source.data('config.js', configContent)
+      ],
+      destinationBucket: frontendBucket,
+      distribution: distribution,
+      distributionPaths: ['/*'], // Invalidar todos os paths
+      prune: true, // Remover arquivos que não estão mais no source
+      retainOnDelete: false, // Não reter arquivos ao deletar stack
+      memoryLimit: 512,
+      // Invalidar cache após deploy
+      cacheControl: [
+        s3deploy.CacheControl.setPublic(),
+        s3deploy.CacheControl.maxAge(cdk.Duration.days(0)) // Sem cache para HTML/JS
+      ]
+    });
+
+    // Outputs
+    new cdk.CfnOutput(this, 'FrontendBucketName', {
+      value: frontendBucket.bucketName,
+      description: 'S3 Bucket Name for Frontend'
+    });
+
+    new cdk.CfnOutput(this, 'CloudFrontDistributionId', {
+      value: distribution.distributionId,
+      description: 'CloudFront Distribution ID'
+    });
+
+    new cdk.CfnOutput(this, 'CloudFrontDomainName', {
+      value: distribution.distributionDomainName,
+      description: 'CloudFront Distribution Domain Name'
+    });
+
+    new cdk.CfnOutput(this, 'FrontendUrl', {
+      value: `https://${distribution.distributionDomainName}`,
+      description: 'Frontend URL'
+    });
+  }
+}
+

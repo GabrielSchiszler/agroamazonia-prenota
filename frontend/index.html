@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AgroAmazonia - Sistema de Processamento</title>
+    <title>AgroAmazonia - Dashboard</title>
     <link rel="stylesheet" href="style.css">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
@@ -17,19 +17,19 @@
             </div>
             
             <nav class="sidebar-nav">
-                <a href="#" class="nav-item active" onclick="showPage('dashboard')">
+                <a href="index.html" class="nav-item active">
                     <span class="nav-icon">📊</span>
                     <span>Dashboard</span>
                 </a>
-                <a href="#" class="nav-item" onclick="showPage('processes')">
+                <a href="processes.html" class="nav-item">
                     <span class="nav-icon">📋</span>
                     <span>Processos</span>
                 </a>
-                <a href="#" class="nav-item" onclick="showPage('rules')">
+                <a href="rules.html" class="nav-item">
                     <span class="nav-icon">⚙️</span>
                     <span>Regras</span>
                 </a>
-                <a href="#" class="nav-item" onclick="showPage('settings')">
+                <a href="settings.html" class="nav-item">
                     <span class="nav-icon">🔧</span>
                     <span>Configurações</span>
                 </a>
@@ -39,354 +39,129 @@
         <!-- Main Content -->
         <main class="main-content">
             <header class="topbar">
-                <h2 id="pageTitle">Dashboard</h2>
+                <h2>Dashboard</h2>
                 <div class="topbar-actions">
                     <button id="refreshBtn" class="btn-secondary" onclick="refreshDashboard()" style="margin-right: 10px;">🔄 Atualizar</button>
-                    <button class="btn-primary" onclick="showCreateModal()">+ Novo Processo</button>
+                    <button class="btn-primary" onclick="window.location.href='processes.html'">+ Novo Processo</button>
                 </div>
             </header>
 
             <div class="content-area">
-                <!-- Dashboard Page -->
-                <div id="dashboardPage" class="page active">
-                    <!-- Filtros de Data -->
-                    <div style="background: white; padding: 20px; border-radius: 12px; margin-bottom: 20px; box-shadow: 0 2px 8px rgba(0,0,0,0.1);">
-                        <h3 style="margin-bottom: 15px; color: #333;">📅 Filtros de Período</h3>
-                        <div style="display: flex; gap: 15px; align-items: center; flex-wrap: wrap;">
-                            <div style="flex: 1; min-width: 200px;">
-                                <label style="display: block; margin-bottom: 5px; font-weight: 600; color: #555;">Data Inicial</label>
-                                <input type="date" id="startDateFilter" style="width: 100%; padding: 10px; border: 2px solid #e0e0e0; border-radius: 8px; font-size: 14px;">
-                            </div>
-                            <div style="flex: 1; min-width: 200px;">
-                                <label style="display: block; margin-bottom: 5px; font-weight: 600; color: #555;">Data Final</label>
-                                <input type="date" id="endDateFilter" style="width: 100%; padding: 10px; border: 2px solid #e0e0e0; border-radius: 8px; font-size: 14px;">
-                            </div>
-                            <div style="display: flex; gap: 10px; align-items: flex-end;">
-                                <button onclick="applyDateFilter()" class="btn-primary" style="padding: 10px 20px; white-space: nowrap;">🔍 Aplicar Filtro</button>
-                                <button onclick="resetDateFilter()" class="btn-secondary" style="padding: 10px 20px; white-space: nowrap;">🔄 Resetar</button>
-                            </div>
+                <!-- Filtros de Data -->
+                <div style="background: white; padding: 20px; border-radius: 12px; margin-bottom: 20px; box-shadow: 0 2px 8px rgba(0,0,0,0.1);">
+                    <h3 style="margin-bottom: 15px; color: #333;">📅 Filtros de Período</h3>
+                    <div style="display: flex; gap: 15px; align-items: center; flex-wrap: wrap;">
+                        <div style="flex: 1; min-width: 200px;">
+                            <label style="display: block; margin-bottom: 5px; font-weight: 600; color: #555;">Data Inicial</label>
+                            <input type="date" id="startDateFilter" style="width: 100%; padding: 10px; border: 2px solid #e0e0e0; border-radius: 8px; font-size: 14px;">
                         </div>
-                        <div style="margin-top: 15px; display: flex; gap: 10px; flex-wrap: wrap;">
-                            <button onclick="setFilterPeriod('today')" class="btn-secondary" style="padding: 8px 15px; font-size: 0.9em;">Hoje</button>
-                            <button onclick="setFilterPeriod('week')" class="btn-secondary" style="padding: 8px 15px; font-size: 0.9em;">Últimos 7 dias</button>
-                            <button onclick="setFilterPeriod('month')" class="btn-secondary" style="padding: 8px 15px; font-size: 0.9em;">Este mês</button>
-                            <button onclick="setFilterPeriod('lastMonth')" class="btn-secondary" style="padding: 8px 15px; font-size: 0.9em;">Mês passado</button>
+                        <div style="flex: 1; min-width: 200px;">
+                            <label style="display: block; margin-bottom: 5px; font-weight: 600; color: #555;">Data Final</label>
+                            <input type="date" id="endDateFilter" style="width: 100%; padding: 10px; border: 2px solid #e0e0e0; border-radius: 8px; font-size: 14px;">
+                        </div>
+                        <div style="display: flex; gap: 10px; align-items: flex-end;">
+                            <button onclick="applyDateFilter()" class="btn-primary" style="padding: 10px 20px; white-space: nowrap;">🔍 Aplicar Filtro</button>
+                            <button onclick="resetDateFilter()" class="btn-secondary" style="padding: 10px 20px; white-space: nowrap;">🔄 Resetar</button>
                         </div>
                     </div>
-                    
-                    <div class="stats-grid">
-                        <div class="stat-card">
-                            <div class="stat-icon">📋</div>
-                            <div class="stat-info">
-                                <h3 id="totalToday">0</h3>
-                                <p>Processos Hoje</p>
-                            </div>
-                        </div>
-                        <div class="stat-card success">
-                            <div class="stat-icon">✅</div>
-                            <div class="stat-info">
-                                <h3 id="successToday">0</h3>
-                                <p>Sucessos Hoje</p>
-                            </div>
-                        </div>
-                        <div class="stat-card error">
-                            <div class="stat-icon">❌</div>
-                            <div class="stat-info">
-                                <h3 id="failedToday">0</h3>
-                                <p>Falhas Hoje</p>
-                            </div>
-                        </div>
-                        <div class="stat-card">
-                            <div class="stat-icon">📊</div>
-                            <div class="stat-info">
-                                <h3 id="successRate">0%</h3>
-                                <p>Taxa de Sucesso</p>
-                            </div>
-                        </div>
-                        <div class="stat-card">
-                            <div class="stat-icon">⏱️</div>
-                            <div class="stat-info">
-                                <h3 id="avgTime">0s</h3>
-                                <p>Tempo Médio</p>
-                            </div>
+                    <div style="margin-top: 15px; display: flex; gap: 10px; flex-wrap: wrap;">
+                        <button onclick="setFilterPeriod('today')" class="btn-secondary" style="padding: 8px 15px; font-size: 0.9em;">Hoje</button>
+                        <button onclick="setFilterPeriod('week')" class="btn-secondary" style="padding: 8px 15px; font-size: 0.9em;">Últimos 7 dias</button>
+                        <button onclick="setFilterPeriod('month')" class="btn-secondary" style="padding: 8px 15px; font-size: 0.9em;">Este mês</button>
+                        <button onclick="setFilterPeriod('lastMonth')" class="btn-secondary" style="padding: 8px 15px; font-size: 0.9em;">Mês passado</button>
+                    </div>
+                </div>
+                
+                <div class="stats-grid">
+                    <div class="stat-card">
+                        <div class="stat-icon">📋</div>
+                        <div class="stat-info">
+                            <h3 id="totalToday">0</h3>
+                            <p id="totalLabel">Processos Hoje</p>
                         </div>
                     </div>
+                    <div class="stat-card success">
+                        <div class="stat-icon">✅</div>
+                        <div class="stat-info">
+                            <h3 id="successToday">0</h3>
+                            <p id="successLabel">Sucessos Hoje</p>
+                        </div>
+                    </div>
+                    <div class="stat-card error">
+                        <div class="stat-icon">❌</div>
+                        <div class="stat-info">
+                            <h3 id="failedToday">0</h3>
+                            <p id="failedLabel">Falhas Hoje</p>
+                        </div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-icon">📊</div>
+                        <div class="stat-info">
+                            <h3 id="successRate">0%</h3>
+                            <p>Taxa de Sucesso</p>
+                        </div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-icon">⏱️</div>
+                        <div class="stat-info">
+                            <h3 id="avgTime">0s</h3>
+                            <p>Tempo Médio</p>
+                        </div>
+                    </div>
+                </div>
 
-                    <div class="charts-grid">
-                        <div class="chart-card full-width">
-                            <h3>📈 Processos por Dia</h3>
-                            <canvas id="dailyProcessesChart"></canvas>
-                        </div>
-                        <div class="chart-card">
-                            <h3>📊 Taxa de Sucesso/Erro</h3>
-                            <canvas id="successErrorRateChart"></canvas>
-                        </div>
-                        <div class="chart-card">
-                            <h3>⏰ Distribuição por Hora</h3>
-                            <canvas id="hourlyChart"></canvas>
-                        </div>
-                    </div>
-
-                    <div class="charts-grid">
-                        <div class="chart-card">
-                            <h3>📦 Processos por Tipo</h3>
-                            <canvas id="typeChart"></canvas>
-                        </div>
-                        <div class="chart-card">
-                            <h3>❌ Tipos de Erro</h3>
-                            <canvas id="errorChart"></canvas>
-                        </div>
-                    </div>
-
+                <div class="charts-grid">
                     <div class="chart-card full-width">
-                        <h3>🚫 Regras que Mais Falharam</h3>
-                        <canvas id="failedRulesChart"></canvas>
-                        </div>
-                    
-                    <div class="chart-card full-width">
-                        <h3>📋 Regras que Falharam por Dia</h3>
-                        <canvas id="failedRulesByDayChart"></canvas>
+                        <h3>📈 Processos por Dia</h3>
+                        <canvas id="dailyProcessesChart"></canvas>
+                    </div>
+                    <div class="chart-card">
+                        <h3>📊 Taxa de Sucesso/Erro</h3>
+                        <canvas id="successErrorRateChart"></canvas>
+                    </div>
+                    <div class="chart-card">
+                        <h3>⏰ Distribuição por Hora</h3>
+                        <canvas id="hourlyChart"></canvas>
                     </div>
                 </div>
 
-                <!-- Processes Page -->
-                <div id="processesPage" class="page">
-                    <div id="processesList" class="processes-grid"></div>
-                    <div id="processDetails" class="process-details" style="display: none;">
-                        <div class="details-header">
-                            <button class="btn-back" onclick="deselectProcess()">← Voltar</button>
-                            <div class="details-title">
-                                <div>
-                                    <h3 id="selectedProcessId"></h3>
-                                    <div id="sctaskInfo"></div>
-                                </div>
-                                <div style="display: flex; gap: 10px; align-items: center;">
-                                    <button class="btn-icon" onclick="refreshProcess()" title="Atualizar processo">🔄</button>
-                                    <span id="selectedProcessStatus" class="status-badge"></span>
-                                </div>
-                            </div>
-                        </div>
-                        
-                        <div class="details-grid">
-                            <div class="details-card">
-                                <h4>Informações do Processo</h4>
-                                <div class="info-row">
-                                    <span>Tipo:</span>
-                                    <strong id="selectedProcessType"></strong>
-                                </div>
-                            </div>
-
-                            <div class="details-card">
-                                <h4>📄 DANFE (Obrigatório)</h4>
-                                <p style="color: #666; font-size: 0.9em; margin-bottom: 10px;">Upload do XML ou PDF da Nota Fiscal</p>
-                                <div class="upload-area">
-                                    <input type="file" id="danfeInput" accept=".pdf,.xml" onchange="handleDanfeSelect()">
-                                    <label for="danfeInput" class="upload-label">
-                                        <span class="upload-icon">📋</span>
-                                        <span>Upload DANFE (XML)</span>
-                                    </label>
-                                </div>
-                                <div style="margin-top: 15px;">
-                                    <label style="display: block; margin-bottom: 5px; font-weight: bold; color: #333;">
-                                        📊 Metadados JSON (Opcional)
-                                    </label>
-                                    <textarea 
-                                        id="danfeMetadata" 
-                                        placeholder='{"moeda": "BRL", "pedidoFornecedor": "369763", "pedidoErp": "023037", ...}'
-                                        style="width: 100%; min-height: 80px; padding: 10px; border: 1px solid #ddd; border-radius: 4px; font-family: monospace; font-size: 0.9em; resize: vertical;"
-                                    ></textarea>
-                                    <small style="color: #666; display: block; margin-top: 5px;">
-                                        Metadados estruturados que serão usados nas validações (ex: moeda, pedidoFornecedor, pedidoErp, itens, etc.)
-                                    </small>
-                                </div>
-                                <div id="danfeList"></div>
-                            </div>
-
-                            <div class="details-card">
-                                <h4>📎 Documentos Adicionais</h4>
-                                <p style="color: #666; font-size: 0.9em; margin-bottom: 10px;">Pedidos de compra e outros documentos</p>
-                                <div class="upload-area">
-                                    <input type="file" id="docsInput" accept=".pdf" multiple onchange="handleDocsSelect()">
-                                    <label for="docsInput" class="upload-label">
-                                        <span class="upload-icon">📁</span>
-                                        <span>Upload Documentos</span>
-                                    </label>
-                                </div>
-                                <div style="margin-top: 15px;">
-                                    <label style="display: block; margin-bottom: 5px; font-weight: bold; color: #333;">
-                                        📊 Metadados JSON (Opcional)
-                                    </label>
-                                    <textarea 
-                                        id="docsMetadata" 
-                                        placeholder='{"moeda": "BRL", "pedidoFornecedor": "369763", "pedidoErp": "023037", "itens": [{"codigoProduto": "...", ...}]}'
-                                        style="width: 100%; min-height: 120px; padding: 10px; border: 1px solid #ddd; border-radius: 4px; font-family: monospace; font-size: 0.9em; resize: vertical;"
-                                    ></textarea>
-                                    <small style="color: #666; display: block; margin-top: 5px;">
-                                        Metadados estruturados que serão usados nas validações. Exemplo: moeda, pedidoFornecedor, pedidoErp, duplicata, condicaoPagamento, itens, etc.
-                                    </small>
-                                </div>
-                                <div id="docsList"></div>
-                            </div>
-
-                            <div class="details-card full-width">
-                                <button onclick="startProcess()" id="startBtn" class="btn-success">
-                                    🚀 Iniciar Processamento
-                                </button>
-                            </div>
-
-                            <div class="details-card full-width">
-                                <h4>📊 Dados Extraídos (JSON)</h4>
-                                <div id="extractedData"></div>
-                            </div>
-
-                            <div class="details-card full-width">
-                                <h4>✅ Resultados das Validações</h4>
-                                <div id="textractResults"></div>
-                            </div>
-                        </div>
+                <div class="charts-grid">
+                    <div class="chart-card">
+                        <h3>📦 Processos por Tipo</h3>
+                        <canvas id="typeChart"></canvas>
                     </div>
+                    <div class="chart-card">
+                        <h3>❌ Tipos de Erro</h3>
+                        <canvas id="errorChart"></canvas>
                     </div>
                 </div>
 
-                <!-- Rules Page -->
-                <div id="rulesPage" class="page">
-                    <div class="rules-header">
-                        <div class="rules-tabs">
-                            <button class="rule-tab active" onclick="showRules('SEMENTES')">🌱 Sementes</button>
-                            <button class="rule-tab" onclick="showRules('AGROQUIMICOS')">🧪 Agroquímicos</button>
-                            <button class="rule-tab" onclick="showRules('FERTILIZANTES')">🌾 Fertilizantes</button>
-                        </div>
-                    </div>
-                    <div id="rulesDisplay" class="rules-content"></div>
+                <div class="chart-card full-width">
+                    <h3>🚫 Regras que Mais Falharam</h3>
+                    <canvas id="failedRulesChart"></canvas>
                 </div>
-
-                <!-- Add Rule Modal -->
-                <div id="addRuleModal" class="modal">
-                    <div class="modal-content">
-                        <div class="modal-header">
-                            <h2>Adicionar Regra</h2>
-                            <span class="modal-close" onclick="closeAddRuleModal()">&times;</span>
-                        </div>
-                        <div class="modal-body">
-                            <div class="form-group">
-                                <label>Tipo de Processo</label>
-                                <input type="text" id="ruleProcessType" readonly>
-                            </div>
-                            <div class="form-group">
-                                <label>Regra</label>
-                                <select id="ruleSelect">
-                                    <option value="">Selecione...</option>
-                                    <option value="validar_numero_nota">Validar Número da Nota</option>
-                                    <option value="validar_serie">Validar Série</option>
-                                    <option value="validar_data_emissao">Validar Data de Emissão</option>
-                                    <option value="validar_cnpj_fornecedor">Validar CNPJ Fornecedor</option>
-                                </select>
-                            </div>
-                            <div class="form-group">
-                                <label>Ordem de Execução</label>
-                                <input type="number" id="ruleOrder" value="1" min="1">
-                            </div>
-                        </div>
-                        <div class="modal-footer">
-                            <button onclick="closeAddRuleModal()" class="btn-secondary">Cancelar</button>
-                            <button onclick="addRule()" class="btn-primary">Adicionar</button>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Settings Page -->
-                <div id="settingsPage" class="page">
-                    <div class="settings-card">
-                        <h3>Configuração da API</h3>
-                        <div class="form-group">
-                            <label>URL da API</label>
-                            <input type="text" id="apiUrl" placeholder="http://localhost:8001">
-                        </div>
-                        <div class="form-group">
-                            <label>API Key</label>
-                            <input type="password" id="apiKey" placeholder="agroamazonia_key_...">
-                            <small style="color: #666; display: block; margin-top: 5px;">Exemplo: agroamazonia_key_UPXsb8Hb8sjbxWBQqouzYnTL5w-V_dJx</small>
-                        </div>
-                        <button onclick="saveApiConfig()" class="btn-primary">Salvar Configurações</button>
-                    </div>
-                    
-                    <div class="settings-card" style="margin-top: 20px;">
-                        <h3>Como usar a API</h3>
-                        <p style="color: #666; margin-bottom: 15px;">Exemplo de requisição com cURL:</p>
-                        <div style="background: #f5f5f5; padding: 15px; border-radius: 8px; font-family: monospace; font-size: 0.9em; overflow-x: auto;">
-                            <code>curl -H 'x-api-key: agroamazonia_key_UPXsb8Hb8sjbxWBQqouzYnTL5w-V_dJx' \<br>
-     https://your-api.com/v1/process/presigned-url/xml</code>
-                        </div>
-                    </div>
+                
+                <div class="chart-card full-width">
+                    <h3>📋 Regras que Falharam por Dia</h3>
+                    <canvas id="failedRulesByDayChart"></canvas>
                 </div>
             </div>
         </main>
     </div>
 
-    <!-- Modal Criar Processo -->
-    <div id="createModal" class="modal">
-        <div class="modal-content">
-            <div class="modal-header">
-                <h2>Criar Novo Processo</h2>
-                <span class="modal-close" onclick="closeCreateModal()">&times;</span>
-            </div>
-            <div class="modal-body">
-                <div id="createAlert"></div>
-                <div class="form-group">
-                    <label>Tipo de Processo</label>
-                    <select id="processType" onchange="showRulesPreview()">
-                        <option value="">Selecione...</option>
-                        <option value="SEMENTES">🌱 Sementes</option>
-                        <option value="AGROQUIMICOS">🧪 Agroquímicos</option>
-                        <option value="FERTILIZANTES">🌾 Fertilizantes</option>
-                    </select>
-                </div>
-                <div id="rulesPreview"></div>
-            </div>
-            <div class="modal-footer">
-                <button onclick="closeCreateModal()" class="btn-secondary">Cancelar</button>
-                <button onclick="createProcess()" id="createBtn" class="btn-primary">Criar Processo</button>
-            </div>
-        </div>
-    </div>
-
-    <!-- Modal Editar Metadados -->
-    <div id="editMetadataModal" class="modal" style="display: none;">
-        <div class="modal-content" style="max-width: 800px;">
-            <div class="modal-header">
-                <h2>✏️ Editar Metadados JSON</h2>
-                <span class="modal-close" onclick="closeEditMetadataModal()">&times;</span>
-            </div>
-            <div class="modal-body">
-                <div class="form-group">
-                    <label><strong>Arquivo:</strong> <span id="editMetadataFileName"></span></label>
-                </div>
-                <div class="form-group">
-                    <label>Metadados JSON</label>
-                    <textarea 
-                        id="editMetadataTextarea" 
-                        placeholder='{"moeda": "BRL", "pedidoFornecedor": "369763", "pedidoErp": "023037", "itens": [...]}'
-                        style="width: 100%; min-height: 300px; padding: 15px; border: 1px solid #ddd; border-radius: 4px; font-family: 'Courier New', monospace; font-size: 0.9em; resize: vertical; line-height: 1.5;"
-                    ></textarea>
-                    <small style="color: #666; display: block; margin-top: 5px;">
-                        Edite o JSON acima. Os metadados serão usados nas validações. Certifique-se de que o JSON está válido.
-                    </small>
-                </div>
-            </div>
-            <div class="modal-footer">
-                <button onclick="closeEditMetadataModal()" class="btn-secondary">Cancelar</button>
-                <button onclick="saveMetadata()" id="saveMetadataBtn" class="btn-primary">💾 Salvar</button>
-            </div>
-        </div>
-    </div>
-
     <script>
-        // Limpar localStorage antigo e forçar novos valores
         localStorage.removeItem('apiUrl');
         localStorage.removeItem('apiKey');
     </script>
     <script src="config.js"></script>
-    <script src="validation-renderer.js"></script>
     <script src="app.js"></script>
+    <script>
+        // Carregar dashboard ao iniciar
+        document.addEventListener('DOMContentLoaded', function() {
+            loadDashboardMetrics();
+            // Auto-refresh a cada 60 segundos
+            setInterval(loadDashboardMetrics, 60000);
+        });
+    </script>
 </body>
 </html>

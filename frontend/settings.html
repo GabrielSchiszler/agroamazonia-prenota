@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AgroAmazonia - Configurações</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="app-container">
+        <!-- Sidebar -->
+        <aside class="sidebar">
+            <div class="sidebar-header">
+                <h1>🌿 AgroAmazonia</h1>
+                <p>Sistema de Processamento</p>
+            </div>
+            
+            <nav class="sidebar-nav">
+                <a href="index.html" class="nav-item">
+                    <span class="nav-icon">📊</span>
+                    <span>Dashboard</span>
+                </a>
+                <a href="processes.html" class="nav-item">
+                    <span class="nav-icon">📋</span>
+                    <span>Processos</span>
+                </a>
+                <a href="rules.html" class="nav-item">
+                    <span class="nav-icon">⚙️</span>
+                    <span>Regras</span>
+                </a>
+                <a href="settings.html" class="nav-item active">
+                    <span class="nav-icon">🔧</span>
+                    <span>Configurações</span>
+                </a>
+            </nav>
+        </aside>
+
+        <!-- Main Content -->
+        <main class="main-content">
+            <header class="topbar">
+                <h2>Configurações</h2>
+            </header>
+
+            <div class="content-area settings-page-content">
+                <div class="settings-page-container">
+                    <div class="settings-content">
+                        <div class="settings-header">
+                            <div>
+                                <h2 style="margin: 0; color: #333;">📋 Chave x CFOP</h2>
+                                <p style="margin: 5px 0 0 0; color: #666; font-size: 0.9em;">
+                                    Configure o mapeamento entre Chave e CFOP extraído dos documentos.
+                                </p>
+                            </div>
+                            <button onclick="addNewCfopRow()" class="btn-primary" style="padding: 10px 20px; font-size: 1em;">
+                                ➕ Adicionar Linha
+                            </button>
+                        </div>
+                        
+                        <div class="settings-table-container">
+                            <div id="cfopRulesList" class="cfop-rules-list">
+                                <div style="text-align: center; padding: 40px; color: #999;">
+                                    <p>Carregando regras...</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <script>
+        localStorage.removeItem('apiUrl');
+        localStorage.removeItem('apiKey');
+    </script>
+    <script src="config.js"></script>
+    <script src="app.js"></script>
+    <script>
+        // Carregar regras CFOP ao iniciar
+        document.addEventListener('DOMContentLoaded', function() {
+            loadCfopRules();
+        });
+    </script>
+</body>
+</html>
+

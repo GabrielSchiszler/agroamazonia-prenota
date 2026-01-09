@@ -21,7 +21,18 @@ def get_oauth2_token():
     password = os.environ.get('OCR_FAILURE_PASSWORD')
     
     if not all([auth_url, client_id, client_secret, username, password]):
-        print("ERROR: Missing OAuth2 credentials in environment variables")
+        missing = []
+        if not auth_url: missing.append('OCR_FAILURE_AUTH_URL')
+        if not client_id: missing.append('OCR_FAILURE_CLIENT_ID')
+        if not client_secret: missing.append('OCR_FAILURE_CLIENT_SECRET')
+        if not username: missing.append('OCR_FAILURE_USERNAME')
+        if not password: missing.append('OCR_FAILURE_PASSWORD')
+        print(f"ERROR: Missing OAuth2 credentials in environment variables: {', '.join(missing)}")
+        print(f"Available env vars: OCR_FAILURE_AUTH_URL={'SET' if auth_url else 'NOT SET'}, "
+              f"OCR_FAILURE_CLIENT_ID={'SET' if client_id else 'NOT SET'}, "
+              f"OCR_FAILURE_CLIENT_SECRET={'SET' if client_secret else 'NOT SET'}, "
+              f"OCR_FAILURE_USERNAME={'SET' if username else 'NOT SET'}, "
+              f"OCR_FAILURE_PASSWORD={'SET' if password else 'NOT SET'}")
         return None
     
     try:
@@ -158,6 +169,8 @@ def get_oauth2_token():
             print(f"ERROR: No access_token in response.")
             print(f"Response keys: {list(token_response.keys()) if isinstance(token_response, dict) else 'N/A'}")
             print(f"Response preview: {str(token_response)[:500]}")
+            # Não lançar exceção aqui, apenas retornar None
+            # O código que chama deve tratar a ausência do token
             return None
             
     except Exception as e:
@@ -292,7 +305,10 @@ def lambda_handler(event, context):
         print("WARNING: Could not obtain OAuth2 token, proceeding without authentication")
     
     # Enviar para API externa e obter sctask_id
+    # Se falhar, re-lançar exceção para que Step Functions capture e dispare SNS
     sctask_id = None
+    api_response = None
+    
     try:
         api_url = os.environ.get('OCR_FAILURE_API_URL')
         if not api_url:
@@ -315,13 +331,21 @@ def lambda_handler(event, context):
         # Extrair sctask_id do campo 'tarefa' da resposta
         sctask_id = api_response.get('tarefa')
         print(f"SCTASK ID from API: {sctask_id}")
+    except requests.exceptions.HTTPError as http_err:
+        print(f"Erro HTTP ao reportar falha para API externa: {http_err}")
+        if hasattr(http_err, 'response') and http_err.response is not None:
+            print(f"Response status: {http_err.response.status_code}")
+            print(f"Response body: {http_err.response.text}")
+        # Re-lançar exceção para que Step Functions capture e dispare SNS
+        raise Exception(f"Falha ao reportar erro para API externa (HTTP {http_err.response.status_code}): {http_err.response.text if hasattr(http_err, 'response') and http_err.response else str(http_err)}")
     except Exception as e:
         print(f"Erro ao reportar falha para API externa: {str(e)}")
-        if hasattr(e, 'response') and e.response is not None:
-            print(f"Response status: {e.response.status_code}")
-            print(f"Response body: {e.response.text}")
-        api_response = {'error': str(e)}
+        import traceback
+        traceback.print_exc()
+        # Re-lançar exceção para que Step Functions capture e dispare SNS
+        raise Exception(f"Falha ao reportar erro para API externa: {str(e)}")
     
+    # Se chegou aqui, API foi chamada com sucesso
     # Atualizar status no DynamoDB com sctask_id da API
     try:
         print(f"Updating DynamoDB: PK=PROCESS#{process_id}, SK=METADATA")
@@ -346,6 +370,8 @@ def lambda_handler(event, context):
         print(f"Erro ao atualizar DynamoDB: {str(e)}")
         import traceback
         traceback.print_exc()
+        # Re-lançar exceção para que Step Functions capture e dispare SNS
+        raise Exception(f"Falha ao atualizar status no DynamoDB: {str(e)}")
     
     result = {
         'statusCode': 200,

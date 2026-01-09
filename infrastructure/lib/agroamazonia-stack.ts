@@ -9,15 +9,32 @@ import * as apigateway from 'aws-cdk-lib/aws-apigateway';
 import * as s3n from 'aws-cdk-lib/aws-s3-notifications';
 import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
 import * as sns from 'aws-cdk-lib/aws-sns';
+import * as cr from 'aws-cdk-lib/custom-resources';
 import { Construct } from 'constructs';
 
+interface AgroAmazoniaStackProps extends cdk.StackProps {
+  environment: string;
+}
+
 export class AgroAmazoniaStack extends cdk.Stack {
-  constructor(scope: Construct, id: string, props?: cdk.StackProps) {
+  private readonly envName: string;
+  public readonly apiUrl: string; // Expor URL da API para outras stacks
+
+  constructor(scope: Construct, id: string, props: AgroAmazoniaStackProps) {
     super(scope, id, props);
+    this.envName = props.environment || 'dev';
+
+    // Helper function para padronizar nomes
+    const name = (resourceType: string, resourceName: string): string => {
+      const normalizedName = resourceName.toLowerCase().replace(/_/g, '-');
+      return `${resourceType}-${normalizedName}-${this.envName}`;
+    };
 
     // S3 Bucket para documentos brutos
+    // Nota: bucket names devem ser únicos globalmente, então incluímos account
+    const accountId = this.account || 'unknown';
     const rawDocumentsBucket = new s3.Bucket(this, 'RawDocumentsBucket', {
-      bucketName: `agroamazonia-raw-documents-${this.account}`,
+      bucketName: `bucket-agroamazonia-raw-documents-${this.envName}-${accountId}`,
       versioned: true,
       encryption: s3.BucketEncryption.S3_MANAGED,
       blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
@@ -45,13 +62,13 @@ export class AgroAmazoniaStack extends cdk.Stack {
 
     // SNS Topic para erros de Lambda
     const errorTopic = new sns.Topic(this, 'LambdaErrorTopic', {
-      topicName: 'agroamazonia-lambda-errors',
-      displayName: 'AgroAmazonia Lambda Errors'
+      topicName: name('topic', 'agroamazonia-lambda-errors'),
+      displayName: `AgroAmazonia Lambda Errors - ${this.envName}`
     });
 
     // DynamoDB Table
     const documentTable = new dynamodb.Table(this, 'DocumentProcessorTable', {
-      tableName: 'DocumentProcessorTable',
+      tableName: name('tabela', 'document-processor'),
       partitionKey: { name: 'PK', type: dynamodb.AttributeType.STRING },
       sortKey: { name: 'SK', type: dynamodb.AttributeType.STRING },
       billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
@@ -63,6 +80,7 @@ export class AgroAmazoniaStack extends cdk.Stack {
 
     // Lambda: Notificação de Recebimento
     const notifyReceiptLambda = new lambda.Function(this, 'NotifyReceiptFunction', {
+      functionName: name('lambda', 'notify-receipt'),
       runtime: lambda.Runtime.PYTHON_3_11,
       handler: 'notify_receipt.handler',
       code: lambda.Code.fromAsset('../backend/lambdas/notify_receipt'),
@@ -80,6 +98,7 @@ export class AgroAmazoniaStack extends cdk.Stack {
 
     // Lambda: Processor
     const processorLambda = new lambda.Function(this, 'ProcessorFunction', {
+      functionName: name('lambda', 'processor'),
       runtime: lambda.Runtime.PYTHON_3_11,
       handler: 'processor.handler',
       code: lambda.Code.fromAsset('../backend/lambdas/processor'),
@@ -94,6 +113,7 @@ export class AgroAmazoniaStack extends cdk.Stack {
 
     // Lambda: Validate Rules
     const validateRulesLambda = new lambda.Function(this, 'ValidateRulesFunction', {
+      functionName: name('lambda', 'validate-rules'),
       runtime: lambda.Runtime.PYTHON_3_11,
       handler: 'handler.handler',
       code: lambda.Code.fromAsset('../backend/lambdas/validate_rules'),
@@ -120,6 +140,7 @@ export class AgroAmazoniaStack extends cdk.Stack {
     const ocrFailurePassword = this.node.tryGetContext('ocrFailurePassword') || process.env.OCR_FAILURE_PASSWORD || '';
 
     const reportOcrFailureLambda = new lambda.Function(this, 'ReportOcrFailureFunction', {
+      functionName: name('lambda', 'report-ocr-failure'),
       runtime: lambda.Runtime.PYTHON_3_11,
       handler: 'handler.lambda_handler',
       code: lambda.Code.fromAsset('../backend/lambdas/report_ocr_failure', {
@@ -148,6 +169,7 @@ export class AgroAmazoniaStack extends cdk.Stack {
 
     // Lambda: Send to Protheus
     const sendToProtheusLambda = new lambda.Function(this, 'SendToProtheusFunction', {
+      functionName: name('lambda', 'send-to-protheus'),
       runtime: lambda.Runtime.PYTHON_3_11,
       handler: 'handler.lambda_handler',
       code: lambda.Code.fromAsset('../backend/lambdas/send_to_protheus', {
@@ -171,6 +193,7 @@ export class AgroAmazoniaStack extends cdk.Stack {
 
     // Lambda: Update Metrics
     const updateMetricsLambda = new lambda.Function(this, 'UpdateMetricsFunction', {
+      functionName: name('lambda', 'update-metrics'),
       runtime: lambda.Runtime.PYTHON_3_11,
       handler: 'handler.lambda_handler',
       code: lambda.Code.fromAsset('../backend/lambdas/update_metrics'),
@@ -185,6 +208,7 @@ export class AgroAmazoniaStack extends cdk.Stack {
 
     // Lambda: Check Textract
     const checkTextractLambda = new lambda.Function(this, 'CheckTextractFunction', {
+      functionName: name('lambda', 'check-textract'),
       runtime: lambda.Runtime.PYTHON_3_11,
       handler: 'handler.handler',
       code: lambda.Code.fromAsset('../backend/lambdas/check_textract'),
@@ -198,6 +222,7 @@ export class AgroAmazoniaStack extends cdk.Stack {
 
     // Lambda: Get Textract Results
     const getTextractLambda = new lambda.Function(this, 'GetTextractFunction', {
+      functionName: name('lambda', 'get-textract'),
       runtime: lambda.Runtime.PYTHON_3_11,
       handler: 'handler.handler',
       code: lambda.Code.fromAsset('../backend/lambdas/get_textract'),
@@ -212,6 +237,7 @@ export class AgroAmazoniaStack extends cdk.Stack {
 
     // Lambda: Parse XML
     const parseXmlLambda = new lambda.Function(this, 'ParseXmlFunction', {
+      functionName: name('lambda', 'parse-xml'),
       runtime: lambda.Runtime.PYTHON_3_11,
       handler: 'handler.handler',
       code: lambda.Code.fromAsset('../backend/lambdas/parse_xml'),
@@ -226,8 +252,24 @@ export class AgroAmazoniaStack extends cdk.Stack {
     documentTable.grantReadWriteData(parseXmlLambda);
     rawDocumentsBucket.grantRead(parseXmlLambda);
 
+    // Lambda: Update Process Status (para atualizar status quando houver erro)
+    const updateProcessStatusLambda = new lambda.Function(this, 'UpdateProcessStatusFunction', {
+      functionName: name('lambda', 'update-process-status'),
+      runtime: lambda.Runtime.PYTHON_3_11,
+      handler: 'handler.handler',
+      code: lambda.Code.fromAsset('../backend/lambdas/update_process_status'),
+      environment: {
+        TABLE_NAME: documentTable.tableName
+      },
+      timeout: cdk.Duration.seconds(30),
+      memorySize: 128
+    });
+
+    documentTable.grantReadWriteData(updateProcessStatusLambda);
+
     // Lambda: Parse OCR
     const parseOcrLambda = new lambda.Function(this, 'ParseOcrFunction', {
+      functionName: name('lambda', 'parse-ocr'),
       runtime: lambda.Runtime.PYTHON_3_11,
       handler: 'handler.handler',
       code: lambda.Code.fromAsset('../backend/lambdas/parse_ocr'),
@@ -246,6 +288,7 @@ export class AgroAmazoniaStack extends cdk.Stack {
 
     // Lambda: S3 Upload Handler
     const s3UploadHandler = new lambda.Function(this, 'S3UploadHandler', {
+      functionName: name('lambda', 's3-upload-handler'),
       runtime: lambda.Runtime.PYTHON_3_11,
       handler: 'handler.handler',
       code: lambda.Code.fromAsset('../backend/lambdas/s3_upload_handler'),
@@ -388,6 +431,18 @@ export class AgroAmazoniaStack extends cdk.Stack {
       outputPath: '$.Payload'
     });
 
+    // Lambda task para atualizar status para FAILED antes de notificar erro
+    const updateStatusBeforeErrorTask = new tasks.LambdaInvoke(this, 'UpdateStatusBeforeError', {
+      lambdaFunction: updateProcessStatusLambda,
+      payload: sfn.TaskInput.fromObject({
+        'process_id.$': '$.process_id',
+        'error': sfn.TaskInput.fromJsonPathAt('$.error'),
+        'error_type': 'LAMBDA_ERROR',
+        'lambda_name.$': '$$.State.Name'
+      }),
+      resultPath: '$.status_update'
+    });
+
     const notifyErrorTask = new tasks.SnsPublish(this, 'NotifyError', {
       topic: errorTopic,
       subject: 'Lambda Error - AgroAmazonia',
@@ -414,17 +469,19 @@ export class AgroAmazoniaStack extends cdk.Stack {
     prepareMetricsDataFailure.next(updateMetricsTask);
     updateMetricsTask.next(successState);
     
-    // Catch para capturar falhas e enviar para SNS
-    updateMetricsTask.addCatch(notifyErrorTask, { resultPath: '$.error' });
+    // Conectar atualização de status antes de notificar erro (global para todos os erros)
+    updateStatusBeforeErrorTask.next(notifyErrorTask);
     notifyErrorTask.next(failureState);
     
-    // Adicionar catch em todos os tasks principais para notificar erros
-    notifyTask.addCatch(notifyErrorTask, { resultPath: '$.error' });
-    checkTextractTask.addCatch(notifyErrorTask, { resultPath: '$.error' });
-    processorTask.addCatch(notifyErrorTask, { resultPath: '$.error' });
-    parallelParsing.addCatch(notifyErrorTask, { resultPath: '$.error' });
-    validateTask.addCatch(notifyErrorTask, { resultPath: '$.error' });
-    sendToProtheusTask.addCatch(notifyErrorTask, { resultPath: '$.error' });
+    // Catch para capturar falhas: primeiro atualiza status, depois envia SNS (global)
+    updateMetricsTask.addCatch(updateStatusBeforeErrorTask, { resultPath: '$.error' });
+    notifyTask.addCatch(updateStatusBeforeErrorTask, { resultPath: '$.error' });
+    checkTextractTask.addCatch(updateStatusBeforeErrorTask, { resultPath: '$.error' });
+    processorTask.addCatch(updateStatusBeforeErrorTask, { resultPath: '$.error' });
+    parallelParsing.addCatch(updateStatusBeforeErrorTask, { resultPath: '$.error' });
+    validateTask.addCatch(updateStatusBeforeErrorTask, { resultPath: '$.error' });
+    sendToProtheusTask.addCatch(updateStatusBeforeErrorTask, { resultPath: '$.error' });
+    reportFailureTask.addCatch(updateStatusBeforeErrorTask, { resultPath: '$.error' });
 
     mapState.next(processorTask);
     skipTextract.next(processorTask);
@@ -441,7 +498,7 @@ export class AgroAmazoniaStack extends cdk.Stack {
 
 
     const stateMachine = new sfn.StateMachine(this, 'DocumentProcessorStateMachine', {
-      stateMachineName: 'DocumentProcessorWorkflow',
+      stateMachineName: name('state-machine', 'document-processor-workflow'),
       definition,
       timeout: cdk.Duration.minutes(15)
     });
@@ -460,18 +517,91 @@ export class AgroAmazoniaStack extends cdk.Stack {
       resources: ['*']
     }));
 
+    // API Key padrão para o frontend
+    // Esta é a mesma chave usada no frontend-stack.ts
+    const defaultApiKey = 'agroamazonia_key_UPXsb8Hb8sjbxWBQqouzYnTL5w-V_dJx';
+    
     // Secrets Manager for API Keys
     const apiKeysSecret = new secretsmanager.Secret(this, 'ApiKeysSecret', {
-      secretName: 'agroamazonia/api-keys',
-      description: 'API Keys for AgroAmazonia clients',
+      secretName: name('secret', 'agroamazonia-api-keys'),
+      description: `API Keys for AgroAmazonia clients - ${this.envName}`,
       generateSecretString: {
         secretStringTemplate: JSON.stringify({}),
         generateStringKey: 'placeholder'
       }
     });
+    
+    // Custom Resource Lambda para garantir que a API key padrão esteja sempre presente
+    // Isso faz merge com chaves existentes, não sobrescreve
+    const ensureApiKeyLambda = new lambda.Function(this, 'EnsureApiKeyFunction', {
+      functionName: name('lambda', 'ensure-api-key'),
+      runtime: lambda.Runtime.PYTHON_3_11,
+      handler: 'index.handler',
+      code: lambda.Code.fromInline(`
+import json
+import boto3
+from datetime import datetime
+
+def handler(event, context):
+    secrets_client = boto3.client('secretsmanager')
+    # O Provider do CDK passa as propriedades em event['ResourceProperties']
+    props = event.get('ResourceProperties', event)
+    secret_arn = props['SecretArn']
+    api_key = props['ApiKey']
+    
+    # Obter secret existente
+    try:
+        response = secrets_client.get_secret_value(SecretId=secret_arn)
+        current_keys = json.loads(response['SecretString'])
+    except secrets_client.exceptions.ResourceNotFoundException:
+        current_keys = {}
+    
+    # Adicionar ou atualizar a API key padrão
+    if api_key not in current_keys:
+        current_keys[api_key] = {
+            'status': 'active',
+            'client_name': 'frontend',
+            'created_at': datetime.utcnow().isoformat() + 'Z'
+        }
+    else:
+        current_keys[api_key]['status'] = 'active'
+        current_keys[api_key]['client_name'] = 'frontend'
+        current_keys[api_key]['updated_at'] = datetime.utcnow().isoformat() + 'Z'
+    
+    # Atualizar o secret
+    secrets_client.update_secret(
+        SecretId=secret_arn,
+        SecretString=json.dumps(current_keys, indent=2)
+    )
+    
+    return {
+        'Message': f'API key {api_key[:20]}... ensured',
+        'TotalKeys': len(current_keys)
+    }
+`),
+      timeout: cdk.Duration.seconds(30)
+    });
+    
+    // Permissão para a Lambda acessar o Secrets Manager
+    apiKeysSecret.grantRead(ensureApiKeyLambda);
+    apiKeysSecret.grantWrite(ensureApiKeyLambda);
+    
+    // Custom Resource para garantir que a API key esteja presente
+    const ensureApiKeyProvider = new cr.Provider(this, 'EnsureApiKeyProvider', {
+      onEventHandler: ensureApiKeyLambda
+    });
+    
+    new cdk.CustomResource(this, 'EnsureApiKeyResource', {
+      serviceToken: ensureApiKeyProvider.serviceToken,
+      properties: {
+        SecretArn: apiKeysSecret.secretArn,
+        ApiKey: defaultApiKey
+      }
+    });
 
     // Lambda: API FastAPI
     const apiLambda = new lambda.Function(this, 'ApiFunction', {
+      functionName: name('lambda', 'api'),
       runtime: lambda.Runtime.PYTHON_3_11,
       handler: 'src.main.handler',
       code: lambda.Code.fromAsset('../backend', {
@@ -500,7 +630,7 @@ export class AgroAmazoniaStack extends cdk.Stack {
 
     // API Gateway
     const api = new apigateway.RestApi(this, 'DocumentApi', {
-      restApiName: 'AgroAmazonia Document API',
+      restApiName: name('api', 'agroamazonia-document-api'),
       deployOptions: {
         stageName: 'v1',
         throttlingRateLimit: 100,
@@ -525,10 +655,14 @@ export class AgroAmazoniaStack extends cdk.Stack {
       anyMethod: true
     });
 
+    // Expor URL da API como propriedade pública para outras stacks
+    this.apiUrl = api.url;
+
     // Outputs
-    new cdk.CfnOutput(this, 'ApiUrl', {
+    const apiUrlOutput = new cdk.CfnOutput(this, 'ApiUrl', {
       value: api.url,
-      description: 'API Gateway URL'
+      description: 'API Gateway URL',
+      exportName: `agroamazonia-backend-${this.envName}-ApiUrl` // Export para uso em outras stacks
     });
 
     new cdk.CfnOutput(this, 'BucketName', {

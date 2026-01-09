@@ -1,78 +1,49 @@
-let API_URL = localStorage.getItem('apiUrl') || window.ENV.API_URL;
-let API_KEY = localStorage.getItem('apiKey') || window.ENV.API_KEY;
+// Função helper para normalizar URL (remover barra final)
+function normalizeApiUrl(url) {
+    if (!url) return url;
+    return url.toString().replace(/\/+$/, ''); // Remove todas as barras no final
+}
+
+let API_URL = normalizeApiUrl(localStorage.getItem('apiUrl') || window.ENV?.API_URL);
+let API_KEY = localStorage.getItem('apiKey') || window.ENV?.API_KEY;
 let selectedProcess = null;
 let refreshInterval = null;
 let currentPage = 'dashboard';
 let dailyProcessesChart, successErrorRateChart, hourlyChart, errorChart, typeChart, failedRulesChart, failedRulesByDayChart;
 
-const PROCESS_RULES = {
-    SEMENTES: [
-        { name: 'Validação de Imposto', description: 'Verifica se o imposto total está dentro do limite permitido', action: 'REJECT', order: 1 },
-        { name: 'Verificação de Documentação', description: 'Valida a presença do Certificado Fitossanitário obrigatório', action: 'PENDING', order: 2 }
-    ],
-    AGROQUIMICOS: [
-        { name: 'Validação de Licença IBAMA', description: 'Verifica a presença da licença IBAMA obrigatória', action: 'REJECT', order: 1 },
-        { name: 'Verificação de Valor', description: 'Compara o valor total do documento com o valor esperado', action: 'PENDING', order: 2 }
-    ],
-    FERTILIZANTES: [
-        { name: 'Validação de Laudo de Composição', description: 'Verifica a presença do laudo de composição química obrigatório', action: 'REJECT', order: 1 }
-    ]
-};
+// Removido: PROCESS_RULES hardcoded - agora busca do backend
 
 document.addEventListener('DOMContentLoaded', function() {
     // Limpar localStorage e usar .env
     localStorage.removeItem('apiUrl');
     localStorage.removeItem('apiKey');
-    API_URL = window.ENV.API_URL;
-    API_KEY = window.ENV.API_KEY;
+    // Normalizar URL ao carregar (remove barra final se existir)
+    API_URL = normalizeApiUrl(window.ENV?.API_URL || API_URL);
+    API_KEY = window.ENV?.API_KEY || API_KEY;
     
     document.getElementById('apiUrl').value = API_URL;
     document.getElementById('apiKey').value = API_KEY;
-    showRules('SEMENTES');
+    // Carregar regras disponíveis do backend primeiro
+    loadAvailableRules().then(() => {
+        showRules('SEMENTES');
+    });
     loadProcesses();
     loadDashboardMetrics();
 });
 
 
 
+// Função showPage mantida para compatibilidade, mas agora as páginas são arquivos separados
 function showPage(pageName) {
-    document.querySelectorAll('.nav-item').forEach(item => item.classList.remove('active'));
-    document.querySelectorAll('.page').forEach(page => page.classList.remove('active'));
-    
-    event.target.classList.add('active');
-    document.getElementById(pageName + 'Page').classList.add('active');
-    
-    const titles = {
-        dashboard: 'Dashboard',
-        processes: 'Processos',
-        rules: 'Regras de Validação',
-        settings: 'Configurações'
+    // Redirecionar para a página correta
+    const pages = {
+        dashboard: 'index.html',
+        processes: 'processes.html',
+        rules: 'rules.html',
+        settings: 'settings.html'
     };
-    document.getElementById('pageTitle').textContent = titles[pageName];
-    
-    // Atualizar página atual
-    currentPage = pageName;
-    
-    // Mostrar/ocultar botão de refresh
-    const refreshBtn = document.getElementById('refreshBtn');
-    if (refreshBtn) {
-        refreshBtn.style.display = pageName === 'dashboard' ? 'inline-block' : 'none';
-    }
-    
-    // Gerenciar auto-refresh do dashboard
-    if (refreshInterval) {
-        clearInterval(refreshInterval);
-        refreshInterval = null;
-    }
-    
-    if (pageName === 'dashboard') {
-        loadDashboardMetrics();
-        // Auto-refresh a cada 60 segundos apenas no dashboard
-        refreshInterval = setInterval(() => {
-            if (currentPage === 'dashboard') {
-                loadDashboardMetrics();
-            }
-        }, 60000);
+    if (pages[pageName]) {
+        window.location.href = pages[pageName];
     }
 }
 
@@ -81,7 +52,7 @@ let currentEndDate = null;
 
 async function loadDashboardMetrics() {
     try {
-        let url = `${API_URL}/api/v1/dashboard/metrics`;
+        let url = `${API_URL}/api/dashboard/metrics`;
         if (currentStartDate && currentEndDate) {
             url += `?start_date=${currentStartDate}&end_date=${currentEndDate}`;
         }
@@ -174,16 +145,38 @@ function updateMetricCards(data) {
     const summary = data.summary || {};
     const today = data.today || {};
     
+    // Determinar se há filtro de período ativo
+    const hasPeriodFilter = currentStartDate && currentEndDate;
+    const isToday = hasPeriodFilter && currentStartDate === currentEndDate && 
+                    currentStartDate === new Date().toISOString().split('T')[0];
+    
     // Se há período filtrado, usar summary; senão usar today
     const total = summary.total || today.total_count || 0;
     const success = summary.success || today.success_count || 0;
     const failed = summary.failed || today.failed_count || 0;
     const successRate = summary.success_rate || summary.success_rate_week || today.success_rate || 0;
     
+    // Atualizar valores
     document.getElementById('totalToday').textContent = total;
     document.getElementById('successToday').textContent = success;
     document.getElementById('failedToday').textContent = failed;
     document.getElementById('successRate').textContent = successRate.toFixed(1) + '%';
+    
+    // Atualizar labels dinamicamente baseado no filtro
+    let periodLabel = 'Hoje';
+    if (hasPeriodFilter && !isToday) {
+        const startDate = new Date(currentStartDate);
+        const endDate = new Date(currentEndDate);
+        const startStr = startDate.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
+        const endStr = endDate.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
+        periodLabel = startDate.getTime() === endDate.getTime() 
+            ? startStr 
+            : `${startStr} - ${endStr}`;
+    }
+    
+    document.getElementById('totalLabel').textContent = `Processos ${periodLabel}`;
+    document.getElementById('successLabel').textContent = `Sucessos ${periodLabel}`;
+    document.getElementById('failedLabel').textContent = `Falhas ${periodLabel}`;
     
     // Formatar tempo médio de processamento (usar summary quando disponível, senão today)
     const avgTime = summary.avg_processing_time || today.avg_processing_time || 0;
@@ -578,7 +571,8 @@ function createFailedRulesChart(data) {
         'validar_cnpj_fornecedor': 'Validar CNPJ Fornecedor',
         'validar_numero_pedido': 'Validar Número Pedido',
         'validar_valor_total': 'Validar Valor Total',
-        'validar_data_emissao': 'Validar Data Emissão'
+        'validar_data_emissao': 'Validar Data Emissão',
+        'validar_cfop_chave': 'Validar CFOP Chave'
     };
     
     failedRulesChart = new Chart(ctx, {
@@ -663,7 +657,8 @@ function createFailedRulesByDayChart(data) {
         'validar_cnpj_fornecedor': 'Validar CNPJ Fornecedor',
         'validar_numero_pedido': 'Validar Número Pedido',
         'validar_valor_total': 'Validar Valor Total',
-        'validar_data_emissao': 'Validar Data Emissão'
+        'validar_data_emissao': 'Validar Data Emissão',
+        'validar_cfop_chave': 'Validar CFOP Chave'
     };
     
     const rulesArray = Array.from(allRules);
@@ -778,7 +773,8 @@ function createFailedRulesByDayChart(data) {
         'validar_cnpj_fornecedor': 'Validar CNPJ Fornecedor',
         'validar_numero_pedido': 'Validar Número Pedido',
         'validar_valor_total': 'Validar Valor Total',
-        'validar_data_emissao': 'Validar Data Emissão'
+        'validar_data_emissao': 'Validar Data Emissão',
+        'validar_cfop_chave': 'Validar CFOP Chave'
     };
     
     const rulesArray = Array.from(allRules);
@@ -856,7 +852,7 @@ function createFailedRulesByDayChart(data) {
 }
 
 function saveApiConfig() {
-    API_URL = document.getElementById('apiUrl').value.trim();
+    API_URL = normalizeApiUrl(document.getElementById('apiUrl').value.trim());
     API_KEY = document.getElementById('apiKey').value.trim();
     localStorage.setItem('apiUrl', API_URL);
     localStorage.setItem('apiKey', API_KEY);
@@ -864,10 +860,11 @@ function saveApiConfig() {
     loadProcesses();
 }
 
-function showCreateModal() {
-    // Gerar UUID e criar processo diretamente
+function createNewProcess() {
+    // Gerar UUID para o processo (será criado quando fizer upload)
     const processId = crypto.randomUUID();
     
+    // Criar objeto de processo local (será criado no backend quando fizer upload)
     selectedProcess = {
         process_id: processId,
         process_type: null,
@@ -875,11 +872,9 @@ function showCreateModal() {
         files: { danfe: [], additional: [] }
     };
     
-    showToast(`✓ Processo criado: ${processId.substring(0, 8)}...`, 'success');
-    showPage('processes');
-    
+    // Mostrar interface de upload
     document.getElementById('selectedProcessId').textContent = selectedProcess.process_id;
-    document.getElementById('selectedProcessType').textContent = 'Aguardando tipo...';
+    document.getElementById('selectedProcessType').textContent = 'Aguardando upload...';
     
     const statusBadge = document.getElementById('selectedProcessStatus');
     statusBadge.textContent = 'CREATED';
@@ -888,31 +883,13 @@ function showCreateModal() {
     document.getElementById('processDetails').style.display = 'block';
     document.getElementById('processesList').style.display = 'none';
     
-    loadProcessFiles();
+    // Limpar listas de arquivos
+    document.getElementById('danfeList').innerHTML = '';
+    document.getElementById('docsList').innerHTML = '';
+    
+    showToast(`✓ Novo processo preparado. Faça upload dos arquivos para criar.`, 'info');
 }
 
-function closeCreateModal() {
-    document.getElementById('createModal').style.display = 'none';
-}
-
-function showRulesPreview() {
-    const processType = document.getElementById('processType').value;
-    const preview = document.getElementById('rulesPreview');
-
-    if (!processType) {
-        preview.innerHTML = '';
-        return;
-    }
-
-    const rules = PROCESS_RULES[processType];
-    preview.innerHTML = '<h4 style="margin: 20px 0 10px;">Regras que serão aplicadas:</h4>' + rules.map(r => `
-        <div class="rule-item">
-            <h4>${r.order}. ${r.name}</h4>
-            <p>${r.description}</p>
-            <span class="rule-status ${r.action.toLowerCase()}">${r.action}</span>
-        </div>
-    `).join('');
-}
 
 
 
@@ -1333,7 +1310,8 @@ async function startProcess() {
 
         if (!response.ok) throw new Error('Falha ao iniciar processo');
 
-        showToast(`✓ Processamento iniciado (AGROQUIMICOS)!`, 'success');
+        const processType = selectedProcess?.process_type || 'N/A';
+        showToast(`✓ Processamento iniciado (${processType})!`, 'success');
         
         // Manter na página e atualizar após 2 segundos
         setTimeout(() => refreshProcess(), 2000);
@@ -1374,32 +1352,97 @@ async function refreshProcess() {
 }
 
 let currentProcessType = 'SEMENTES';
+let availableRules = []; // Cache de regras disponíveis do backend
 
-const AVAILABLE_RULES = [
-    { name: 'validar_numero_nota', description: 'Valida número da nota fiscal' },
-    { name: 'validar_serie', description: 'Valida série da nota fiscal' },
-    { name: 'validar_data_emissao', description: 'Valida data de emissão' },
-    { name: 'validar_cnpj_fornecedor', description: 'Valida CNPJ do fornecedor' },
-    { name: 'validar_produtos', description: 'Valida produtos (descrição, quantidade, valores)' },
-    { name: 'validar_rastreabilidade', description: 'Valida rastreabilidade (lote, validade, fabricação)' },
-    { name: 'validar_icms', description: 'Valida ICMS (interno zerado, interestadual)' }
-];
+// Carregar regras disponíveis do backend
+async function loadAvailableRules() {
+    try {
+        const response = await fetch(`${API_URL}/api/rules/available`, {
+            headers: { 
+                'x-api-key': API_KEY,
+                'Content-Type': 'application/json'
+            }
+        });
+        
+        if (!response.ok) {
+            const errorText = await response.text();
+            console.error('Erro ao carregar regras disponíveis:', response.status, response.statusText, errorText);
+            availableRules = []; // Fallback: lista vazia
+            return false;
+        }
+        
+        const data = await response.json();
+        availableRules = data.rules || [];
+        console.log(`✓ Carregadas ${availableRules.length} regras disponíveis do backend`);
+        return true;
+    } catch (error) {
+        console.error('Erro ao carregar regras disponíveis:', error);
+        availableRules = []; // Fallback: lista vazia
+        return false;
+    }
+}
 
 async function showRules(processType) {
     currentProcessType = processType;
     document.querySelectorAll('.rule-tab').forEach(t => t.classList.remove('active'));
-    event.target.classList.add('active');
+    if (event && event.target) {
+        event.target.classList.add('active');
+    }
 
     const display = document.getElementById('rulesDisplay');
+    if (!display) return;
+    
     display.innerHTML = '<p style="text-align: center; padding: 40px;">Carregando...</p>';
 
     try {
+        // Garantir que as regras disponíveis foram carregadas
+        if (availableRules.length === 0) {
+            const loaded = await loadAvailableRules();
+            if (!loaded) {
+                display.innerHTML = `
+                    <h3>Regras de Validação - ${processType}</h3>
+                    <p style="color: red; text-align: center; padding: 40px;">
+                        ❌ Erro: Não foi possível carregar as regras disponíveis do backend.<br>
+                        <small>Verifique o console do navegador para mais detalhes.</small>
+                    </p>
+                `;
+                return;
+            }
+        }
+
+        // Buscar regras ativas para este tipo de processo
         const response = await fetch(`${API_URL}/api/rules/${processType}`, {
-            headers: { 'x-api-key': API_KEY }
+            headers: { 
+                'x-api-key': API_KEY,
+                'Content-Type': 'application/json'
+            }
         });
-        const data = response.ok ? await response.json() : { rules: [] };
+        
+        if (!response.ok) {
+            const errorText = await response.text();
+            console.error('Erro ao carregar regras ativas:', response.status, response.statusText, errorText);
+            display.innerHTML = `
+                <h3>Regras de Validação - ${processType}</h3>
+                <p style="color: red; text-align: center; padding: 40px;">
+                    ❌ Erro ao carregar regras ativas: ${response.status} ${response.statusText}
+                </p>
+            `;
+            return;
+        }
+        
+        const data = await response.json();
         const activeRules = data.rules || [];
         const activeRuleNames = activeRules.map(r => r.rule_name || r.RULE_NAME);
+
+        if (availableRules.length === 0) {
+            display.innerHTML = `
+                <h3>Regras de Validação - ${processType}</h3>
+                <p style="color: orange; text-align: center; padding: 40px;">
+                    ⚠️ Nenhuma regra disponível foi encontrada no backend.
+                </p>
+            `;
+            return;
+        }
 
         display.innerHTML = `
             <h3>Regras de Validação - ${processType}</h3>
@@ -1407,7 +1450,7 @@ async function showRules(processType) {
                 <strong>✓</strong> Marque as regras que deseja ativar para este tipo de processo.
             </p>
             <div style="display: grid; gap: 15px;">
-                ${AVAILABLE_RULES.map((rule, index) => {
+                ${availableRules.map((rule, index) => {
                     const isActive = activeRuleNames.includes(rule.name);
                     return `
                         <div style="background: white; padding: 20px; border-radius: 8px; border: 2px solid ${isActive ? '#28a745' : '#e0e0e0'}; display: flex; align-items: center; gap: 15px;">
@@ -1602,5 +1645,616 @@ async function saveMetadata() {
     } finally {
         saveBtn.disabled = false;
         saveBtn.textContent = 'Salvar';
+    }
+}
+
+// ==================== Chave x CFOP ====================
+let currentEditingCfopId = null;
+
+async function loadCfopRules() {
+    const container = document.getElementById('cfopRulesList');
+    if (!container) {
+        console.error('Container cfopRulesList não encontrado');
+        return;
+    }
+    
+    try {
+        // Mostrar loading
+        container.innerHTML = `
+            <div style="text-align: center; padding: 40px; color: #999;">
+                <p>Carregando regras...</p>
+            </div>
+        `;
+        
+        const response = await fetch(`${API_URL}/api/cfop-operation/`, {
+            headers: { 'x-api-key': API_KEY }
+        });
+        
+        if (!response.ok) {
+            const errorData = await response.json().catch(() => ({}));
+            throw new Error(errorData.detail || 'Erro ao carregar regras CFOP');
+        }
+        
+        const data = await response.json();
+        console.log('Regras CFOP carregadas:', data);
+        renderCfopRules(data.rules || []);
+    } catch (error) {
+        console.error('Erro ao carregar regras CFOP:', error);
+        container.innerHTML = `
+            <div style="text-align: center; padding: 20px; color: #ef4444;">
+                <p>❌ Erro ao carregar regras: ${error.message}</p>
+                <button onclick="loadCfopRules()" class="btn-secondary" style="margin-top: 10px;">🔄 Tentar novamente</button>
+            </div>
+        `;
+    }
+}
+
+function renderCfopRules(rules) {
+    const container = document.getElementById('cfopRulesList');
+    
+    const table = `
+        <table style="width: 100%; border-collapse: collapse; background: white;">
+            <thead style="position: sticky; top: 0; z-index: 10; background: #f8f9fa;">
+                <tr style="border-bottom: 2px solid #dee2e6;">
+                    <th style="padding: 12px; text-align: left; font-weight: 600; color: #333; background: #f8f9fa; border-bottom: 2px solid #dee2e6; width: 80px;">Chave</th>
+                    <th style="padding: 12px; text-align: left; font-weight: 600; color: #333; background: #f8f9fa; border-bottom: 2px solid #dee2e6; min-width: 200px;">Descrição</th>
+                    <th style="padding: 12px; text-align: left; font-weight: 600; color: #333; background: #f8f9fa; border-bottom: 2px solid #dee2e6; width: 150px;">CFOP NF</th>
+                    <th style="padding: 12px; text-align: left; font-weight: 600; color: #333; background: #f8f9fa; border-bottom: 2px solid #dee2e6; min-width: 250px;">Regra</th>
+                    <th style="padding: 12px; text-align: left; font-weight: 600; color: #333; background: #f8f9fa; border-bottom: 2px solid #dee2e6; min-width: 250px;">Observação</th>
+                    <!-- Pedido Compra - Oculto temporariamente, pode ser reativado depois -->
+                    <!-- <th style="padding: 12px; text-align: center; font-weight: 600; color: #333; background: #f8f9fa; border-bottom: 2px solid #dee2e6; width: 120px;">Pedido Compra</th> -->
+                    <th style="padding: 12px; text-align: center; font-weight: 600; color: #333; background: #f8f9fa; border-bottom: 2px solid #dee2e6; width: 100px;">Status</th>
+                    <th style="padding: 12px; text-align: center; font-weight: 600; color: #333; background: #f8f9fa; border-bottom: 2px solid #dee2e6; width: 120px;">Ações</th>
+                </tr>
+            </thead>
+            <tbody id="cfopTableBody">
+                ${rules.length > 0 ? rules.map((rule, index) => `
+                    <tr data-id="${rule.id}" style="border-bottom: 1px solid #e9ecef; transition: background 0.2s; ${!rule.ativo ? 'opacity: 0.6; background-color: #f8f9fa;' : ''}">
+                        <td style="padding: 12px;">
+                            <input type="text" 
+                                   value="${(rule.chave || '').replace(/"/g, '&quot;')}" 
+                                   data-field="chave"
+                                   data-rule-id="${rule.id}"
+                                   style="width: 100%; padding: 8px; border: 1px solid #ced4da; border-radius: 4px; font-weight: 600;"
+                                   onchange="updateCfopField('${rule.id}', 'chave', this.value)">
+                        </td>
+                        <td style="padding: 12px;">
+                            <input type="text" 
+                                   value="${(rule.descricao || '').replace(/"/g, '&quot;').replace(/'/g, '&#39;')}" 
+                                   data-field="descricao"
+                                   data-rule-id="${rule.id}"
+                                   style="width: 100%; padding: 8px; border: 1px solid #ced4da; border-radius: 4px;"
+                                   onchange="updateCfopField('${rule.id}', 'descricao', this.value)">
+                        </td>
+                        <td style="padding: 12px;">
+                            <div class="cfop-tags-container" 
+                                 data-rule-id="${rule.id}"
+                                 style="display: flex; flex-wrap: wrap; gap: 6px; padding: 6px; border: 1px solid #ced4da; border-radius: 4px; min-height: 38px; align-items: center; background: white;">
+                                ${renderCfopTags(rule.cfop || '', rule.id)}
+                                <input type="text" 
+                                       class="cfop-tag-input"
+                                       data-rule-id="${rule.id}"
+                                       placeholder="Digite CFOP e Enter"
+                                       style="flex: 1; min-width: 120px; border: none; outline: none; padding: 4px; font-size: 0.9em; background: transparent;"
+                                       onkeydown="handleCfopTagInput(event, '${rule.id}')"
+                                       onblur="handleCfopTagBlur(event, '${rule.id}')">
+                            </div>
+                        </td>
+                        <td style="padding: 12px;">
+                            <textarea 
+                                   data-field="regra"
+                                   data-rule-id="${rule.id}"
+                                   placeholder="Texto descritivo de quando usar"
+                                   style="width: 100%; padding: 8px; border: 1px solid #ced4da; border-radius: 4px; font-size: 0.85em; resize: vertical; min-height: 60px; font-family: inherit;"
+                                   onchange="updateCfopField('${rule.id}', 'regra', this.value)">${(rule.regra || '').replace(/"/g, '&quot;').replace(/'/g, '&#39;').replace(/\n/g, '&#10;')}</textarea>
+                        </td>
+                        <td style="padding: 12px;">
+                            <textarea 
+                                   data-field="observacao"
+                                   data-rule-id="${rule.id}"
+                                   placeholder="Observações adicionais"
+                                   style="width: 100%; padding: 8px; border: 1px solid #ced4da; border-radius: 4px; font-size: 0.85em; resize: vertical; min-height: 60px; font-family: inherit;"
+                                   onchange="updateCfopField('${rule.id}', 'observacao', this.value)">${(rule.observacao || '').replace(/"/g, '&quot;').replace(/'/g, '&#39;').replace(/\n/g, '&#10;')}</textarea>
+                        </td>
+                        <!-- Pedido Compra - Oculto temporariamente, pode ser reativado depois -->
+                        <!-- <td style="padding: 12px; text-align: center;">
+                            <input type="checkbox" 
+                                   ${rule.pedido_compra ? 'checked' : ''}
+                                   data-field="pedido_compra"
+                                   data-rule-id="${rule.id}"
+                                   style="width: 20px; height: 20px; cursor: pointer;"
+                                   onchange="updateCfopField('${rule.id}', 'pedido_compra', this.checked)">
+                        </td> -->
+                        <td style="padding: 12px; text-align: center;">
+                            <input type="checkbox" 
+                                   ${rule.ativo !== false ? 'checked' : ''}
+                                   data-field="ativo"
+                                   data-rule-id="${rule.id}"
+                                   style="width: 20px; height: 20px; cursor: pointer;"
+                                   onchange="updateCfopField('${rule.id}', 'ativo', this.checked); updateStatusLabel(this)"
+                                   title="${rule.ativo !== false ? 'Ativo' : 'Inativo'}">
+                            <span class="status-label" style="margin-left: 5px; font-size: 0.85em; color: ${rule.ativo !== false ? '#10b981' : '#ef4444'}; font-weight: 600;">
+                                ${rule.ativo !== false ? 'Ativo' : 'Inativo'}
+                            </span>
+                        </td>
+                        <td style="padding: 12px; text-align: center;">
+                            <button onclick="saveCfopRow('${rule.id}')" 
+                                    class="btn-secondary" 
+                                    style="padding: 6px 12px; font-size: 0.85em; margin-right: 5px; background: #10b981; color: white; border: none; cursor: pointer;"
+                                    title="Salvar alterações">💾</button>
+                            <button onclick="deleteCfopRule('${rule.id}', '${(rule.chave || '').replace(/'/g, "\\'")}')" 
+                                    class="btn-secondary" 
+                                    style="padding: 6px 12px; font-size: 0.85em; background: #ef4444; color: white; border: none; cursor: pointer;"
+                                    title="Excluir">🗑️</button>
+                        </td>
+                    </tr>
+                `).join('') : '<tr><td colspan="7" style="text-align: center; padding: 40px; color: #999;">Nenhuma regra cadastrada. Clique em "Adicionar Linha" para começar.</td></tr>'}
+            </tbody>
+        </table>
+    `;
+    
+    container.innerHTML = table;
+}
+
+function addNewCfopRow() {
+    let tbody = document.getElementById('cfopTableBody');
+    if (!tbody) {
+        // Se a tabela ainda não foi renderizada, criar estrutura básica
+        const container = document.getElementById('cfopRulesList');
+        container.innerHTML = `
+            <table style="width: 100%; border-collapse: collapse; background: white;">
+                <thead style="position: sticky; top: 0; z-index: 10; background: #f8f9fa;">
+                    <tr style="border-bottom: 2px solid #dee2e6;">
+                        <th style="padding: 12px; text-align: left; font-weight: 600; color: #333; background: #f8f9fa; border-bottom: 2px solid #dee2e6; width: 80px;">Chave</th>
+                        <th style="padding: 12px; text-align: left; font-weight: 600; color: #333; background: #f8f9fa; border-bottom: 2px solid #dee2e6; min-width: 200px;">Descrição</th>
+                        <th style="padding: 12px; text-align: left; font-weight: 600; color: #333; background: #f8f9fa; border-bottom: 2px solid #dee2e6; width: 150px;">CFOP NF</th>
+                        <th style="padding: 12px; text-align: left; font-weight: 600; color: #333; background: #f8f9fa; border-bottom: 2px solid #dee2e6; min-width: 250px;">Regra</th>
+                        <th style="padding: 12px; text-align: left; font-weight: 600; color: #333; background: #f8f9fa; border-bottom: 2px solid #dee2e6; min-width: 250px;">Observação</th>
+                        <!-- Pedido Compra - Oculto temporariamente, pode ser reativado depois -->
+                        <!-- <th style="padding: 12px; text-align: center; font-weight: 600; color: #333; background: #f8f9fa; border-bottom: 2px solid #dee2e6; width: 120px;">Pedido Compra</th> -->
+                        <th style="padding: 12px; text-align: center; font-weight: 600; color: #333; background: #f8f9fa; border-bottom: 2px solid #dee2e6; width: 100px;">Status</th>
+                        <th style="padding: 12px; text-align: center; font-weight: 600; color: #333; background: #f8f9fa; border-bottom: 2px solid #dee2e6; width: 120px;">Ações</th>
+                    </tr>
+                </thead>
+                <tbody id="cfopTableBody"></tbody>
+            </table>
+        `;
+        tbody = document.getElementById('cfopTableBody');
+    }
+    
+    const newRowId = 'new-' + Date.now();
+    const newRow = document.createElement('tr');
+    newRow.setAttribute('data-id', newRowId);
+    newRow.style.borderBottom = '1px solid #e9ecef';
+    newRow.style.backgroundColor = '#fff9e6';
+    newRow.innerHTML = `
+        <td style="padding: 12px;">
+            <input type="text" 
+                   data-field="chave"
+                   data-rule-id="${newRowId}"
+                   placeholder="Ex: 1B"
+                   style="width: 100%; padding: 8px; border: 2px solid #fbbf24; border-radius: 4px; font-weight: 600;"
+                   required>
+        </td>
+        <td style="padding: 12px;">
+            <input type="text" 
+                   data-field="descricao"
+                   data-rule-id="${newRowId}"
+                   placeholder="Ex: E-033-COMPRA PARA COMERCIALIZACAO"
+                   style="width: 100%; padding: 8px; border: 2px solid #fbbf24; border-radius: 4px;"
+                   required>
+        </td>
+        <td style="padding: 12px;">
+            <div class="cfop-tags-container" 
+                 data-rule-id="${newRowId}"
+                 style="display: flex; flex-wrap: wrap; gap: 6px; padding: 6px; border: 2px solid #fbbf24; border-radius: 4px; min-height: 38px; align-items: center; background: #fff9e6;">
+                <input type="text" 
+                       class="cfop-tag-input"
+                       data-rule-id="${newRowId}"
+                       placeholder="Digite CFOP e Enter"
+                       style="flex: 1; min-width: 120px; border: none; outline: none; padding: 4px; font-size: 0.9em; background: transparent;"
+                       onkeydown="handleCfopTagInput(event, '${newRowId}')"
+                       onblur="handleCfopTagBlur(event, '${newRowId}')">
+            </div>
+        </td>
+        <td style="padding: 12px;">
+            <textarea 
+                   data-field="regra"
+                   data-rule-id="${newRowId}"
+                   placeholder="Texto descritivo de quando usar"
+                   style="width: 100%; padding: 8px; border: 2px solid #fbbf24; border-radius: 4px; font-size: 0.85em; resize: vertical; min-height: 60px; font-family: inherit;"
+            ></textarea>
+        </td>
+        <td style="padding: 12px;">
+            <textarea 
+                   data-field="observacao"
+                   data-rule-id="${newRowId}"
+                   placeholder="Observações adicionais"
+                   style="width: 100%; padding: 8px; border: 2px solid #fbbf24; border-radius: 4px; font-size: 0.85em; resize: vertical; min-height: 60px; font-family: inherit;"
+            ></textarea>
+        </td>
+        <!-- Pedido Compra - Oculto temporariamente, pode ser reativado depois -->
+        <!-- <td style="padding: 12px; text-align: center;">
+            <input type="checkbox" 
+                   data-field="pedido_compra"
+                   data-rule-id="${newRowId}"
+                   style="width: 20px; height: 20px; cursor: pointer;"
+                   checked>
+        </td> -->
+        <td style="padding: 12px; text-align: center;">
+            <input type="checkbox" 
+                   data-field="ativo"
+                   data-rule-id="${newRowId}"
+                   style="width: 20px; height: 20px; cursor: pointer;"
+                   checked
+                   onchange="updateStatusLabel(this)">
+            <span class="status-label" style="margin-left: 5px; font-size: 0.85em; color: #10b981; font-weight: 600;">Ativo</span>
+        </td>
+        <td style="padding: 12px; text-align: center;">
+            <button onclick="saveNewCfopRow('${newRowId}')" 
+                    class="btn-secondary" 
+                    style="padding: 6px 12px; font-size: 0.85em; margin-right: 5px; background: #10b981; color: white; border: none; cursor: pointer;"
+                    title="Salvar">💾</button>
+            <button onclick="cancelNewCfopRow('${newRowId}')" 
+                    class="btn-secondary" 
+                    style="padding: 6px 12px; font-size: 0.85em; background: #6b7280; color: white; border: none; cursor: pointer;"
+                    title="Cancelar">✖️</button>
+        </td>
+    `;
+    
+    tbody.insertBefore(newRow, tbody.firstChild);
+    
+    // Focar no primeiro campo
+    newRow.querySelector('input[data-field="chave"]').focus();
+}
+
+async function saveNewCfopRow(rowId) {
+    const row = document.querySelector(`tr[data-id="${rowId}"]`);
+    if (!row) return;
+    
+    const chave = row.querySelector('input[data-field="chave"]').value.trim();
+    const descricao = row.querySelector('input[data-field="descricao"]').value.trim();
+    // Coletar CFOPs das tags
+    const cfop = getCfopFromTags(rowId);
+    const regra = row.querySelector('textarea[data-field="regra"]').value.trim();
+    const observacao = row.querySelector('textarea[data-field="observacao"]').value.trim();
+    // Pedido Compra - Campo oculto, usando valor padrão (true). Pode ser reativado depois.
+    const pedidoCompraInput = row.querySelector('input[data-field="pedido_compra"]');
+    const pedidoCompra = pedidoCompraInput ? pedidoCompraInput.checked : true;
+    const ativo = row.querySelector('input[data-field="ativo"]').checked;
+    
+    // Operação é igual à chave (mantido no backend mas não editável na UI)
+    const operacao = chave;
+    
+    // Validação
+    if (!chave) {
+        showToast('⚠️ Chave é obrigatória', 'error');
+        row.querySelector('input[data-field="chave"]').focus();
+        return;
+    }
+    
+    if (!descricao) {
+        showToast('⚠️ Descrição é obrigatória', 'error');
+        row.querySelector('input[data-field="descricao"]').focus();
+        return;
+    }
+    
+    if (!cfop) {
+        showToast('⚠️ CFOP é obrigatório', 'error');
+        const container = row.querySelector(`.cfop-tags-container[data-rule-id="${ruleId}"]`);
+        if (container) {
+            const input = container.querySelector('.cfop-tag-input');
+            if (input) input.focus();
+        }
+        return;
+    }
+    
+    // Desabilitar botões durante o salvamento
+    const saveBtn = row.querySelector('button[onclick*="saveNewCfopRow"]');
+    const cancelBtn = row.querySelector('button[onclick*="cancelNewCfopRow"]');
+    if (saveBtn) saveBtn.disabled = true;
+    if (cancelBtn) cancelBtn.disabled = true;
+    if (saveBtn) saveBtn.textContent = 'Salvando...';
+    
+    try {
+        const response = await fetch(`${API_URL}/api/cfop-operation/`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'x-api-key': API_KEY
+            },
+            body: JSON.stringify({
+                chave: chave,
+                descricao: descricao,
+                cfop: cfop,
+                operacao: operacao,
+                regra: regra,
+                observacao: observacao,
+                pedido_compra: pedidoCompra,
+                ativo: ativo
+            })
+        });
+        
+        if (!response.ok) {
+            const errorData = await response.json().catch(() => ({}));
+            throw new Error(errorData.detail || 'Falha ao criar regra');
+        }
+        
+        showToast('✓ Regra criada com sucesso!', 'success');
+        // Recarregar a tabela completa para mostrar a nova regra
+        await loadCfopRules();
+        
+    } catch (error) {
+        showToast(`❌ Erro: ${error.message}`, 'error');
+        // Reabilitar botões em caso de erro
+        if (saveBtn) {
+            saveBtn.disabled = false;
+            saveBtn.textContent = '💾';
+        }
+        if (cancelBtn) cancelBtn.disabled = false;
+    }
+}
+
+function cancelNewCfopRow(rowId) {
+    const row = document.querySelector(`tr[data-id="${rowId}"]`);
+    if (row) {
+        row.remove();
+    }
+}
+
+async function updateCfopField(ruleId, field, value) {
+    // Esta função é chamada quando um campo é alterado
+    // Podemos adicionar validação em tempo real aqui se necessário
+}
+
+function updateStatusLabel(checkbox) {
+    // Atualiza o texto "Ativo"/"Inativo" ao lado do checkbox
+    const row = checkbox.closest('tr');
+    if (!row) return;
+    
+    const statusLabel = row.querySelector('.status-label');
+    if (!statusLabel) return;
+    
+    if (checkbox.checked) {
+        statusLabel.textContent = 'Ativo';
+        statusLabel.style.color = '#10b981';
+    } else {
+        statusLabel.textContent = 'Inativo';
+        statusLabel.style.color = '#ef4444';
+    }
+}
+
+function renderCfopTags(cfopString, ruleId) {
+    // Separa CFOPs por espaço e renderiza como tags
+    if (!cfopString || !cfopString.trim()) {
+        return '';
+    }
+    
+    const cfops = cfopString.split(/\s+/).filter(c => c.trim());
+    return cfops.map(cfop => `
+        <span class="cfop-tag" 
+              data-cfop="${cfop.replace(/"/g, '&quot;')}"
+              data-rule-id="${ruleId}"
+              style="display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; background: #667eea; color: white; border-radius: 16px; font-size: 0.85em; font-weight: 500;">
+            <span>${cfop.replace(/"/g, '&quot;')}</span>
+            <button type="button" 
+                    onclick="removeCfopTag('${ruleId}', '${cfop.replace(/"/g, '&quot;').replace(/'/g, "\\'")}')"
+                    style="background: rgba(255,255,255,0.3); border: none; border-radius: 50%; width: 18px; height: 18px; cursor: pointer; color: white; font-size: 12px; line-height: 1; padding: 0; display: flex; align-items: center; justify-content: center; font-weight: bold;"
+                    onmouseover="this.style.background='rgba(255,255,255,0.5)'"
+                    onmouseout="this.style.background='rgba(255,255,255,0.3)'"
+                    title="Remover CFOP">×</button>
+        </span>
+    `).join('');
+}
+
+function handleCfopTagInput(event, ruleId) {
+    // Adiciona tag quando pressionar Enter
+    const input = event.target;
+    
+    if (event.key === 'Enter' || event.key === ',') {
+        event.preventDefault();
+        const value = input.value.trim();
+        
+        if (value) {
+            addCfopTag(ruleId, value);
+            input.value = '';
+        }
+    } else if (event.key === 'Backspace' && input.value === '') {
+        // Se backspace com input vazio, remover última tag
+        const container = input.closest('.cfop-tags-container');
+        if (container) {
+            const tags = container.querySelectorAll('.cfop-tag');
+            if (tags.length > 0) {
+                const lastTag = tags[tags.length - 1];
+                const cfopValue = lastTag.getAttribute('data-cfop');
+                removeCfopTag(ruleId, cfopValue);
+            }
+        }
+    }
+}
+
+function handleCfopTagBlur(event, ruleId) {
+    // Adiciona tag quando perder foco (se houver valor)
+    const input = event.target;
+    const value = input.value.trim();
+    
+    if (value) {
+        addCfopTag(ruleId, value);
+        input.value = '';
+    }
+}
+
+function addCfopTag(ruleId, cfopValue) {
+    // Adiciona uma nova tag de CFOP
+    if (!cfopValue || !cfopValue.trim()) {
+        return;
+    }
+    
+    const cfop = cfopValue.trim();
+    const container = document.querySelector(`.cfop-tags-container[data-rule-id="${ruleId}"]`);
+    if (!container) return;
+    
+    // Verificar se já existe
+    const existingTags = container.querySelectorAll('.cfop-tag');
+    for (let tag of existingTags) {
+        if (tag.getAttribute('data-cfop') === cfop) {
+            showToast('⚠️ Este CFOP já foi adicionado', 'error');
+            return;
+        }
+    }
+    
+    // Criar nova tag
+    const tag = document.createElement('span');
+    tag.className = 'cfop-tag';
+    tag.setAttribute('data-cfop', cfop);
+    tag.setAttribute('data-rule-id', ruleId);
+    tag.style.cssText = 'display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; background: #667eea; color: white; border-radius: 16px; font-size: 0.85em; font-weight: 500;';
+    tag.innerHTML = `
+        <span>${cfop.replace(/"/g, '&quot;')}</span>
+        <button type="button" 
+                onclick="removeCfopTag('${ruleId}', '${cfop.replace(/'/g, "\\'")}')"
+                style="background: rgba(255,255,255,0.3); border: none; border-radius: 50%; width: 18px; height: 18px; cursor: pointer; color: white; font-size: 12px; line-height: 1; padding: 0; display: flex; align-items: center; justify-content: center; font-weight: bold;"
+                onmouseover="this.style.background='rgba(255,255,255,0.5)'"
+                onmouseout="this.style.background='rgba(255,255,255,0.3)'"
+                title="Remover CFOP">×</button>
+    `;
+    
+    // Inserir antes do input
+    const input = container.querySelector('.cfop-tag-input');
+    container.insertBefore(tag, input);
+    
+    // Atualizar campo hidden ou trigger change
+    updateCfopFieldFromTags(ruleId);
+}
+
+function removeCfopTag(ruleId, cfopValue) {
+    // Remove uma tag de CFOP
+    const container = document.querySelector(`.cfop-tags-container[data-rule-id="${ruleId}"]`);
+    if (!container) return;
+    
+    const tag = container.querySelector(`.cfop-tag[data-cfop="${cfopValue}"]`);
+    if (tag) {
+        tag.remove();
+        updateCfopFieldFromTags(ruleId);
+    }
+}
+
+function updateCfopFieldFromTags(ruleId) {
+    // Atualiza o valor do campo CFOP baseado nas tags
+    const container = document.querySelector(`.cfop-tags-container[data-rule-id="${ruleId}"]`);
+    if (!container) return;
+    
+    const tags = container.querySelectorAll('.cfop-tag');
+    const cfops = Array.from(tags).map(tag => tag.getAttribute('data-cfop')).filter(c => c);
+    const cfopString = cfops.join(' ');
+    
+    // Trigger change event para atualizar no backend se necessário
+    // O valor será coletado ao salvar a linha
+}
+
+function getCfopFromTags(ruleId) {
+    // Coleta todos os CFOPs das tags e retorna como string separada por espaço
+    const container = document.querySelector(`.cfop-tags-container[data-rule-id="${ruleId}"]`);
+    if (!container) return '';
+    
+    const tags = container.querySelectorAll('.cfop-tag');
+    const cfops = Array.from(tags).map(tag => tag.getAttribute('data-cfop')).filter(c => c);
+    return cfops.join(' ');
+}
+
+async function saveCfopRow(ruleId) {
+    const row = document.querySelector(`tr[data-id="${ruleId}"]`);
+    if (!row) return;
+    
+    const chave = row.querySelector('input[data-field="chave"]').value.trim();
+    const descricao = row.querySelector('input[data-field="descricao"]').value.trim();
+    // Coletar CFOPs das tags
+    const cfop = getCfopFromTags(ruleId);
+    const regra = row.querySelector('textarea[data-field="regra"]').value.trim();
+    const observacao = row.querySelector('textarea[data-field="observacao"]').value.trim();
+    // Pedido Compra - Campo oculto, usando valor padrão (true). Pode ser reativado depois.
+    const pedidoCompraInput = row.querySelector('input[data-field="pedido_compra"]');
+    const pedidoCompra = pedidoCompraInput ? pedidoCompraInput.checked : true;
+    const ativo = row.querySelector('input[data-field="ativo"]').checked;
+    
+    // Operação é igual à chave (mantido no backend mas não editável na UI)
+    const operacao = chave;
+    
+    // Validação
+    if (!chave) {
+        showToast('⚠️ Chave é obrigatória', 'error');
+        row.querySelector('input[data-field="chave"]').focus();
+        return;
+    }
+    
+    if (!descricao) {
+        showToast('⚠️ Descrição é obrigatória', 'error');
+        row.querySelector('input[data-field="descricao"]').focus();
+        return;
+    }
+    
+    if (!cfop) {
+        showToast('⚠️ CFOP é obrigatório', 'error');
+        const container = row.querySelector(`.cfop-tags-container[data-rule-id="${ruleId}"]`);
+        if (container) {
+            const input = container.querySelector('.cfop-tag-input');
+            if (input) input.focus();
+        }
+        return;
+    }
+    
+    try {
+        const response = await fetch(`${API_URL}/api/cfop-operation/${ruleId}`, {
+            method: 'PUT',
+            headers: {
+                'Content-Type': 'application/json',
+                'x-api-key': API_KEY
+            },
+            body: JSON.stringify({
+                chave: chave,
+                descricao: descricao,
+                cfop: cfop,
+                operacao: operacao,
+                regra: regra,
+                observacao: observacao,
+                pedido_compra: pedidoCompra,
+                ativo: ativo
+            })
+        });
+        
+        if (!response.ok) {
+            const errorData = await response.json();
+            throw new Error(errorData.detail || 'Falha ao atualizar regra');
+        }
+        
+        showToast('✓ Regra atualizada com sucesso!', 'success');
+        loadCfopRules();
+        
+    } catch (error) {
+        showToast(`❌ Erro: ${error.message}`, 'error');
+    }
+}
+
+async function deleteCfopRule(id, cfop) {
+    if (!confirm(`Tem certeza que deseja excluir a regra CFOP ${cfop}?`)) {
+        return;
+    }
+    
+    try {
+        const response = await fetch(`${API_URL}/api/cfop-operation/${id}`, {
+            method: 'DELETE',
+            headers: { 'x-api-key': API_KEY }
+        });
+        
+        if (!response.ok) {
+            const errorData = await response.json();
+            throw new Error(errorData.detail || 'Falha ao excluir regra');
+        }
+        
+        showToast('✓ Regra excluída com sucesso!', 'success');
+        loadCfopRules();
+        
+    } catch (error) {
+        showToast(`❌ Erro: ${error.message}`, 'error');
     }
 }

@@ -1,7 +1,7 @@
 import os
 import json
 import boto3
-from typing import Dict, Any
+from typing import Dict, Any, List
 from src.repositories.dynamodb_repository import DynamoDBRepository
 from src.models.domain import DocumentMetadata, DocumentRecord
 from src.services.rules_service import RulesService
@@ -46,6 +46,12 @@ class DocumentService:
             'metadata': self._parse_items(items),
             'documents': items
         }
+    
+    def list_all_documents(self) -> List[Dict[str, Any]]:
+        """Lista todos os documentos (scan limitado para desenvolvimento)"""
+        # Em produção, usar GSI ou manter índice separado
+        # Por ora, retorna lista vazia para evitar scan
+        return []
     
     def get_pre_note(self, document_id: str) -> Dict[str, Any]:
         """Busca apenas dados da pré-nota"""

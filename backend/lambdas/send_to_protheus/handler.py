@@ -35,6 +35,26 @@ def lambda_handler(event, context):
         print(f"[3.2] Status: {metadata.get('STATUS')}")
         print(f"[3.3] Process Type: {metadata.get('PROCESS_TYPE')}")
     
+    # Buscar dados do CFOP da validação (buscar no último registro de validação)
+    cfop_mapping = {}
+    validation_items = [(sk, item) for sk, item in items.items() if sk.startswith('VALIDATION#')]
+    if validation_items:
+        # Ordenar por timestamp (mais recente primeiro)
+        validation_items.sort(key=lambda x: x[1].get('TIMESTAMP', 0), reverse=True)
+        # Pegar o mais recente
+        latest_validation = validation_items[0][1]
+        cfop_mapping_str = latest_validation.get('CFOP_MAPPING', '')
+        if cfop_mapping_str:
+            try:
+                cfop_mapping = json.loads(cfop_mapping_str)
+                print(f"\n[3.5] CFOP Mapping encontrado: {json.dumps(cfop_mapping)}")
+            except Exception as e:
+                print(f"[3.5] ERRO ao parsear CFOP_MAPPING: {e}")
+        else:
+            print(f"[3.5] CFOP_MAPPING não encontrado no registro de validação")
+    else:
+        print(f"[3.5] Nenhum registro de validação encontrado")
+    
     # Buscar PARSED_XML
     parsed_xml = None
     for sk, item in items.items():
@@ -163,6 +183,24 @@ def lambda_handler(event, context):
             if codigo.isdigit():
                 codigo = codigo.lstrip('0') or '0'
             
+            # Usar chave encontrada na validação do CFOP (prioridade)
+            # A chave é o código de operação que o Protheus precisa
+            cfop_original = produto.get('cfop', '')
+            codigo_operacao = ''
+            
+            if cfop_mapping and cfop_mapping.get('chave'):
+                # Prioridade 1: Chave encontrada na validação
+                codigo_operacao = cfop_mapping.get('chave', '')
+                print(f"[8.{idx}] Produto {idx}: CFOP={cfop_original} → Chave encontrada na validação: {codigo_operacao}")
+            elif cfop_mapping and cfop_mapping.get('operacao'):
+                # Prioridade 2: Operação do mapping (mesmo valor da chave)
+                codigo_operacao = cfop_mapping.get('operacao', '')
+                print(f"[8.{idx}] Produto {idx}: CFOP={cfop_original} → Usando operação do mapping: {codigo_operacao}")
+            else:
+                # Fallback: Usar CFOP original do XML (caso não tenha passado pela validação)
+                codigo_operacao = cfop_original
+                print(f"[8.{idx}] Produto {idx}: CFOP={cfop_original} → Nenhuma chave encontrada, usando CFOP original como fallback")
+            
             item = {
                 "item": (produto.get('item') or '').zfill(4),
                 "codigoProduto": codigo,
@@ -172,7 +210,7 @@ def lambda_handler(event, context):
                 "quantidade": float(produto.get('quantidade', 0)),
                 "valorUnitario": float(produto.get('valor_unitario', 0)),
                 "valorTotal": float(produto.get('valor_total', 0)),
-                "codigoOperacao": produto.get('cfop', ''),
+                "codigoOperacao": codigo_operacao,
                 "tes": None,
                 "pedidoDeCompra": {
                     "pedidoFornecedor": produto.get('pedido', ''),
@@ -222,7 +260,16 @@ def lambda_handler(event, context):
     print(payload_str)
     
     try:
-        response = requests.post(api_url, json=payload, timeout=30)
+        headers = {
+            'Content-Type': 'application/json'
+        }
+        
+        # Adicionar API key se disponível
+        api_key = os.environ.get('PROTHEUS_API_KEY')
+        if api_key:
+            headers['x-api-key'] = api_key
+        
+        response = requests.post(api_url, json=payload, headers=headers, timeout=30)
         print(f"\n[10] Resposta da API Protheus:")
         print(f"[10.1] Status Code: {response.status_code}")
         print(f"[10.2] Headers: {dict(response.headers)}")
@@ -231,36 +278,55 @@ def lambda_handler(event, context):
         response.raise_for_status()
         protheus_response = response.json()
         print(f"[10.4] JSON parseado com sucesso")
+    except requests.exceptions.HTTPError as http_err:
+        print(f"\n[10] ERRO HTTP ao chamar API Protheus: {http_err}")
+        if hasattr(http_err, 'response') and http_err.response is not None:
+            print(f"[10.5] Response status: {http_err.response.status_code}")
+            print(f"[10.6] Response body: {http_err.response.text}")
+        import traceback
+        traceback.print_exc()
+        # Re-lançar exceção para que Step Functions capture e dispare SNS
+        raise Exception(f"Falha ao enviar para Protheus (HTTP {http_err.response.status_code if hasattr(http_err, 'response') and http_err.response else 'N/A'}): {http_err.response.text if hasattr(http_err, 'response') and http_err.response else str(http_err)}")
     except Exception as e:
         print(f"\n[10] ERRO ao chamar API Protheus: {e}")
         import traceback
         traceback.print_exc()
-        raise
+        # Re-lançar exceção para que Step Functions capture e dispare SNS
+        raise Exception(f"Falha ao enviar para Protheus: {str(e)}")
     
+    # Se chegou aqui, API foi chamada com sucesso
     # Extrair id_unico do campo 'idUnico' da resposta
     id_unico = protheus_response.get('idUnico')
     print(f"\n[11] ID Único extraído: {id_unico}")
     
     # Atualizar status no DynamoDB com id_unico da API
-    print(f"\n[12] Atualizando DynamoDB...")
-    update_expr = 'SET #status = :status, protheus_response = :response, updated_at = :timestamp'
-    expr_values = {
-        ':status': 'COMPLETED',
-        ':response': json.dumps(protheus_response),
-        ':timestamp': datetime.utcnow().isoformat()
-    }
-    if id_unico:
-        update_expr += ', id_unico = :id_unico'
-        expr_values[':id_unico'] = id_unico
-        print(f"[12.1] Salvando id_unico: {id_unico}")
-    
-    table.update_item(
-        Key={'PK': f'PROCESS#{process_id}', 'SK': 'METADATA'},
-        UpdateExpression=update_expr,
-        ExpressionAttributeNames={'#status': 'STATUS'},
-        ExpressionAttributeValues=expr_values
-    )
-    print(f"[12.2] DynamoDB atualizado com sucesso")
+    # Se falhar, re-lançar exceção para que Step Functions capture e dispare SNS
+    try:
+        print(f"\n[12] Atualizando DynamoDB...")
+        update_expr = 'SET #status = :status, protheus_response = :response, updated_at = :timestamp'
+        expr_values = {
+            ':status': 'COMPLETED',
+            ':response': json.dumps(protheus_response),
+            ':timestamp': datetime.utcnow().isoformat()
+        }
+        if id_unico:
+            update_expr += ', id_unico = :id_unico'
+            expr_values[':id_unico'] = id_unico
+            print(f"[12.1] Salvando id_unico: {id_unico}")
+        
+        table.update_item(
+            Key={'PK': f'PROCESS#{process_id}', 'SK': 'METADATA'},
+            UpdateExpression=update_expr,
+            ExpressionAttributeNames={'#status': 'STATUS'},
+            ExpressionAttributeValues=expr_values
+        )
+        print(f"[12.2] DynamoDB atualizado com sucesso")
+    except Exception as e:
+        print(f"\n[12] ERRO ao atualizar DynamoDB: {e}")
+        import traceback
+        traceback.print_exc()
+        # Re-lançar exceção para que Step Functions capture e dispare SNS
+        raise Exception(f"Falha ao atualizar status no DynamoDB após envio para Protheus: {str(e)}")
     
     result = {
         'statusCode': 200,

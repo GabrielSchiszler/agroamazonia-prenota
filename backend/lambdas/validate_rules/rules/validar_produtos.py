@@ -110,99 +110,38 @@ def make_product_key(prod, is_danfe=True):
     return (codigo, qtd)
 
 def find_matching_product(danfe_prod, doc_produtos, used_indices):
-    """Encontra produto correspondente no doc (ignora ordem)"""
+    """Encontra produto correspondente no documento usando apenas nome/descrição"""
     import logging
     logger = logging.getLogger()
     
-    danfe_key = make_product_key(danfe_prod, is_danfe=True)
-    danfe_cod_raw = danfe_prod.get('codigo', '')
-    danfe_qtd_raw = danfe_prod.get('quantidade', 0)
-    logger.info(f"Buscando match para DANFE:")
-    logger.info(f"  Raw: codigo='{danfe_cod_raw}', qtd={danfe_qtd_raw}")
-    logger.info(f"  Key (normalizado): codigo='{danfe_key[0]}', qtd={danfe_key[1]}")
-    logger.info(f"  Indices já usados: {used_indices}")
-    logger.info(f"  Total de produtos no doc para comparar: {len(doc_produtos)}")
+    danfe_desc = danfe_prod.get('descricao', '').strip()
+    danfe_nome = danfe_prod.get('nome', '').strip() or danfe_desc
     
-    # PRIORIDADE 1: Tentar match por código (ignorando quantidade inicialmente)
-    # Se o código fizer match, usar esse produto mesmo que a quantidade esteja diferente
-    # A quantidade será comparada depois nos campos individuais
-    danfe_codigo = danfe_key[0]
-    for i, doc_prod in enumerate(doc_produtos):
-        if i in used_indices:
-            logger.info(f"  Pulando doc[{i}] (já usado)")
-            continue
-        doc_key = make_product_key(doc_prod, is_danfe=False)
-        doc_codigo = doc_key[0]
-        doc_raw_cod = doc_prod.get('codigoProduto') or doc_prod.get('codigo', '')
-        doc_raw_qtd = doc_prod.get('quantidade') or doc_prod.get('quantidadeProduto') or doc_prod.get('qtd') or 0
-        logger.info(f"  Comparando doc[{i}]:")
-        logger.info(f"    Produto completo: {json.dumps(doc_prod, default=str)[:500]}")
-        logger.info(f"    Raw: codigo='{doc_raw_cod}', qtd={doc_raw_qtd} (tipo: {type(doc_raw_qtd)})")
-        logger.info(f"    Key (normalizado): codigo='{doc_key[0]}', qtd={doc_key[1]}")
-        
-        # Primeiro verificar se o código faz match (com tolerância a erros de OCR)
-        cod_match = (danfe_codigo == doc_codigo) or codes_are_similar(danfe_codigo, doc_codigo)
-        
-        if cod_match:
-            logger.info(f"  ✓✓✓ MATCH POR CÓDIGO no índice {i} ✓✓✓")
-            logger.info(f"    Códigos normalizados: '{danfe_codigo}' == '{doc_codigo}'")
-            logger.info(f"    Quantidades serão comparadas depois: DANFE={danfe_key[1]}, DOC={doc_key[1]}")
-            return i, doc_prod
-        else:
-            logger.info(f"  ✗ Código não match no índice {i}: '{danfe_codigo}' != '{doc_codigo}'")
+    logger.info(f"[validar_produtos] Buscando match para produto DANFE:")
+    logger.info(f"  Nome/Descrição: '{danfe_nome}' / '{danfe_desc}'")
     
-    # PRIORIDADE 2: Tentar match por código + quantidade (exato)
-    # A normalização já remove zeros à esquerda em make_product_key
-    for i, doc_prod in enumerate(doc_produtos):
-        if i in used_indices:
-            continue
-        doc_key = make_product_key(doc_prod, is_danfe=False)
-        if danfe_key == doc_key:
-            logger.info(f"  ✓✓✓ MATCH EXATO (código + quantidade) no índice {i} ✓✓✓")
-            logger.info(f"    Códigos normalizados: '{danfe_key[0]}' == '{doc_key[0]}'")
-            logger.info(f"    Quantidades: {danfe_key[1]} == {doc_key[1]}")
-            return i, doc_prod
-    
-    # PRIORIDADE 3: Tentar match com tolerância a erros de OCR (código + quantidade)
-    danfe_codigo, danfe_qtd = danfe_key
-    for i, doc_prod in enumerate(doc_produtos):
-        if i in used_indices:
-            continue
-        doc_codigo, doc_qtd = make_product_key(doc_prod, is_danfe=False)
-        
-        # Quantidade deve ser igual (ou muito próxima)
-        qtd_match = abs(danfe_qtd - doc_qtd) <= 0.01
-        # Código pode ter erro de OCR ou diferenças de zeros à esquerda (já normalizado)
-        # Se códigos normalizados são iguais, é match
-        cod_match = (danfe_codigo == doc_codigo) or codes_are_similar(danfe_codigo, doc_codigo)
-        
-        if qtd_match and cod_match:
-            logger.info(f"  ✓ MATCH com tolerância OCR no índice {i} (DANFE: {danfe_codigo}, DOC: {doc_codigo})")
-            return i, doc_prod
-        else:
-            logger.info(f"  ✗ Não match no índice {i}: qtd_match={qtd_match} (DANFE: {danfe_qtd}, DOC: {doc_qtd}), cod_match={cod_match} (DANFE: {danfe_codigo}, DOC: {doc_codigo})")
-    
-    # Fallback: tentar match por descrição (se quantidade também bater)
-    logger.info(f"  Tentando match por descrição...")
-    danfe_desc = str(danfe_prod.get('descricao', '')).upper().strip()
-    danfe_qtd = danfe_key[1]
+    # PRIORIDADE 1: Match exato por descrição (case-insensitive)
+    danfe_desc_upper = danfe_desc.upper()
+    danfe_nome_upper = danfe_nome.upper()
     
     for i, doc_prod in enumerate(doc_produtos):
         if i in used_indices:
             continue
-        doc_desc = str(doc_prod.get('descricaoProduto') or doc_prod.get('descricao', '')).upper().strip()
-        doc_qtd = normalize_number(doc_prod.get('quantidade', 0))
         
-        # Verifica se a descrição da DANFE está contida na descrição do OCR ou vice-versa
-        # E quantidade deve ser igual (ou muito próxima)
-        desc_match = (danfe_desc and doc_desc and (danfe_desc in doc_desc or doc_desc in danfe_desc))
-        qtd_match = abs(danfe_qtd - doc_qtd) <= 0.01
+        doc_desc = (doc_prod.get('descricaoProduto') or doc_prod.get('descricao') or doc_prod.get('nome', '')).strip()
+        doc_desc_upper = doc_desc.upper()
         
-        if desc_match and qtd_match:
-            logger.info(f"  ✓ MATCH por descrição no índice {i} (DANFE: '{danfe_desc}', DOC: '{doc_desc}')")
+        # Match exato
+        if danfe_desc_upper == doc_desc_upper or danfe_nome_upper == doc_desc_upper:
+            logger.info(f"  ✓ MATCH EXATO por descrição no índice {i}")
+            return i, doc_prod
+        
+        # Match parcial (uma contém a outra)
+        if (danfe_desc_upper in doc_desc_upper or doc_desc_upper in danfe_desc_upper) and len(danfe_desc_upper) > 3:
+            logger.info(f"  ✓ MATCH PARCIAL por descrição no índice {i} (DANFE: '{danfe_desc}', DOC: '{doc_desc}')")
             return i, doc_prod
     
-    logger.warning(f"  ✗ Nenhum match encontrado para {danfe_key} (codigo DANFE: {danfe_prod.get('codigo')}, descricao: '{danfe_desc}')")
+    logger.warning(f"  ✗ Nenhum match encontrado para produto (descricao: '{danfe_desc}')")
     return None, None
 
 def validate_products_comparison(danfe_produtos, doc_produtos, doc_file, source_type, doc_root=None):
@@ -229,127 +168,48 @@ def validate_products_comparison(danfe_produtos, doc_produtos, doc_file, source_
         
         if doc_prod is not None:
             used_indices.add(doc_idx)
-            # Match encontrado - validar cada campo
+            # Match encontrado - validar apenas nome e descrição
             fields = {}
             
-            # Código
-            danfe_cod = danfe_prod.get('codigo', '')
-            doc_cod = doc_prod.get('codigoProduto') or doc_prod.get('codigo', '')
+            # Nome
+            danfe_nome = danfe_prod.get('nome', '').strip() or danfe_prod.get('descricao', '').strip()
+            doc_nome = (doc_prod.get('nomeProduto') or doc_prod.get('nome') or doc_prod.get('descricaoProduto') or doc_prod.get('descricao', '')).strip()
             
-            # Normalizar e comparar (sempre normalizar para ignorar zeros à esquerda)
-            danfe_cod_norm = normalize_codigo(danfe_cod)
-            doc_cod_norm = normalize_codigo(doc_cod)
+            if not danfe_nome:
+                danfe_nome = danfe_prod.get('descricao', '').strip()
             
-            logger.info(f"[validar_produtos] Comparando códigos - DANFE: '{danfe_cod}' (normalizado: '{danfe_cod_norm}') vs DOC: '{doc_cod}' (normalizado: '{doc_cod_norm}')")
-            
-            corrected_cod = doc_cod
-            
-            if danfe_cod_norm == doc_cod_norm:
-                cod_status = 'MATCH'
-            elif codes_are_similar(danfe_cod_norm, doc_cod_norm):
-                cod_status = 'MATCH'
-                corrected_cod = danfe_cod
+            nome_status = 'MATCH'
+            if danfe_nome.upper() == doc_nome.upper():
+                nome_status = 'MATCH'
+            elif danfe_nome.upper() in doc_nome.upper() or doc_nome.upper() in danfe_nome.upper():
+                nome_status = 'MATCH'
             else:
                 from .utils import compare_with_bedrock
-                cod_status = compare_with_bedrock(danfe_cod, doc_cod, 'código do produto')
-                if cod_status == 'MATCH':
-                    corrected_cod = danfe_cod
+                nome_status = compare_with_bedrock(danfe_nome, doc_nome, 'nome do produto')
             
-            fields['codigo'] = {
-                'danfe': danfe_cod,
-                'doc': corrected_cod,
-                'status': cod_status
+            fields['nome'] = {
+                'danfe': danfe_nome,
+                'doc': doc_nome,
+                'status': nome_status
             }
             
             # Descrição
-            danfe_desc = danfe_prod.get('descricao', '')
-            doc_desc = doc_prod.get('descricaoProduto') or doc_prod.get('descricao', '')
-            corrected_desc = doc_desc
+            danfe_desc = danfe_prod.get('descricao', '').strip()
+            doc_desc = (doc_prod.get('descricaoProduto') or doc_prod.get('descricao', '')).strip()
             
-            if str(danfe_desc).upper() in str(doc_desc).upper() or str(doc_desc).upper() in str(danfe_desc).upper():
+            desc_status = 'MATCH'
+            if danfe_desc.upper() == doc_desc.upper():
+                desc_status = 'MATCH'
+            elif danfe_desc.upper() in doc_desc.upper() or doc_desc.upper() in danfe_desc.upper():
                 desc_status = 'MATCH'
             else:
                 from .utils import compare_with_bedrock
                 desc_status = compare_with_bedrock(danfe_desc, doc_desc, 'descrição do produto')
-                if desc_status == 'MATCH':
-                    corrected_desc = danfe_desc
             
             fields['descricao'] = {
                 'danfe': danfe_desc,
-                'doc': corrected_desc,
+                'doc': doc_desc,
                 'status': desc_status
-            }
-            
-            # Unidade - desconsiderar se não encontrada no documento
-            danfe_un = danfe_prod.get('unidade', '')
-            doc_un = doc_prod.get('unidadeMedida') or doc_prod.get('unidade', '')
-            # Se não encontrou unidade no documento, considerar MATCH (desconsiderar)
-            if not doc_un or doc_un.strip() == '':
-                unidade_status = 'MATCH'
-                doc_un = 'NÃO ENCONTRADO (DESCONSIDERADO)'
-            else:
-                unidade_status = 'MATCH' if str(danfe_un).upper() == str(doc_un).upper() else 'MISMATCH'
-            
-            fields['unidade'] = {
-                'danfe': danfe_un,
-                'doc': doc_un,
-                'status': unidade_status
-            }
-            
-            # Quantidade - verificar todos os campos possíveis (igual ao make_product_key)
-            danfe_qtd = normalize_number(danfe_prod.get('quantidade', 0))
-            # Verificar todos os campos possíveis para quantidade no documento
-            doc_qtd_raw = None
-            for field in ['quantidade', 'quantidadeProduto', 'qtd', 'quantidadeItem', 'qCom', 'qTrib']:
-                if field in doc_prod and doc_prod[field] is not None:
-                    doc_qtd_raw = doc_prod[field]
-                    break
-            doc_qtd = normalize_number(doc_qtd_raw or 0)
-            fields['quantidade'] = {
-                'danfe': danfe_qtd,
-                'doc': doc_qtd,
-                'status': 'MATCH' if abs(danfe_qtd - doc_qtd) <= 0.01 else 'MISMATCH'
-            }
-            
-            # Valor unitário
-            danfe_vunit = normalize_number(danfe_prod.get('valor_unitario', 0))
-            doc_vunit = normalize_number(doc_prod.get('valorUnitario') or doc_prod.get('valor_unitario', 0))
-            fields['valor_unitario'] = {
-                'danfe': danfe_vunit,
-                'doc': doc_vunit,
-                'status': 'MATCH' if abs(danfe_vunit - doc_vunit) <= 0.01 else 'MISMATCH'
-            }
-            
-            # Valor total
-            danfe_vtotal = normalize_number(danfe_prod.get('valor_total', 0))
-            doc_vtotal = normalize_number(doc_prod.get('valorTotal') or doc_prod.get('valor_total', 0))
-            fields['valor_total'] = {
-                'danfe': danfe_vtotal,
-                'doc': doc_vtotal,
-                'status': 'MATCH' if abs(danfe_vtotal - doc_vtotal) <= 0.01 else 'MISMATCH'
-            }
-            
-            # Moeda (sempre BRL para DANFE)
-            danfe_moeda = 'BRL'
-            doc_moeda = doc_prod.get('moeda', '')
-            
-            # Se não encontrou moeda no item, buscar no doc raiz (pode estar nos metadados no nível raiz)
-            if not doc_moeda and doc_root:
-                doc_moeda = doc_root.get('moeda', '')
-            
-            # Se não encontrou moeda mas valores são iguais, considerar OK
-            if not doc_moeda and abs(danfe_vtotal - doc_vtotal) <= 0.01:
-                moeda_status = 'MATCH'
-                doc_moeda = 'NÃO ENCONTRADO PORÉM VALOR IGUAL'
-            elif doc_moeda and (doc_moeda.upper() == 'BRL' or doc_moeda.upper() == danfe_moeda):
-                moeda_status = 'MATCH'
-            else:
-                moeda_status = 'MISMATCH'
-            
-            fields['moeda'] = {
-                'danfe': danfe_moeda,
-                'doc': doc_moeda,
-                'status': moeda_status
             }
             
             item_has_mismatch = any(f['status'] == 'MISMATCH' for f in fields.values())
@@ -369,43 +229,21 @@ def validate_products_comparison(danfe_produtos, doc_produtos, doc_file, source_
     
     # Produtos do DANFE não pareados = MISMATCH
     for danfe_idx, danfe_prod in unmatched_danfe:
+        danfe_nome = danfe_prod.get('nome', '').strip() or danfe_prod.get('descricao', '').strip()
+        danfe_desc = danfe_prod.get('descricao', '').strip()
+        
         items_detail.append({
             'item': danfe_idx + 1,
             'danfe_position': danfe_idx + 1,
             'doc_position': None,
             'fields': {
-                'codigo': {
-                    'danfe': danfe_prod.get('codigo', ''),
+                'nome': {
+                    'danfe': danfe_nome,
                     'doc': 'NÃO ENCONTRADO',
                     'status': 'MISMATCH'
                 },
                 'descricao': {
-                    'danfe': danfe_prod.get('descricao', ''),
-                    'doc': 'NÃO ENCONTRADO',
-                    'status': 'MISMATCH'
-                },
-                'unidade': {
-                    'danfe': danfe_prod.get('unidade', ''),
-                    'doc': '-',
-                    'status': 'MISMATCH'
-                },
-                'quantidade': {
-                    'danfe': normalize_number(danfe_prod.get('quantidade', 0)),
-                    'doc': 0,
-                    'status': 'MISMATCH'
-                },
-                'valor_unitario': {
-                    'danfe': normalize_number(danfe_prod.get('valor_unitario', 0)),
-                    'doc': 0,
-                    'status': 'MISMATCH'
-                },
-                'valor_total': {
-                    'danfe': normalize_number(danfe_prod.get('valor_total', 0)),
-                    'doc': 0,
-                    'status': 'MISMATCH'
-                },
-                'moeda': {
-                    'danfe': 'BRL',
+                    'danfe': danfe_desc,
                     'doc': 'NÃO ENCONTRADO',
                     'status': 'MISMATCH'
                 }
@@ -423,49 +261,22 @@ def validate_products_comparison(danfe_produtos, doc_produtos, doc_file, source_
     
     # Adicionar produtos do documento não pareados como erros
     for doc_idx, doc_prod in unmatched_doc:
-        doc_cod = doc_prod.get('codigoProduto') or doc_prod.get('codigo', '')
-        doc_desc = doc_prod.get('descricaoProduto') or doc_prod.get('descricao', '')
-        doc_qtd = normalize_number(doc_prod.get('quantidade', 0))
-        doc_vtotal = normalize_number(doc_prod.get('valorTotal') or doc_prod.get('valor_total', 0))
+        doc_nome = (doc_prod.get('nomeProduto') or doc_prod.get('nome') or doc_prod.get('descricaoProduto') or doc_prod.get('descricao', '')).strip()
+        doc_desc = (doc_prod.get('descricaoProduto') or doc_prod.get('descricao', '')).strip()
         
         items_detail.append({
             'item': len(danfe_produtos) + doc_idx + 1,  # Continuar numeração após produtos do DANFE
             'danfe_position': None,  # Não está no DANFE
             'doc_position': doc_idx + 1,
             'fields': {
-                'codigo': {
+                'nome': {
                     'danfe': 'NÃO ENCONTRADO',
-                    'doc': doc_cod,
+                    'doc': doc_nome,
                     'status': 'MISMATCH'
                 },
                 'descricao': {
                     'danfe': 'NÃO ENCONTRADO',
                     'doc': doc_desc,
-                    'status': 'MISMATCH'
-                },
-                'unidade': {
-                    'danfe': '-',
-                    'doc': doc_prod.get('unidadeMedida') or doc_prod.get('unidade', ''),
-                    'status': 'MISMATCH'
-                },
-                'quantidade': {
-                    'danfe': 0,
-                    'doc': doc_qtd,
-                    'status': 'MISMATCH'
-                },
-                'valor_unitario': {
-                    'danfe': 0,
-                    'doc': normalize_number(doc_prod.get('valorUnitario') or doc_prod.get('valor_unitario', 0)),
-                    'status': 'MISMATCH'
-                },
-                'valor_total': {
-                    'danfe': 0,
-                    'doc': doc_vtotal,
-                    'status': 'MISMATCH'
-                },
-                'moeda': {
-                    'danfe': 'NÃO ENCONTRADO',
-                    'doc': doc_prod.get('moeda', '') or (doc_root.get('moeda', '') if doc_root else ''),
                     'status': 'MISMATCH'
                 }
             },
