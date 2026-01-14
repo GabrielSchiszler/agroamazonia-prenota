@@ -21,30 +21,31 @@ def validate(danfe_data, ocr_docs):
     
     for doc in ocr_docs:
         doc_file = doc.get('file_name', 'unknown')
-        doc_serie = doc.get('serie', '')
-        normalized_doc = normalize_value(doc_serie)
+        has_metadata = doc.get('_has_metadata', False)
+        
+        # USAR APENAS DADOS DO JSON DO PEDIDO DE COMPRA (NÃO usar OCR)
+        doc_serie = None
+        
+        if has_metadata:
+            # Buscar série nos metadados do JSON do pedido de compra
+            doc_serie = doc.get('serie') or doc.get('serieDocumento')
+        
+        normalized_doc = normalize_value(doc_serie) if doc_serie else ''
         corrected_value = None
         
-        # Comparar com tolerância a erros de OCR (1 vs I, 0 vs O, etc)
-        if normalized_danfe == normalized_doc:
+        if not doc_serie:
+            status = 'MISMATCH'
+            all_match = False
+            logger.warning(f"[validar_serie] Doc {doc_file} - Série não encontrada no JSON do pedido de compra")
+        elif normalized_danfe == normalized_doc:
             status = 'MATCH'
-        elif are_similar_with_ocr_tolerance(normalized_danfe, normalized_doc):
-            status = 'MATCH'
-            # Corrigir valor OCR para o valor correto do DANFE
-            corrected_value = danfe_serie
-            corrections.append({
-                'file_name': doc_file,
-                'field': 'serie',
-                'old_value': doc_serie,
-                'new_value': danfe_serie
-            })
         else:
             status = 'MISMATCH'
             all_match = False
         
         comparisons.append({
             'doc_file': doc_file,
-            'doc_value': corrected_value or doc_serie,
+            'doc_value': doc_serie or 'NÃO ENCONTRADO NO JSON DO PEDIDO DE COMPRA',
             'status': status
         })
     

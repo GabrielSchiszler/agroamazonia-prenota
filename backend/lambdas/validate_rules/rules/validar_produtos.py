@@ -110,39 +110,153 @@ def make_product_key(prod, is_danfe=True):
     return (codigo, qtd)
 
 def find_matching_product(danfe_prod, doc_produtos, used_indices):
-    """Encontra produto correspondente no documento usando apenas nome/descrição"""
+    """Encontra produto correspondente no documento usando apenas nome, sem depender de código/ID"""
     import logging
     logger = logging.getLogger()
     
-    danfe_desc = danfe_prod.get('descricao', '').strip()
-    danfe_nome = danfe_prod.get('nome', '').strip() or danfe_desc
+    # Buscar nome do produto no DANFE (prioridade: produto > nome > descricao)
+    danfe_nome = (danfe_prod.get('produto', '').strip() or 
+                  danfe_prod.get('nome', '').strip() or 
+                  danfe_prod.get('descricao', '').strip())
     
     logger.info(f"[validar_produtos] Buscando match para produto DANFE:")
-    logger.info(f"  Nome/Descrição: '{danfe_nome}' / '{danfe_desc}'")
+    logger.info(f"  Nome: '{danfe_nome}'")
     
-    # PRIORIDADE 1: Match exato por descrição (case-insensitive)
-    danfe_desc_upper = danfe_desc.upper()
+    # PRIORIDADE 1: Match exato por nome (case-insensitive)
     danfe_nome_upper = danfe_nome.upper()
     
+    # Tentar match exato primeiro
     for i, doc_prod in enumerate(doc_produtos):
         if i in used_indices:
             continue
         
-        doc_desc = (doc_prod.get('descricaoProduto') or doc_prod.get('descricao') or doc_prod.get('nome', '')).strip()
-        doc_desc_upper = doc_desc.upper()
+        # Buscar nome do produto no documento (prioridade: produto > nomeProduto > nome > descricaoProduto > descricao)
+        doc_nome = (doc_prod.get('produto') or 
+                   doc_prod.get('nomeProduto') or 
+                   doc_prod.get('nome') or 
+                   doc_prod.get('descricaoProduto') or 
+                   doc_prod.get('descricao', '')).strip()
+        doc_nome_upper = doc_nome.upper()
         
         # Match exato
-        if danfe_desc_upper == doc_desc_upper or danfe_nome_upper == doc_desc_upper:
-            logger.info(f"  ✓ MATCH EXATO por descrição no índice {i}")
-            return i, doc_prod
-        
-        # Match parcial (uma contém a outra)
-        if (danfe_desc_upper in doc_desc_upper or doc_desc_upper in danfe_desc_upper) and len(danfe_desc_upper) > 3:
-            logger.info(f"  ✓ MATCH PARCIAL por descrição no índice {i} (DANFE: '{danfe_desc}', DOC: '{doc_desc}')")
+        if danfe_nome_upper == doc_nome_upper:
+            logger.info(f"  ✓ MATCH EXATO por nome no índice {i} (DANFE: '{danfe_nome}', DOC: '{doc_nome}')")
             return i, doc_prod
     
-    logger.warning(f"  ✗ Nenhum match encontrado para produto (descricao: '{danfe_desc}')")
+    # PRIORIDADE 2: Match parcial (uma contém a outra) - mais permissivo
+    for i, doc_prod in enumerate(doc_produtos):
+        if i in used_indices:
+            continue
+        
+        doc_nome = (doc_prod.get('produto') or 
+                   doc_prod.get('nomeProduto') or 
+                   doc_prod.get('nome') or 
+                   doc_prod.get('descricaoProduto') or 
+                   doc_prod.get('descricao', '')).strip()
+        doc_nome_upper = doc_nome.upper()
+        
+        # Match parcial (uma contém a outra) - mais permissivo
+        if len(danfe_nome_upper) > 3 and len(doc_nome_upper) > 3:
+            # Verificar se há palavras-chave em comum (pelo menos 3 caracteres)
+            # Extrair palavras significativas (mais de 2 caracteres)
+            danfe_words = [w for w in danfe_nome_upper.split() if len(w) > 2]
+            doc_words = [w for w in doc_nome_upper.split() if len(w) > 2]
+            
+            # Se houver pelo menos 2 palavras em comum, considerar match
+            common_words = set(danfe_words) & set(doc_words)
+            if len(common_words) >= 2:
+                logger.info(f"  ✓ MATCH PARCIAL por palavras-chave no índice {i} (palavras comuns: {common_words})")
+                logger.info(f"    DANFE: '{danfe_nome}', DOC: '{doc_nome}'")
+                return i, doc_prod
+            
+            # Fallback: verificar se uma string contém a outra (substring)
+            if danfe_nome_upper in doc_nome_upper or doc_nome_upper in danfe_nome_upper:
+                logger.info(f"  ✓ MATCH PARCIAL por substring no índice {i} (DANFE: '{danfe_nome}', DOC: '{doc_nome}')")
+                return i, doc_prod
+    
+    # PRIORIDADE 3: Tentar todos os produtos restantes e usar Bedrock para validar
+    # Se chegou aqui, não encontrou match exato nem parcial
+    # Vamos tentar com Bedrock para ver se são o mesmo produto
+    logger.info(f"  ⚠ Nenhum match exato/parcial encontrado, tentando validar com Bedrock...")
+    for i, doc_prod in enumerate(doc_produtos):
+        if i in used_indices:
+            continue
+        
+        doc_nome = (doc_prod.get('produto') or 
+                   doc_prod.get('nomeProduto') or 
+                   doc_prod.get('nome') or 
+                   doc_prod.get('descricaoProduto') or 
+                   doc_prod.get('descricao', '')).strip()
+        
+        # Usar Bedrock para validar se são o mesmo produto
+        from .utils import compare_with_bedrock
+        bedrock_result = compare_with_bedrock(danfe_nome, doc_nome, 'nome do produto')
+        
+        if bedrock_result == 'MATCH':
+            logger.info(f"  ✓ MATCH via Bedrock no índice {i} (DANFE: '{danfe_nome}', DOC: '{doc_nome}')")
+            return i, doc_prod
+    
+    logger.warning(f"  ✗ Nenhum match encontrado para produto (nome: '{danfe_nome}')")
     return None, None
+
+def extract_quantity_and_unit(produto, is_danfe=True):
+    """Extrai quantidade e unidade de medida do produto"""
+    if is_danfe:
+        quantidade = normalize_number(produto.get('quantidade', 0))
+        unidade = produto.get('unidade', '').strip().upper()
+    else:
+        # Para documentos, buscar quantidade em diferentes campos
+        qtd_raw = None
+        for field in ['quantidade', 'quantidadeProduto', 'qtd', 'quantidadeItem', 'qCom', 'qTrib']:
+            if field in produto and produto[field] is not None:
+                qtd_raw = produto[field]
+                break
+        quantidade = normalize_number(qtd_raw or 0)
+        unidade = (produto.get('unidadeMedida') or produto.get('unidade') or '').strip().upper()
+    
+    return quantidade, unidade
+
+def quantities_match(danfe_qtd, danfe_unit, doc_qtd, doc_unit):
+    """Verifica se as quantidades são equivalentes, considerando unidades de medida"""
+    # Se ambas as quantidades são 0 ou muito pequenas, considerar match
+    if danfe_qtd < 0.01 and doc_qtd < 0.01:
+        return True
+    
+    # Normalizar unidades de medida comuns
+    unit_normalization = {
+        'KG': ['KG', 'KILO', 'KILOS', 'QUILO', 'QUILOS'],
+        'G': ['G', 'GRAM', 'GRAMS', 'GRAMA', 'GRAMAS'],
+        'L': ['L', 'LITRO', 'LITROS', 'LITER', 'LITERS'],
+        'ML': ['ML', 'MILILITRO', 'MILILITROS', 'MILLILITER', 'MILLILITERS'],
+        'UN': ['UN', 'UNID', 'UNIDADE', 'UNIDADES', 'UNIT', 'UNITS'],
+        'SC': ['SC', 'SACO', 'SACOS', 'BAG', 'BAGS'],
+        'PT': ['PT', 'POTE', 'POTES', 'POT'],
+        'CX': ['CX', 'CAIXA', 'CAIXAS', 'BOX', 'BOXES']
+    }
+    
+    # Normalizar unidades
+    danfe_unit_norm = None
+    doc_unit_norm = None
+    
+    for norm_unit, variants in unit_normalization.items():
+        if danfe_unit in variants:
+            danfe_unit_norm = norm_unit
+        if doc_unit in variants:
+            doc_unit_norm = norm_unit
+    
+    # Se não encontrou normalização, usar a unidade original
+    if danfe_unit_norm is None:
+        danfe_unit_norm = danfe_unit
+    if doc_unit_norm is None:
+        doc_unit_norm = doc_unit
+    
+    # Se unidades são diferentes, não são equivalentes
+    if danfe_unit_norm != doc_unit_norm:
+        return False
+    
+    # Se unidades são iguais, comparar quantidades (tolerância de 0.01 para arredondamento)
+    diff = abs(danfe_qtd - doc_qtd)
+    return diff < 0.01
 
 def validate_products_comparison(danfe_produtos, doc_produtos, doc_file, source_type, doc_root=None):
     """Valida e compara produtos, retorna resultado da validação
@@ -168,24 +282,34 @@ def validate_products_comparison(danfe_produtos, doc_produtos, doc_file, source_
         
         if doc_prod is not None:
             used_indices.add(doc_idx)
-            # Match encontrado - validar apenas nome e descrição
+            # Match encontrado - validar nome e quantidade
             fields = {}
             
-            # Nome
-            danfe_nome = danfe_prod.get('nome', '').strip() or danfe_prod.get('descricao', '').strip()
-            doc_nome = (doc_prod.get('nomeProduto') or doc_prod.get('nome') or doc_prod.get('descricaoProduto') or doc_prod.get('descricao', '')).strip()
+            # Nome - sempre usar Bedrock para comparação semântica flexível
+            danfe_nome = danfe_prod.get('produto', '').strip() or danfe_prod.get('nome', '').strip() or danfe_prod.get('descricao', '').strip()
+            # Buscar nome do produto no documento (prioridade: produto > nomeProduto > nome > descricaoProduto > descricao)
+            doc_nome = (doc_prod.get('produto') or 
+                       doc_prod.get('nomeProduto') or 
+                       doc_prod.get('nome') or 
+                       doc_prod.get('descricaoProduto') or 
+                       doc_prod.get('descricao', '')).strip()
             
-            if not danfe_nome:
-                danfe_nome = danfe_prod.get('descricao', '').strip()
+            # Sempre usar Bedrock para comparação semântica (mais flexível)
+            from .utils import compare_with_bedrock
+            nome_status = compare_with_bedrock(danfe_nome, doc_nome, 'nome do produto')
             
-            nome_status = 'MATCH'
-            if danfe_nome.upper() == doc_nome.upper():
-                nome_status = 'MATCH'
-            elif danfe_nome.upper() in doc_nome.upper() or doc_nome.upper() in danfe_nome.upper():
-                nome_status = 'MATCH'
-            else:
-                from .utils import compare_with_bedrock
-                nome_status = compare_with_bedrock(danfe_nome, doc_nome, 'nome do produto')
+            # Se Bedrock não conseguir determinar, tentar match parcial como fallback
+            if nome_status not in ['MATCH', 'MISMATCH']:
+                # Fallback: verificar se há palavras-chave em comum
+                danfe_words = set(w.upper() for w in danfe_nome.split() if len(w) > 2)
+                doc_words = set(w.upper() for w in doc_nome.split() if len(w) > 2)
+                common_words = danfe_words & doc_words
+                if len(common_words) >= 2:
+                    nome_status = 'MATCH'
+                elif danfe_nome.upper() in doc_nome.upper() or doc_nome.upper() in danfe_nome.upper():
+                    nome_status = 'MATCH'
+                else:
+                    nome_status = 'MISMATCH'
             
             fields['nome'] = {
                 'danfe': danfe_nome,
@@ -193,26 +317,8 @@ def validate_products_comparison(danfe_produtos, doc_produtos, doc_file, source_
                 'status': nome_status
             }
             
-            # Descrição
-            danfe_desc = danfe_prod.get('descricao', '').strip()
-            doc_desc = (doc_prod.get('descricaoProduto') or doc_prod.get('descricao', '')).strip()
-            
-            desc_status = 'MATCH'
-            if danfe_desc.upper() == doc_desc.upper():
-                desc_status = 'MATCH'
-            elif danfe_desc.upper() in doc_desc.upper() or doc_desc.upper() in danfe_desc.upper():
-                desc_status = 'MATCH'
-            else:
-                from .utils import compare_with_bedrock
-                desc_status = compare_with_bedrock(danfe_desc, doc_desc, 'descrição do produto')
-            
-            fields['descricao'] = {
-                'danfe': danfe_desc,
-                'doc': doc_desc,
-                'status': desc_status
-            }
-            
-            item_has_mismatch = any(f['status'] == 'MISMATCH' for f in fields.values())
+            # Item só é MISMATCH se o nome for totalmente divergente (Bedrock retornou MISMATCH)
+            item_has_mismatch = (nome_status == 'MISMATCH')
             if item_has_mismatch:
                 all_match = False
             
@@ -230,7 +336,6 @@ def validate_products_comparison(danfe_produtos, doc_produtos, doc_file, source_
     # Produtos do DANFE não pareados = MISMATCH
     for danfe_idx, danfe_prod in unmatched_danfe:
         danfe_nome = danfe_prod.get('nome', '').strip() or danfe_prod.get('descricao', '').strip()
-        danfe_desc = danfe_prod.get('descricao', '').strip()
         
         items_detail.append({
             'item': danfe_idx + 1,
@@ -239,11 +344,6 @@ def validate_products_comparison(danfe_produtos, doc_produtos, doc_file, source_
             'fields': {
                 'nome': {
                     'danfe': danfe_nome,
-                    'doc': 'NÃO ENCONTRADO',
-                    'status': 'MISMATCH'
-                },
-                'descricao': {
-                    'danfe': danfe_desc,
                     'doc': 'NÃO ENCONTRADO',
                     'status': 'MISMATCH'
                 }
@@ -261,8 +361,12 @@ def validate_products_comparison(danfe_produtos, doc_produtos, doc_file, source_
     
     # Adicionar produtos do documento não pareados como erros
     for doc_idx, doc_prod in unmatched_doc:
-        doc_nome = (doc_prod.get('nomeProduto') or doc_prod.get('nome') or doc_prod.get('descricaoProduto') or doc_prod.get('descricao', '')).strip()
-        doc_desc = (doc_prod.get('descricaoProduto') or doc_prod.get('descricao', '')).strip()
+        # Buscar nome do produto no documento (prioridade: produto > nomeProduto > nome > descricaoProduto > descricao)
+        doc_nome = (doc_prod.get('produto') or 
+                   doc_prod.get('nomeProduto') or 
+                   doc_prod.get('nome') or 
+                   doc_prod.get('descricaoProduto') or 
+                   doc_prod.get('descricao', '')).strip()
         
         items_detail.append({
             'item': len(danfe_produtos) + doc_idx + 1,  # Continuar numeração após produtos do DANFE
@@ -273,11 +377,6 @@ def validate_products_comparison(danfe_produtos, doc_produtos, doc_file, source_
                     'danfe': 'NÃO ENCONTRADO',
                     'doc': doc_nome,
                     'status': 'MISMATCH'
-                },
-                'descricao': {
-                    'danfe': 'NÃO ENCONTRADO',
-                    'doc': doc_desc,
-                    'status': 'MISMATCH'
                 }
             },
             'status': 'MISMATCH'
@@ -285,13 +384,23 @@ def validate_products_comparison(danfe_produtos, doc_produtos, doc_file, source_
     
     # Ordenar por posição DANFE primeiro, depois por posição DOC
     items_detail.sort(key=lambda x: (x['danfe_position'] if x['danfe_position'] is not None else 9999, x['doc_position'] if x['doc_position'] is not None else 9999))
-        
+    
+    # Contar quantos produtos deram MATCH
+    matched_items = [item for item in items_detail if item.get('status') == 'MATCH' and item.get('danfe_position') is not None]
+    has_at_least_one_match = len(matched_items) > 0
+    
+    # Se tiver pelo menos 1 match, considerar como sucesso (mas manter all_match para indicar se todos deram match)
+    # Armazenar quais produtos deram match (posição DANFE) para filtrar no envio ao Protheus
+    matched_danfe_positions = [item['danfe_position'] for item in matched_items]
+    
     return {
-        'all_match': all_match,
+        'all_match': all_match,  # Indica se TODOS deram match
+        'has_match': has_at_least_one_match,  # Indica se tem pelo menos 1 match
+        'matched_danfe_positions': matched_danfe_positions,  # Posições dos produtos que deram match
         'comparison': {
             'doc_file': doc_file,
             'items': items_detail,
-            'status': 'MATCH' if all_match else 'MISMATCH',
+            'status': 'MATCH' if has_at_least_one_match else 'MISMATCH',  # Status baseado em ter pelo menos 1 match
             'source': source_type
         }
     }
@@ -303,6 +412,8 @@ def validate(danfe_data, ocr_docs):
     danfe_produtos = danfe_data.get('produtos', [])
     comparisons = []
     all_match = True
+    has_at_least_one_match = False
+    all_matched_danfe_positions = []  # Acumular posições de todos os produtos que deram match
     
     logger.info(f"[validar_produtos] DANFE tem {len(danfe_produtos)} produtos")
     
@@ -322,40 +433,31 @@ def validate(danfe_data, ocr_docs):
                 logger.info(f"[validar_produtos] Primeiro produto metadados (completo): {json.dumps(first_prod, default=str)}")
                 logger.info(f"[validar_produtos] Primeiro produto metadados: codigo={first_prod.get('codigoProduto') or first_prod.get('codigo')}, qtd={first_prod.get('quantidade')} (tipo: {type(first_prod.get('quantidade'))})")
         
-        # PASSO 2: Buscar produtos do OCR (fallback se não tiver metadados)
-        ocr_data_original = doc.get('_ocr_data', {})
-        doc_produtos_ocr = ocr_data_original.get('itens') or ocr_data_original.get('produtos', [])
-        logger.info(f"[validar_produtos] Doc {doc_file} - OCR tem produtos: {len(doc_produtos_ocr)}")
-        if doc_produtos_ocr:
-            first_ocr = doc_produtos_ocr[0]
-            logger.info(f"[validar_produtos] Primeiro produto OCR: codigo={first_ocr.get('codigoProduto') or first_ocr.get('codigo')}, qtd={first_ocr.get('quantidade')}")
-        
-        logger.info(f"[validar_produtos] Doc {doc_file} - Metadados: {len(doc_produtos_metadata)} produtos, OCR: {len(doc_produtos_ocr)} produtos")
+        # USAR APENAS DADOS DO JSON DO PEDIDO DE COMPRA (NÃO usar OCR)
+        logger.info(f"[validar_produtos] Doc {doc_file} - Metadados: {len(doc_produtos_metadata)} produtos")
         logger.info(f"[validar_produtos] DANFE tem {len(danfe_produtos)} produtos")
         if danfe_produtos:
             first_danfe = danfe_produtos[0]
             logger.info(f"[validar_produtos] Primeiro produto DANFE: codigo={first_danfe.get('codigo')}, qtd={first_danfe.get('quantidade')}")
         
-        # PRIORIDADE: Se metadados JSON tem produtos, usar metadados primeiro
+        # Usar apenas produtos dos metadados do JSON do pedido de compra
         if has_metadata and doc_produtos_metadata and len(doc_produtos_metadata) > 0:
-            logger.info(f"[validar_produtos] Doc {doc_file} - Metadados JSON tem {len(doc_produtos_metadata)} produtos, usando METADADOS JSON (prioridade)")
+            logger.info(f"[validar_produtos] Doc {doc_file} - ✅ Usando produtos dos metadados do JSON do pedido de compra ({len(doc_produtos_metadata)} produtos)")
             result = validate_products_comparison(danfe_produtos, doc_produtos_metadata, doc_file, "METADADOS JSON", doc)
             comparisons.append(result['comparison'])
+            
+            # Acumular informações sobre matches
+            if result.get('has_match', False):
+                has_at_least_one_match = True
+                all_matched_danfe_positions.extend(result.get('matched_danfe_positions', []))
+                logger.info(f"[validar_produtos] Doc {doc_file} - {len(result.get('matched_danfe_positions', []))} produto(s) deram MATCH (posições DANFE: {result.get('matched_danfe_positions', [])})")
+            
             if not result['all_match']:
                 all_match = False
             continue
         
-        # Se metadados não tem produtos, tentar OCR como fallback
-        if doc_produtos_ocr and len(doc_produtos_ocr) > 0:
-            logger.info(f"[validar_produtos] Doc {doc_file} - Metadados não tem produtos, usando OCR como fallback ({len(doc_produtos_ocr)} produtos)")
-            result = validate_products_comparison(danfe_produtos, doc_produtos_ocr, doc_file, "OCR", doc)
-            comparisons.append(result['comparison'])
-            if not result['all_match']:
-                all_match = False
-            continue
-        
-        # Se chegou aqui, não tem produtos em nenhuma fonte
-        logger.warning(f"[validar_produtos] Doc {doc_file} - ❌ Nenhum produto encontrado no OCR nem metadados")
+        # Se chegou aqui, não tem produtos no JSON do pedido de compra
+        logger.warning(f"[validar_produtos] Doc {doc_file} - ❌ Nenhum produto encontrado no JSON do pedido de compra")
         comparisons.append({
             'doc_file': doc_file,
             'doc_value': f'0 produtos encontrados (esperado {len(danfe_produtos)})',
@@ -363,10 +465,18 @@ def validate(danfe_data, ocr_docs):
         })
         all_match = False
     
+    # Se tiver pelo menos 1 match, considerar como PASSED
+    # Armazenar as posições dos produtos que deram match para uso no envio ao Protheus
+    final_status = 'PASSED' if has_at_least_one_match else 'FAILED'
+    final_message = f'Produtos validados ({len(all_matched_danfe_positions)} de {len(danfe_produtos)} produtos deram match)' if has_at_least_one_match else 'Nenhum produto validado'
+    
+    logger.info(f"[validar_produtos] RESULTADO FINAL: status={final_status}, matches={len(all_matched_danfe_positions)}, posições={all_matched_danfe_positions}")
+    
     return {
         'rule': 'validar_produtos',
-        'status': 'PASSED' if all_match else 'FAILED',
+        'status': final_status,
         'danfe_value': f'{len(danfe_produtos)} produtos',
-        'message': 'Produtos validados' if all_match else 'Divergência nos produtos',
-        'comparisons': comparisons
+        'message': final_message,
+        'comparisons': comparisons,
+        'matched_danfe_positions': all_matched_danfe_positions  # Armazenar posições para filtrar no Protheus
     }

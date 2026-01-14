@@ -40,7 +40,7 @@ async def list_available_rules():
             },
             {
                 "name": "validar_produtos",
-                "description": "Valida produtos (nome e descrição)"
+                "description": "Valida produtos (nome)"
             },
             {
                 "name": "validar_numero_pedido",
@@ -53,6 +53,10 @@ async def list_available_rules():
             {
                 "name": "validar_icms",
                 "description": "Valida ICMS (interno zerado, interestadual)"
+            },
+            {
+                "name": "validar_cnpj_destinatario",
+                "description": "Valida CNPJ do destinatário (primeiros 8 dígitos)"
             }
         ]
     }
@@ -88,44 +92,6 @@ async def delete_rule(process_type: str, rule_name: str):
         return service.delete_rule(process_type, rule_name)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-async def list_available_rules():
-    """Lista todas as regras disponíveis com descrições"""
-    return {
-        "rules": [
-            {
-                "name": "validar_numero_nota",
-                "description": "Valida número da nota fiscal"
-            },
-            {
-                "name": "validar_serie",
-                "description": "Valida série da nota fiscal"
-            },
-            {
-                "name": "validar_data_emissao",
-                "description": "Valida data de emissão"
-            },
-            {
-                "name": "validar_cnpj_fornecedor",
-                "description": "Valida CNPJ do fornecedor (primeiros 8 dígitos)"
-            },
-            {
-                "name": "validar_produtos",
-                "description": "Valida produtos (nome e descrição)"
-            },
-            {
-                "name": "validar_numero_pedido",
-                "description": "Valida número do pedido"
-            },
-            {
-                "name": "validar_cfop_chave",
-                "description": "Valida CFOP e busca chave correspondente"
-            },
-            {
-                "name": "validar_icms",
-                "description": "Valida ICMS (interno zerado, interestadual)"
-            }
-        ]
-    }
 
 @router.get("/process-types/all", summary="Listar Todos os Tipos")
 async def list_all_process_types():

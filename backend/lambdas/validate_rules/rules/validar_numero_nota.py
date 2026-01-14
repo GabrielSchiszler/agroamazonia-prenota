@@ -20,11 +20,22 @@ def validate(danfe_data, ocr_docs):
     
     for doc in ocr_docs:
         doc_file = doc.get('file_name', 'unknown')
-        # Novo campo: documento
-        doc_numero = doc.get('documento') or doc.get('numero_nota', '')
-        normalized_doc = normalize_numero(doc_numero)
+        has_metadata = doc.get('_has_metadata', False)
         
-        if normalized_danfe == normalized_doc:
+        # USAR APENAS DADOS DO JSON DO PEDIDO DE COMPRA (NÃO usar OCR)
+        doc_numero = None
+        
+        if has_metadata:
+            # Buscar número da nota nos metadados do JSON do pedido de compra
+            doc_numero = doc.get('documento') or doc.get('numero_nota') or doc.get('numeroNota')
+        
+        normalized_doc = normalize_numero(doc_numero) if doc_numero else ''
+        
+        if not doc_numero:
+            status = 'MISMATCH'
+            all_match = False
+            logger.warning(f"[validar_numero_nota] Doc {doc_file} - Número da nota não encontrado no JSON do pedido de compra")
+        elif normalized_danfe == normalized_doc:
             status = 'MATCH'
         else:
             bedrock_result = compare_with_bedrock(normalized_danfe, normalized_doc, 'número da nota')
@@ -34,7 +45,7 @@ def validate(danfe_data, ocr_docs):
         
         comparisons.append({
             'doc_file': doc_file,
-            'doc_value': doc_numero,
+            'doc_value': doc_numero or 'NÃO ENCONTRADO NO JSON DO PEDIDO DE COMPRA',
             'status': status
         })
     

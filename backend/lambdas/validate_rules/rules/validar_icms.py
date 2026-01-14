@@ -16,22 +16,27 @@ def validate(danfe_data, ocr_docs):
     
     for doc in ocr_docs:
         doc_file = doc.get('file_name', 'unknown')
+        has_metadata = doc.get('_has_metadata', False)
         
-        # Verificar se dados de impostos foram extraídos
-        impostos = doc.get('impostos', {})
-        totais = doc.get('totais', {})
+        # USAR APENAS DADOS DO JSON DO PEDIDO DE COMPRA (NÃO usar OCR)
+        doc_icms = None
         
-        # Se não tem estrutura de impostos, considerar como não extraído
-        if not impostos and not totais:
+        if has_metadata:
+            # Buscar ICMS nos metadados do JSON do pedido de compra
+            totais = doc.get('totais', {})
+            if totais:
+                doc_icms = totais.get('valor_icms', totais.get('icms'))
+        
+        # Se não tem ICMS no JSON do pedido de compra, considerar como não encontrado
+        if doc_icms is None:
             comparisons.append({
                 'doc_file': doc_file,
-                'doc_value': 'NÃO EXTRAÍDO',
+                'doc_value': 'NÃO ENCONTRADO NO JSON DO PEDIDO DE COMPRA',
                 'status': 'MISMATCH'
             })
             all_match = False
+            logger.warning(f"[validar_icms] Doc {doc_file} - ICMS não encontrado no JSON do pedido de compra")
             continue
-        
-        doc_icms = totais.get('valor_icms', totais.get('icms'))
         
         # Se ICMS não foi extraído (None ou vazio), falhar
         if doc_icms is None or doc_icms == '':

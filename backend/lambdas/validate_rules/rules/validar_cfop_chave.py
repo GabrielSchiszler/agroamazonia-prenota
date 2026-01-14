@@ -27,12 +27,8 @@ def get_all_cfop_mappings_direct(table, cfop):
         
         cfop_item = response['Item']
         
-        # Verificar se está ativo
-        if not cfop_item.get('ATIVO', True):
-            logger.info(f"[validar_cfop_chave] CFOP {cfop} encontrado mas está inativo")
-            return []
-        
         # Buscar TODOS os mapping_ids (pode ter MAPPING_ID ou MAPPING_IDS)
+        # Não verificar se CFOP está ativo aqui - vamos buscar os mapeamentos e filtrar apenas os ativos
         mapping_ids = []
         if cfop_item.get('MAPPING_ID'):
             mapping_ids.append(cfop_item.get('MAPPING_ID'))
@@ -48,23 +44,23 @@ def get_all_cfop_mappings_direct(table, cfop):
         
         logger.info(f"[validar_cfop_chave] CFOP {cfop} encontrado com {len(mapping_ids)} mapeamento(s): {mapping_ids}")
         
-        # Buscar todos os registros principais
+        # Buscar todos os registros principais e filtrar APENAS OS ATIVOS
         mappings = []
+        mappings_inativos = []
         for mapping_id in mapping_ids:
             mapping_sk = f"MAPPING#{mapping_id}"
             mapping_response = table.get_item(Key={'PK': pk, 'SK': mapping_sk})
             
             if 'Item' not in mapping_response:
+                logger.warning(f"[validar_cfop_chave] Mapeamento {mapping_id} não encontrado no DynamoDB")
                 continue
             
             mapping_item = mapping_response['Item']
             
             # Verificar se o registro principal está ativo
-            if not mapping_item.get('ATIVO', True):
-                continue
+            is_ativo = mapping_item.get('ATIVO', True)
             
-            # Adicionar à lista de mapeamentos encontrados
-            mappings.append({
+            mapping_data = {
                 'id': mapping_id,
                 'chave': mapping_item.get('CHAVE', ''),
                 'descricao': mapping_item.get('DESCRICAO', ''),
@@ -73,8 +69,22 @@ def get_all_cfop_mappings_direct(table, cfop):
                 'regra': mapping_item.get('REGRA', ''),
                 'observacao': mapping_item.get('OBSERVACAO', ''),
                 'pedido_compra': mapping_item.get('PEDIDO_COMPRA', False),
-                'ativo': mapping_item.get('ATIVO', True)
-            })
+                'ativo': is_ativo
+            }
+            
+            # Adicionar apenas mapeamentos ATIVOS à lista de retorno
+            if is_ativo:
+                mappings.append(mapping_data)
+                logger.info(f"[validar_cfop_chave] Mapeamento {mapping_id} (chave: {mapping_data['chave']}) está ATIVO - incluído")
+            else:
+                mappings_inativos.append(mapping_data)
+                logger.info(f"[validar_cfop_chave] Mapeamento {mapping_id} (chave: {mapping_data['chave']}) está INATIVO - ignorado")
+        
+        # Log resumo
+        if mappings_inativos:
+            logger.info(f"[validar_cfop_chave] CFOP {cfop}: {len(mappings)} mapeamento(s) ATIVO(S) encontrado(s), {len(mappings_inativos)} inativo(s) ignorado(s)")
+        else:
+            logger.info(f"[validar_cfop_chave] CFOP {cfop}: {len(mappings)} mapeamento(s) ATIVO(S) encontrado(s)")
         
         return mappings
     except Exception as e:

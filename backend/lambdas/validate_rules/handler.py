@@ -39,6 +39,21 @@ def handler(event, context):
     danfe_data = None
     docs_data = []
     file_metadata = {}  # Mapear file_name -> metadados JSON
+    input_json = None  # Novo formato com header e requestBody
+    
+    # Buscar INPUT_JSON dos metadados do processo (novo formato)
+    metadata_item = next((item for item in items if item['SK'] == 'METADATA'), None)
+    if metadata_item:
+        input_json_str = metadata_item.get('INPUT_JSON') or metadata_item.get('REQUEST_BODY')
+        if input_json_str:
+            try:
+                if isinstance(input_json_str, str):
+                    input_json = json.loads(input_json_str)
+                else:
+                    input_json = input_json_str
+                logger.info(f"Found INPUT_JSON with requestBody.itens: {len(input_json.get('requestBody', {}).get('itens', []))} produtos")
+            except Exception as e:
+                logger.warning(f"Failed to parse INPUT_JSON: {str(e)}")
     
     # Buscar metadados dos arquivos
     for item in items:
@@ -48,10 +63,25 @@ def handler(event, context):
             if metadados_str:
                 try:
                     metadados = json.loads(metadados_str) if isinstance(metadados_str, str) else metadados_str
+                    
+                    # Verificar se está no formato do pedido de compra (com header e requestBody)
+                    if isinstance(metadados, dict):
+                        if 'requestBody' in metadados:
+                            logger.info(f"[handler] Arquivo {file_name} - Metadados no formato pedido de compra (tem header e requestBody)")
+                            logger.info(f"[handler] Arquivo {file_name} - requestBody keys: {list(metadados.get('requestBody', {}).keys())}")
+                            logger.info(f"[handler] Arquivo {file_name} - requestBody.cnpjEmitente: {metadados.get('requestBody', {}).get('cnpjEmitente')}")
+                            logger.info(f"[handler] Arquivo {file_name} - requestBody.cnpjDestinatario: {metadados.get('requestBody', {}).get('cnpjDestinatario')}")
+                            logger.info(f"[handler] Arquivo {file_name} - requestBody.itens: {len(metadados.get('requestBody', {}).get('itens', []))} itens")
+                        else:
+                            logger.info(f"[handler] Arquivo {file_name} - Metadados no formato antigo (sem requestBody)")
+                            logger.info(f"[handler] Arquivo {file_name} - Metadados keys: {list(metadados.keys())}")
+                    
                     file_metadata[file_name] = metadados
-                    logger.info(f"Found metadata for file: {file_name}")
+                    logger.info(f"[handler] Metadados salvos para arquivo: {file_name}")
                 except Exception as e:
-                    logger.warning(f"Failed to parse metadata for {file_name}: {str(e)}")
+                    logger.warning(f"[handler] Falha ao parsear metadados para {file_name}: {str(e)}")
+                    import traceback
+                    traceback.print_exc()
     
     for item in items:
         if 'PARSED_XML=' in item['SK']:
@@ -79,31 +109,107 @@ def handler(event, context):
     danfe_parsed = danfe_data['data'] if danfe_data else {}
     ocr_docs = []
     
+    # PRIORIDADE MÁXIMA: Se tiver INPUT_JSON com requestBody.itens, preparar produtos uma vez
+    request_body_itens = None
+    if input_json and input_json.get('requestBody', {}).get('itens'):
+        request_body_itens = input_json['requestBody']['itens']
+        logger.info(f"Found INPUT_JSON with requestBody.itens: {len(request_body_itens)} produtos")
+        # Converter formato novo para formato esperado pelas regras
+        request_body_itens = [
+            {
+                'codigoProduto': item.get('codigoProduto', ''),
+                'produto': item.get('produto', ''),
+                'nomeProduto': item.get('produto', ''),  # Alias para compatibilidade
+                'nome': item.get('produto', ''),  # Alias para compatibilidade
+                'descricaoProduto': item.get('produto', ''),  # Alias para compatibilidade
+                'descricao': item.get('produto', ''),  # Alias para compatibilidade
+                'valorUnitario': item.get('valorUnitario', 0),
+                'pedidoDeCompra': item.get('pedidoDeCompra', {})
+            }
+            for item in request_body_itens
+        ]
+    
     for doc in docs_data:
         file_name = doc['file_name']
         ocr_data = doc['data']
         metadados = file_metadata.get(file_name, {})
         
-        # Preparar documento com metadados mesclados
+        logger.info(f"[handler] Preparando doc {file_name}...")
+        logger.info(f"[handler] Doc {file_name} - metadados type: {type(metadados)}")
+        logger.info(f"[handler] Doc {file_name} - metadados keys: {list(metadados.keys()) if isinstance(metadados, dict) else 'N/A'}")
+        
+        # Verificar se metadados estão no formato do pedido de compra (com header e requestBody)
+        request_body_from_metadata = None
+        if isinstance(metadados, dict):
+            # Se metadados têm requestBody diretamente
+            if 'requestBody' in metadados:
+                request_body_from_metadata = metadados.get('requestBody')
+                logger.info(f"[handler] Doc {file_name} - Metadados no formato pedido de compra (tem requestBody)")
+                logger.info(f"[handler] Doc {file_name} - requestBody keys: {list(request_body_from_metadata.keys()) if isinstance(request_body_from_metadata, dict) else 'N/A'}")
+            # Se metadados são o próprio JSON do pedido de compra (string JSON)
+            elif isinstance(metadados, str):
+                try:
+                    metadados_parsed = json.loads(metadados)
+                    if isinstance(metadados_parsed, dict) and 'requestBody' in metadados_parsed:
+                        request_body_from_metadata = metadados_parsed.get('requestBody')
+                        logger.info(f"[handler] Doc {file_name} - Metadados parseados do formato pedido de compra (tem requestBody)")
+                except:
+                    pass
+        
+        # Preparar documento APENAS com metadados do JSON do pedido de compra (NÃO usar OCR)
         doc_prepared = {
             'file_name': file_name,
-            '_has_metadata': bool(metadados),
-            '_ocr_data': ocr_data.copy(),  # Preservar dados OCR originais
-            **ocr_data  # Dados OCR como base
+            '_has_metadata': bool(metadados or request_body_itens or request_body_from_metadata)
+            # NÃO incluir dados OCR no doc_prepared - usar apenas JSON do pedido de compra
         }
         
-        # Mesclar metadados (sobrescrevendo campos do OCR se existirem nos metadados)
-        if metadados:
-            # Se metadados têm 'itens', usar isso (prioridade)
-            if 'itens' in metadados:
+        # PRIORIDADE MÁXIMA: Se tiver INPUT_JSON com requestBody.itens, usar isso
+        if request_body_itens:
+            doc_prepared['itens'] = request_body_itens
+            logger.info(f"[handler] Doc {file_name} - Usando requestBody.itens do INPUT_JSON: {len(doc_prepared['itens'])} produtos")
+        
+        # PRIORIDADE 2: Se metadados têm requestBody (formato do pedido de compra), mesclar campos do requestBody
+        if request_body_from_metadata and isinstance(request_body_from_metadata, dict):
+            logger.info(f"[handler] Doc {file_name} - Mesclando campos do requestBody dos metadados...")
+            # Mesclar campos do requestBody diretamente no doc_prepared
+            for key, value in request_body_from_metadata.items():
+                if key == 'itens':
+                    # Se já tem itens do INPUT_JSON, não sobrescrever
+                    if 'itens' not in doc_prepared:
+                        doc_prepared['itens'] = value
+                        logger.info(f"[handler] Doc {file_name} - Adicionado {len(value)} itens do requestBody dos metadados")
+                else:
+                    doc_prepared[key] = value
+                    logger.info(f"[handler] Doc {file_name} - Campo '{key}' adicionado do requestBody: {value}")
+            
+            # Também adicionar requestBody completo para acesso direto
+            doc_prepared['requestBody'] = request_body_from_metadata
+            logger.info(f"[handler] Doc {file_name} - requestBody completo adicionado ao doc_prepared")
+        
+        # PRIORIDADE 3: Mesclar outros campos dos metadados (formato antigo)
+        elif metadados and isinstance(metadados, dict):
+            logger.info(f"[handler] Doc {file_name} - Mesclando metadados (formato antigo)...")
+            # Se metadados têm 'itens', usar isso
+            if 'itens' in metadados and 'itens' not in doc_prepared:
                 doc_prepared['itens'] = metadados['itens']
             # Mesclar outros campos dos metadados
             for key, value in metadados.items():
                 if key != 'itens':  # 'itens' já foi tratado acima
                     doc_prepared[key] = value
+                    logger.info(f"[handler] Doc {file_name} - Campo '{key}' adicionado dos metadados: {value}")
+        
+        # Log final do que foi preparado
+        logger.info(f"[handler] Doc {file_name} - Preparado:")
+        logger.info(f"[handler]   - has_metadata: {doc_prepared['_has_metadata']}")
+        logger.info(f"[handler]   - cnpjEmitente: {doc_prepared.get('cnpjEmitente')}")
+        logger.info(f"[handler]   - cnpjRemetente: {doc_prepared.get('cnpjRemetente')}")
+        logger.info(f"[handler]   - requestBody disponível: {bool(doc_prepared.get('requestBody'))}")
+        if doc_prepared.get('requestBody'):
+            logger.info(f"[handler]   - requestBody.cnpjEmitente: {doc_prepared.get('requestBody', {}).get('cnpjEmitente')}")
+        logger.info(f"[handler]   - itens_count: {len(doc_prepared.get('itens', []))}")
+        logger.info(f"[handler]   - Total de keys no doc_prepared: {len(doc_prepared.keys())}")
         
         ocr_docs.append(doc_prepared)
-        logger.info(f"Prepared doc {file_name}: has_metadata={doc_prepared['_has_metadata']}, itens_count={len(doc_prepared.get('itens', []))}")
     
     for rule in rules:
         logger.info(f"Executing rule: {rule['rule_name']}")

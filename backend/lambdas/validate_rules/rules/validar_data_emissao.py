@@ -29,12 +29,24 @@ def validate(danfe_data, ocr_docs):
     
     for doc in ocr_docs:
         doc_file = doc.get('file_name', 'unknown')
-        doc_data = doc.get('dataEmissao') or doc.get('data_emissao', '')
-        doc_date_normalized = normalize_date(doc_data)
+        has_metadata = doc.get('_has_metadata', False)
+        
+        # USAR APENAS DADOS DO JSON DO PEDIDO DE COMPRA (NÃO usar OCR)
+        doc_data = None
+        
+        if has_metadata:
+            # Buscar data de emissão nos metadados do JSON do pedido de compra
+            doc_data = doc.get('dataEmissao') or doc.get('data_emissao') or doc.get('dataEmissaoDocumento')
+        
+        doc_date_normalized = normalize_date(doc_data) if doc_data else ''
         logger.info(f"DOC date raw: '{doc_data}' -> normalized: '{doc_date_normalized}'")
         logger.info(f"Comparing: '{danfe_date_normalized}' == '{doc_date_normalized}' -> {danfe_date_normalized == doc_date_normalized}")
         
-        if danfe_date_normalized == doc_date_normalized:
+        if not doc_data:
+            status = 'MISMATCH'
+            all_match = False
+            logger.warning(f"[validar_data_emissao] Doc {doc_file} - Data de emissão não encontrada no JSON do pedido de compra")
+        elif danfe_date_normalized == doc_date_normalized:
             status = 'MATCH'
         else:
             status = 'MISMATCH'
@@ -42,7 +54,7 @@ def validate(danfe_data, ocr_docs):
         
         comparisons.append({
             'doc_file': doc_file,
-            'doc_value': doc_data,
+            'doc_value': doc_data or 'NÃO ENCONTRADO NO JSON DO PEDIDO DE COMPRA',
             'status': status
         })
     

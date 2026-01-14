@@ -14,14 +14,28 @@ def validate(danfe_data, ocr_docs):
         doc_file = doc.get('file_name', 'unknown')
         has_metadata = doc.get('_has_metadata', False)
         
-        # Priorizar metadados: buscar pedidoErp ou pedidoFornecedor dos metadados
-        # Se não houver metadados, buscar do OCR
+        # USAR APENAS DADOS DO JSON DO PEDIDO DE COMPRA (NÃO usar OCR)
+        doc_pedido = None
+        source_type = "NENHUM"
+        
         if has_metadata:
-            doc_pedido = doc.get('pedidoErp') or doc.get('pedidoFornecedor') or doc.get('numeroPedido') or doc.get('numero_pedido', '')
-            source_type = "METADADOS"
-        else:
-            doc_pedido = doc.get('numeroPedido') or doc.get('numero_pedido', '')
-            source_type = "OCR"
+            # Buscar nos itens do pedido de compra (requestBody.itens[].pedidoDeCompra.pedidoErp)
+            itens = doc.get('itens', [])
+            if itens:
+                # Pegar o primeiro pedidoErp encontrado nos itens
+                for item in itens:
+                    pedido_de_compra = item.get('pedidoDeCompra', {})
+                    if isinstance(pedido_de_compra, dict):
+                        doc_pedido = pedido_de_compra.get('pedidoErp')
+                        if doc_pedido:
+                            source_type = "METADADOS JSON (itens.pedidoDeCompra.pedidoErp)"
+                            break
+            
+            # Fallback: buscar campos diretos
+            if not doc_pedido:
+                doc_pedido = doc.get('pedidoErp') or doc.get('pedidoFornecedor') or doc.get('numeroPedido') or doc.get('numero_pedido', '')
+                if doc_pedido:
+                    source_type = "METADADOS JSON"
         
         logger.info(f"[validar_numero_pedido] Doc {doc_file} - pedido: {doc_pedido} (fonte: {source_type})")
         

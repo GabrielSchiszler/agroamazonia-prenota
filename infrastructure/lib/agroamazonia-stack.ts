@@ -168,6 +168,12 @@ export class AgroAmazoniaStack extends cdk.Stack {
     documentTable.grantReadWriteData(reportOcrFailureLambda);
 
     // Lambda: Send to Protheus
+    // OAuth2 credentials from environment variables or CDK context
+    const protheusApiUrl = this.node.tryGetContext('protheusApiUrl') || process.env.PROTHEUS_API_URL || 'https://api.agroamazonia.com/hom-ocr';
+    const protheusAuthUrl = this.node.tryGetContext('protheusAuthUrl') || process.env.PROTHEUS_AUTH_URL || '';
+    const protheusClientId = this.node.tryGetContext('protheusClientId') || process.env.PROTHEUS_CLIENT_ID || '';
+    const protheusClientSecret = this.node.tryGetContext('protheusClientSecret') || process.env.PROTHEUS_CLIENT_SECRET || '';
+
     const sendToProtheusLambda = new lambda.Function(this, 'SendToProtheusFunction', {
       functionName: name('lambda', 'send-to-protheus'),
       runtime: lambda.Runtime.PYTHON_3_11,
@@ -183,7 +189,10 @@ export class AgroAmazoniaStack extends cdk.Stack {
       }),
       environment: {
         TABLE_NAME: documentTable.tableName,
-        PROTHEUS_API_URL: 'https://virtserver.swaggerhub.com/agroamazonia/fast-ocr/1.0.0/documentos-entrada'
+        PROTHEUS_API_URL: protheusApiUrl,
+        PROTHEUS_AUTH_URL: protheusAuthUrl,
+        PROTHEUS_CLIENT_ID: protheusClientId,
+        PROTHEUS_CLIENT_SECRET: protheusClientSecret
       },
       timeout: cdk.Duration.minutes(2),
       memorySize: 512

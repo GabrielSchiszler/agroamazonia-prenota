@@ -11,7 +11,48 @@ def compare_with_bedrock(value1, value2, field):
 
 def _compare_with_bedrock_client(bedrock_client, value1, value2, field):
     """Usa Bedrock Nova para comparação contextual"""
-    prompt = f"""Compare os seguintes valores do campo '{field}':
+    
+    # Prompt específico para nomes de produtos
+    if 'produto' in field.lower() or 'nome' in field.lower():
+        prompt = f"""Compare os seguintes nomes de produtos:
+
+Produto 1: {value1}
+Produto 2: {value2}
+
+REGRAS:
+1. Produtos são o MESMO se tiverem o mesmo nome principal/essencial, mesmo que:
+   - Tenham informações adicionais diferentes (código, lote, registro, etc.)
+   - Tenham unidades de medida diferentes na descrição (KG, SC, PT, etc.)
+   - Tenham formatação diferente (maiúsculas/minúsculas, espaços, etc.)
+
+2. Produtos são DIFERENTES apenas se:
+   - O nome principal for completamente diferente
+   - Não houver palavras-chave em comum que identifiquem o mesmo produto
+
+EXEMPLOS:
+
+EXEMPLO 1 (MESMO PRODUTO - descrição diferente):
+Produto1: SPHERIC PLUS NORTOX N2% Ca6,5% S13,5% B1,7% Cu0,85% Mn4% Zn2,1% 1X25
+Produto2: SPHERIC PLUS SC 25 KG (03040012)
+RESULTADO: {{"validado": true}}
+EXPLICAÇÃO: Ambos são "SPHERIC PLUS", apenas com informações adicionais diferentes
+
+EXEMPLO 2 (MESMO PRODUTO - unidade diferente):
+Produto1: PROTAC NORTOX AD 36X0,500
+Produto2: PROTAC NORTOX AD PT 500 GR (03100013)
+RESULTADO: {{"validado": true}}
+EXPLICAÇÃO: Ambos são "PROTAC NORTOX AD", apenas com unidades diferentes (36X0,500 vs PT 500 GR)
+
+EXEMPLO 3 (PRODUTOS DIFERENTES):
+Produto1: SPHERIC PLUS NORTOX
+Produto2: GALIL SC 1X20
+RESULTADO: {{"validado": false}}
+EXPLICAÇÃO: Produtos completamente diferentes
+
+Responda APENAS JSON: {{"validado": true}} ou {{"validado": false}}"""
+    else:
+        # Prompt genérico para outros campos
+        prompt = f"""Compare os seguintes valores do campo '{field}':
 
 Valor 1: {value1}
 Valor 2: {value2}

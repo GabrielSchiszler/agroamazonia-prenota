@@ -32,54 +32,61 @@ def validate(danfe_data, ocr_docs):
         doc_file = doc.get('file_name', 'unknown')
         has_metadata = doc.get('_has_metadata', False)
         
-        # PASSO 1: Tentar validar primeiro com dados do OCR
-        doc_cnpj_ocr = doc.get('cnpjRemetente') or doc.get('emitente', {}).get('cnpj', '')
-        normalized_doc_ocr = normalize_cnpj(doc_cnpj_ocr)
-        corrected_value = None
+        # USAR APENAS DADOS DO JSON DO PEDIDO DE COMPRA (NÃO usar OCR)
         status = None
         source_used = None
         
-        # Validar com OCR primeiro (se houver CNPJ no OCR)
-        # Comparar apenas os 8 primeiros dígitos (raiz/matriz do CNPJ)
-        if normalized_doc_ocr:
-            doc_root_ocr = get_cnpj_root(doc_cnpj_ocr)
-            logger.info(f"[validar_cnpj_fornecedor] Doc {doc_file} - CNPJ OCR completo: {normalized_doc_ocr}, Raiz (8 dígitos): {doc_root_ocr}")
+        # Buscar CNPJ APENAS nos metadados do JSON do pedido de compra
+        if has_metadata:
+            logger.info(f"[validar_cnpj_fornecedor] Doc {doc_file} - Buscando CNPJ nos metadados...")
+            logger.info(f"[validar_cnpj_fornecedor] Doc {doc_file} - Keys disponíveis no doc: {list(doc.keys())[:20]}...")  # Mostrar primeiras 20 keys
             
-            if danfe_root == doc_root_ocr:
-                status = 'MATCH'
-                source_used = 'OCR'
-                logger.info(f"[validar_cnpj_fornecedor] Doc {doc_file} - MATCH via OCR (raiz): {doc_cnpj_ocr} (raiz: {doc_root_ocr})")
-            else:
-                # Não precisa mais usar Bedrock, pois estamos comparando apenas a raiz
-                # Se as raízes são diferentes, não é match
-                status = None  # Ainda não validado, tentar metadados se disponíveis
-                source_used = None
-                logger.info(f"[validar_cnpj_fornecedor] Doc {doc_file} - Raiz diferente (DANFE: {danfe_root}, DOC: {doc_root_ocr}), tentando metadados")
-        else:
-            # OCR não tem CNPJ, tentar metadados se disponíveis
-            status = None
-            source_used = None
-        
-        # PASSO 2: Se OCR não deu match (ou não tem CNPJ) e há metadados, tentar validar com metadados JSON
-        if status != 'MATCH' and has_metadata:
-            # Buscar CNPJ nos metadados (prioridade: cnpjRemetente > cnpjFornecedor > fornecedor.cnpj > cnpj)
-            # cnpjRemetente é o campo mais comum nos metadados JSON fornecidos (ex: {"cnpjRemetente": "03869628000116"})
-            doc_cnpj_metadata = doc.get('cnpjRemetente')
-            metadata_field_used = 'cnpjRemetente' if doc_cnpj_metadata else None
+            # Verificar se metadados estão no formato do pedido de compra (com header e requestBody)
+            request_body = None
+            if 'requestBody' in doc:
+                request_body = doc.get('requestBody')
+                logger.info(f"[validar_cnpj_fornecedor] Doc {doc_file} - Metadados no formato pedido de compra (tem requestBody)")
+            elif isinstance(doc.get('_metadata'), dict) and 'requestBody' in doc.get('_metadata', {}):
+                request_body = doc.get('_metadata', {}).get('requestBody')
+                logger.info(f"[validar_cnpj_fornecedor] Doc {doc_file} - Metadados no formato pedido de compra (tem _metadata.requestBody)")
+            
+            # Buscar CNPJ nos metadados (prioridade: requestBody.cnpjEmitente > cnpjRemetente > cnpjFornecedor > fornecedor.cnpj > cnpj)
+            doc_cnpj_metadata = None
+            metadata_field_used = None
+            
+            # PRIORIDADE 1: requestBody.cnpjEmitente (formato do pedido de compra)
+            if request_body and isinstance(request_body, dict):
+                doc_cnpj_metadata = request_body.get('cnpjEmitente')
+                if doc_cnpj_metadata:
+                    metadata_field_used = 'requestBody.cnpjEmitente'
+                    logger.info(f"[validar_cnpj_fornecedor] Doc {doc_file} - CNPJ encontrado em requestBody.cnpjEmitente: {doc_cnpj_metadata}")
+            
+            # PRIORIDADE 2: Campos diretos no doc (formato antigo)
+            if not doc_cnpj_metadata:
+                doc_cnpj_metadata = doc.get('cnpjRemetente')
+                metadata_field_used = 'cnpjRemetente' if doc_cnpj_metadata else None
+                if doc_cnpj_metadata:
+                    logger.info(f"[validar_cnpj_fornecedor] Doc {doc_file} - CNPJ encontrado em cnpjRemetente: {doc_cnpj_metadata}")
             
             if not doc_cnpj_metadata:
                 doc_cnpj_metadata = doc.get('cnpjFornecedor')
                 metadata_field_used = 'cnpjFornecedor' if doc_cnpj_metadata else metadata_field_used
+                if doc_cnpj_metadata:
+                    logger.info(f"[validar_cnpj_fornecedor] Doc {doc_file} - CNPJ encontrado em cnpjFornecedor: {doc_cnpj_metadata}")
             
             if not doc_cnpj_metadata:
                 fornecedor_obj = doc.get('fornecedor')
                 if isinstance(fornecedor_obj, dict):
                     doc_cnpj_metadata = fornecedor_obj.get('cnpj')
                     metadata_field_used = 'fornecedor.cnpj' if doc_cnpj_metadata else metadata_field_used
+                    if doc_cnpj_metadata:
+                        logger.info(f"[validar_cnpj_fornecedor] Doc {doc_file} - CNPJ encontrado em fornecedor.cnpj: {doc_cnpj_metadata}")
             
             if not doc_cnpj_metadata:
                 doc_cnpj_metadata = doc.get('cnpj')
                 metadata_field_used = 'cnpj' if doc_cnpj_metadata else metadata_field_used
+                if doc_cnpj_metadata:
+                    logger.info(f"[validar_cnpj_fornecedor] Doc {doc_file} - CNPJ encontrado em cnpj: {doc_cnpj_metadata}")
             
             normalized_doc_metadata = normalize_cnpj(doc_cnpj_metadata) if doc_cnpj_metadata else ''
             
@@ -96,20 +103,33 @@ def validate(danfe_data, ocr_docs):
                     # Raízes diferentes, não é match
                     logger.warning(f"[validar_cnpj_fornecedor] Doc {doc_file} - ❌ Raiz diferente (DANFE: {danfe_root}, METADADOS: {doc_root_metadata})")
             else:
-                logger.warning(f"[validar_cnpj_fornecedor] Doc {doc_file} - Nenhum CNPJ encontrado nos metadados (campos verificados: cnpjRemetente, cnpjFornecedor, fornecedor.cnpj, cnpj)")
+                logger.warning(f"[validar_cnpj_fornecedor] Doc {doc_file} - Nenhum CNPJ encontrado nos metadados")
+                logger.warning(f"[validar_cnpj_fornecedor] Doc {doc_file} - Campos verificados: requestBody.cnpjEmitente, cnpjRemetente, cnpjFornecedor, fornecedor.cnpj, cnpj")
+                logger.warning(f"[validar_cnpj_fornecedor] Doc {doc_file} - requestBody disponível: {bool(request_body)}")
+                if request_body:
+                    logger.warning(f"[validar_cnpj_fornecedor] Doc {doc_file} - requestBody keys: {list(request_body.keys())}")
+                    logger.warning(f"[validar_cnpj_fornecedor] Doc {doc_file} - requestBody.cnpjEmitente: {request_body.get('cnpjEmitente')}")
+                logger.warning(f"[validar_cnpj_fornecedor] Doc {doc_file} - doc.cnpjRemetente: {doc.get('cnpjRemetente')}")
+                logger.warning(f"[validar_cnpj_fornecedor] Doc {doc_file} - doc.cnpjFornecedor: {doc.get('cnpjFornecedor')}")
+                logger.warning(f"[validar_cnpj_fornecedor] Doc {doc_file} - doc.keys() sample: {list(doc.keys())[:30]}")
         
         # Se ainda não validou, considerar como falha
         if status != 'MATCH':
             status = 'MISMATCH'
             all_match = False
-            source_used = source_used or 'OCR' if normalized_doc_ocr else ('METADADOS' if has_metadata else 'NENHUM')
+            source_used = source_used or ('METADADOS JSON' if has_metadata else 'NENHUM')
             logger.warning(f"[validar_cnpj_fornecedor] Doc {doc_file} - MISMATCH (tentou: {source_used})")
         
-        # Determinar valor a exibir (prioridade: corrigido > metadados > OCR)
-        display_value = corrected_value
-        if not display_value and has_metadata:
-            # Priorizar cnpjRemetente dos metadados (campo mais comum)
-            display_value = doc.get('cnpjRemetente')
+        # Determinar valor a exibir (APENAS dos metadados do JSON do pedido de compra)
+        display_value = None
+        if has_metadata:
+            # Buscar no requestBody primeiro (formato do pedido de compra)
+            request_body = doc.get('requestBody')
+            if request_body and isinstance(request_body, dict):
+                display_value = request_body.get('cnpjEmitente')
+            # Fallback para campos diretos
+            if not display_value:
+                display_value = doc.get('cnpjRemetente')
             if not display_value:
                 display_value = doc.get('cnpjFornecedor')
             if not display_value:
@@ -119,7 +139,7 @@ def validate(danfe_data, ocr_docs):
             if not display_value:
                 display_value = doc.get('cnpj')
         if not display_value:
-            display_value = doc_cnpj_ocr or 'NÃO ENCONTRADO'
+            display_value = 'NÃO ENCONTRADO NO JSON DO PEDIDO DE COMPRA'
         
         comparisons.append({
             'doc_file': doc_file,
