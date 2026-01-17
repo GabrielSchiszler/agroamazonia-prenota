@@ -24,6 +24,10 @@ export class AgroAmazoniaStack extends cdk.Stack {
     super(scope, id, props);
     this.envName = props.environment || 'dev';
 
+    // Aplicar tags padrão em todos os recursos da stack
+    cdk.Tags.of(this).add('Application', 'Agroamazonia-Prenota');
+    cdk.Tags.of(this).add('Name', 'Agroamazonia');
+
     // Helper function para padronizar nomes
     const name = (resourceType: string, resourceName: string): string => {
       const normalizedName = resourceName.toLowerCase().replace(/_/g, '-');
@@ -216,13 +220,16 @@ export class AgroAmazoniaStack extends cdk.Stack {
     documentTable.grantReadWriteData(updateMetricsLambda);
 
     // Lambda: Check Textract
+    // Configuração: TEXTRACT_ENABLED (padrão: false - desativado)
+    const textractEnabled = this.node.tryGetContext('textractEnabled') || process.env.TEXTRACT_ENABLED || 'false';
     const checkTextractLambda = new lambda.Function(this, 'CheckTextractFunction', {
       functionName: name('lambda', 'check-textract'),
       runtime: lambda.Runtime.PYTHON_3_11,
       handler: 'handler.handler',
       code: lambda.Code.fromAsset('../backend/lambdas/check_textract'),
       environment: {
-        TABLE_NAME: documentTable.tableName
+        TABLE_NAME: documentTable.tableName,
+        TEXTRACT_ENABLED: textractEnabled
       },
       timeout: cdk.Duration.seconds(30)
     });
@@ -235,6 +242,9 @@ export class AgroAmazoniaStack extends cdk.Stack {
       runtime: lambda.Runtime.PYTHON_3_11,
       handler: 'handler.handler',
       code: lambda.Code.fromAsset('../backend/lambdas/get_textract'),
+      environment: {
+        TEXTRACT_ENABLED: textractEnabled
+      },
       timeout: cdk.Duration.minutes(5),
       memorySize: 512
     });
@@ -447,20 +457,24 @@ export class AgroAmazoniaStack extends cdk.Stack {
         'process_id.$': '$.process_id',
         'error': sfn.TaskInput.fromJsonPathAt('$.error'),
         'error_type': 'LAMBDA_ERROR',
-        'lambda_name.$': '$$.State.Name'
+        'lambda_name.$': '$$.State.Name',
+        'state_name.$': '$$.State.Name'
       }),
       resultPath: '$.status_update'
     });
 
     const notifyErrorTask = new tasks.SnsPublish(this, 'NotifyError', {
       topic: errorTopic,
-      subject: 'Lambda Error - AgroAmazonia',
+      subject: sfn.JsonPath.format('Erro no Processamento - AgroAmazonia - {}', sfn.JsonPath.stringAt('$$.State.Name')),
       message: sfn.TaskInput.fromObject({
+        'application': 'AgroAmazonia-Prenota',
         'error': sfn.JsonPath.stringAt('$.error.Error'),
         'cause': sfn.JsonPath.stringAt('$.error.Cause'),
         'process_id': sfn.JsonPath.stringAt('$.process_id'),
         'timestamp': sfn.JsonPath.stringAt('$$.State.EnteredTime'),
-        'state_name': sfn.JsonPath.stringAt('$$.State.Name')
+        'state_name': sfn.JsonPath.stringAt('$$.State.Name'),
+        'error_type': 'LAMBDA_ERROR',
+        'environment': this.envName
       })
     });
 

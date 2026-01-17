@@ -103,12 +103,14 @@ class ProcessService:
         if not additional_files:
             raise ValueError("Pelo menos um documento adicional é necessário")
         
-        pdf_files = [f for f in files if f.get('FILE_NAME', '').lower().endswith('.pdf')]
+        # Incluir TODOS os arquivos adicionais (não apenas PDFs) para processar metadados JSON
+        # O validate_rules processa metadados de qualquer tipo de arquivo
+        additional_files_list = [f for f in files if f.get('DOC_TYPE') == 'ADDITIONAL']
         
         input_data = {
             'process_id': process_id,
             'process_type': process_type,
-            'files': [{'FILE_NAME': f.get('FILE_NAME'), 'FILE_KEY': f.get('FILE_KEY'), 'STATUS': f.get('STATUS')} for f in pdf_files]
+            'files': [{'FILE_NAME': f.get('FILE_NAME'), 'FILE_KEY': f.get('FILE_KEY'), 'STATUS': f.get('STATUS')} for f in additional_files_list]
         }
         
         response = self.sfn_client.start_execution(

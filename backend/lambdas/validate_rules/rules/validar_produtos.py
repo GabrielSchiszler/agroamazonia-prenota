@@ -110,7 +110,10 @@ def make_product_key(prod, is_danfe=True):
     return (codigo, qtd)
 
 def find_matching_product(danfe_prod, doc_produtos, used_indices):
-    """Encontra produto correspondente no documento usando apenas nome, sem depender de código/ID"""
+    """
+    Encontra produto correspondente no documento usando APENAS Bedrock para validar contexto.
+    Testa TODOS os produtos do pedido de compra, um por um, com o produto da NF.
+    """
     import logging
     logger = logging.getLogger()
     
@@ -119,84 +122,50 @@ def find_matching_product(danfe_prod, doc_produtos, used_indices):
                   danfe_prod.get('nome', '').strip() or 
                   danfe_prod.get('descricao', '').strip())
     
-    logger.info(f"[validar_produtos] Buscando match para produto DANFE:")
-    logger.info(f"  Nome: '{danfe_nome}'")
+    if not danfe_nome:
+        logger.warning(f"[validar_produtos] Produto DANFE sem nome")
+        return None, None
     
-    # PRIORIDADE 1: Match exato por nome (case-insensitive)
-    danfe_nome_upper = danfe_nome.upper()
+    logger.info(f"[validar_produtos] Buscando match para produto DANFE: '{danfe_nome}'")
     
-    # Tentar match exato primeiro
+    from .utils import compare_with_bedrock
+    
+    # Testar TODOS os produtos do documento (pedido de compra) com Bedrock
+    # Um por um, individualmente, para verificar se é o mesmo contexto
     for i, doc_prod in enumerate(doc_produtos):
         if i in used_indices:
             continue
         
-        # Buscar nome do produto no documento (prioridade: produto > nomeProduto > nome > descricaoProduto > descricao)
-        doc_nome = (doc_prod.get('produto') or 
-                   doc_prod.get('nomeProduto') or 
-                   doc_prod.get('nome') or 
-                   doc_prod.get('descricaoProduto') or 
-                   doc_prod.get('descricao', '')).strip()
-        doc_nome_upper = doc_nome.upper()
-        
-        # Match exato
-        if danfe_nome_upper == doc_nome_upper:
-            logger.info(f"  ✓ MATCH EXATO por nome no índice {i} (DANFE: '{danfe_nome}', DOC: '{doc_nome}')")
-            return i, doc_prod
-    
-    # PRIORIDADE 2: Match parcial (uma contém a outra) - mais permissivo
-    for i, doc_prod in enumerate(doc_produtos):
-        if i in used_indices:
-            continue
-        
-        doc_nome = (doc_prod.get('produto') or 
-                   doc_prod.get('nomeProduto') or 
-                   doc_prod.get('nome') or 
-                   doc_prod.get('descricaoProduto') or 
-                   doc_prod.get('descricao', '')).strip()
-        doc_nome_upper = doc_nome.upper()
-        
-        # Match parcial (uma contém a outra) - mais permissivo
-        if len(danfe_nome_upper) > 3 and len(doc_nome_upper) > 3:
-            # Verificar se há palavras-chave em comum (pelo menos 3 caracteres)
-            # Extrair palavras significativas (mais de 2 caracteres)
-            danfe_words = [w for w in danfe_nome_upper.split() if len(w) > 2]
-            doc_words = [w for w in doc_nome_upper.split() if len(w) > 2]
-            
-            # Se houver pelo menos 2 palavras em comum, considerar match
-            common_words = set(danfe_words) & set(doc_words)
-            if len(common_words) >= 2:
-                logger.info(f"  ✓ MATCH PARCIAL por palavras-chave no índice {i} (palavras comuns: {common_words})")
-                logger.info(f"    DANFE: '{danfe_nome}', DOC: '{doc_nome}'")
-                return i, doc_prod
-            
-            # Fallback: verificar se uma string contém a outra (substring)
-            if danfe_nome_upper in doc_nome_upper or doc_nome_upper in danfe_nome_upper:
-                logger.info(f"  ✓ MATCH PARCIAL por substring no índice {i} (DANFE: '{danfe_nome}', DOC: '{doc_nome}')")
-                return i, doc_prod
-    
-    # PRIORIDADE 3: Tentar todos os produtos restantes e usar Bedrock para validar
-    # Se chegou aqui, não encontrou match exato nem parcial
-    # Vamos tentar com Bedrock para ver se são o mesmo produto
-    logger.info(f"  ⚠ Nenhum match exato/parcial encontrado, tentando validar com Bedrock...")
-    for i, doc_prod in enumerate(doc_produtos):
-        if i in used_indices:
-            continue
-        
+        # Buscar nome do produto no documento (pedido de compra)
         doc_nome = (doc_prod.get('produto') or 
                    doc_prod.get('nomeProduto') or 
                    doc_prod.get('nome') or 
                    doc_prod.get('descricaoProduto') or 
                    doc_prod.get('descricao', '')).strip()
         
-        # Usar Bedrock para validar se são o mesmo produto
-        from .utils import compare_with_bedrock
+        if not doc_nome:
+            continue
+        
+        logger.info(f"[validar_produtos] Testando com produto DOC[{i}]: '{doc_nome}'")
+        
+        # Usar APENAS Bedrock para validar se é o mesmo contexto de produto
+        # Se Bedrock retornar MATCH = mesmo contexto = MATCH
+        # Se Bedrock retornar MISMATCH = contexto diferente = MISMATCH
         bedrock_result = compare_with_bedrock(danfe_nome, doc_nome, 'nome do produto')
         
+        logger.info(f"[validar_produtos] Resultado Bedrock para DOC[{i}]: {bedrock_result}")
+        
         if bedrock_result == 'MATCH':
-            logger.info(f"  ✓ MATCH via Bedrock no índice {i} (DANFE: '{danfe_nome}', DOC: '{doc_nome}')")
+            logger.info(f"[validar_produtos] ✓ MATCH encontrado! Mesmo contexto de produto")
+            logger.info(f"[validar_produtos]   DANFE: '{danfe_nome}'")
+            logger.info(f"[validar_produtos]   DOC[{i}]: '{doc_nome}'")
             return i, doc_prod
+        else:
+            logger.info(f"[validar_produtos] ✗ MISMATCH - Contexto diferente")
+            logger.info(f"[validar_produtos]   DANFE: '{danfe_nome}'")
+            logger.info(f"[validar_produtos]   DOC[{i}]: '{doc_nome}'")
     
-    logger.warning(f"  ✗ Nenhum match encontrado para produto (nome: '{danfe_nome}')")
+    logger.warning(f"[validar_produtos] ✗ Nenhum match encontrado para produto DANFE: '{danfe_nome}'")
     return None, None
 
 def extract_quantity_and_unit(produto, is_danfe=True):
@@ -282,34 +251,24 @@ def validate_products_comparison(danfe_produtos, doc_produtos, doc_file, source_
         
         if doc_prod is not None:
             used_indices.add(doc_idx)
-            # Match encontrado - validar nome e quantidade
+            # Match encontrado - validar contexto com Bedrock
             fields = {}
             
-            # Nome - sempre usar Bedrock para comparação semântica flexível
+            # Nome do produto
             danfe_nome = danfe_prod.get('produto', '').strip() or danfe_prod.get('nome', '').strip() or danfe_prod.get('descricao', '').strip()
-            # Buscar nome do produto no documento (prioridade: produto > nomeProduto > nome > descricaoProduto > descricao)
             doc_nome = (doc_prod.get('produto') or 
                        doc_prod.get('nomeProduto') or 
                        doc_prod.get('nome') or 
                        doc_prod.get('descricaoProduto') or 
                        doc_prod.get('descricao', '')).strip()
             
-            # Sempre usar Bedrock para comparação semântica (mais flexível)
+            # Usar Bedrock para validar se é o mesmo contexto de produto
             from .utils import compare_with_bedrock
             nome_status = compare_with_bedrock(danfe_nome, doc_nome, 'nome do produto')
             
-            # Se Bedrock não conseguir determinar, tentar match parcial como fallback
-            if nome_status not in ['MATCH', 'MISMATCH']:
-                # Fallback: verificar se há palavras-chave em comum
-                danfe_words = set(w.upper() for w in danfe_nome.split() if len(w) > 2)
-                doc_words = set(w.upper() for w in doc_nome.split() if len(w) > 2)
-                common_words = danfe_words & doc_words
-                if len(common_words) >= 2:
-                    nome_status = 'MATCH'
-                elif danfe_nome.upper() in doc_nome.upper() or doc_nome.upper() in danfe_nome.upper():
-                    nome_status = 'MATCH'
-                else:
-                    nome_status = 'MISMATCH'
+            # Se Bedrock retornou MATCH = mesmo contexto = MATCH
+            # Se Bedrock retornou MISMATCH = contexto diferente = MISMATCH
+            # Se nome é parecido mas contexto diferente = MISMATCH (já tratado pelo Bedrock)
             
             fields['nome'] = {
                 'danfe': danfe_nome,
@@ -317,7 +276,7 @@ def validate_products_comparison(danfe_produtos, doc_produtos, doc_file, source_
                 'status': nome_status
             }
             
-            # Item só é MISMATCH se o nome for totalmente divergente (Bedrock retornou MISMATCH)
+            # Item é MISMATCH se Bedrock retornou MISMATCH
             item_has_mismatch = (nome_status == 'MISMATCH')
             if item_has_mismatch:
                 all_match = False

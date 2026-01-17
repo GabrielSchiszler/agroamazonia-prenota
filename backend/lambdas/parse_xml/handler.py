@@ -69,7 +69,7 @@ def handler(event, context):
             'parsed_data': parsed_data,
             'source': 'XML'
         }
-    
+        
     except Exception as e:
         error_msg = str(e)
         error_type = "PARSE_XML_ERROR"

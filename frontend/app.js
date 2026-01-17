@@ -25,7 +25,7 @@ document.addEventListener('DOMContentLoaded', function() {
     document.getElementById('apiKey').value = API_KEY;
     // Carregar regras disponíveis do backend primeiro
     loadAvailableRules().then(() => {
-        showRules('SEMENTES');
+    showRules('SEMENTES');
     });
     loadProcesses();
     loadDashboardMetrics();
@@ -1386,7 +1386,7 @@ async function showRules(processType) {
     currentProcessType = processType;
     document.querySelectorAll('.rule-tab').forEach(t => t.classList.remove('active'));
     if (event && event.target) {
-        event.target.classList.add('active');
+    event.target.classList.add('active');
     }
 
     const display = document.getElementById('rulesDisplay');

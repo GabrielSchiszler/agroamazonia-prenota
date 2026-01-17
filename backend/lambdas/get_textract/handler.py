@@ -16,15 +16,51 @@ def handler(event, context):
     file_key = event['FILE_KEY']
     file_name = event['FILE_NAME']
     
-    # Pular arquivos XML
-    if file_name.lower().endswith('.xml'):
+    # Verificar se Textract está habilitado (padrão: desativado)
+    textract_enabled = os.environ.get('TEXTRACT_ENABLED', 'false').lower() == 'true'
+    
+    if not textract_enabled:
+        logger.info(f"Textract está desativado. Pulando arquivo: {file_name}")
+        return {
+            'file_key': file_key,
+            'file_name': file_name,
+            'job_id': 'N/A',
+            'tables': [],
+            'raw_text': '',
+            'skipped': True,
+            'reason': 'TEXTRACT_DISABLED'
+        }
+    
+    # Verificar tipos de arquivo suportados pelo Textract
+    # Textract suporta: PDF, PNG, JPEG, TIFF
+    # NÃO suporta: XML, DOCX, DOC, etc.
+    file_name_lower = file_name.lower()
+    supported_extensions = ['.pdf', '.png', '.jpg', '.jpeg', '.tiff', '.tif']
+    is_supported = any(file_name_lower.endswith(ext) for ext in supported_extensions)
+    
+    if not is_supported:
+        logger.info(f"Tipo de arquivo não suportado pelo Textract: {file_name}")
+        return {
+            'file_key': file_key,
+            'file_name': file_name,
+            'job_id': 'N/A',
+            'tables': [],
+            'raw_text': '',
+            'skipped': True,
+            'reason': 'FILE_TYPE_NOT_SUPPORTED'
+        }
+    
+    # Pular arquivos XML (já coberto acima, mas mantido para clareza)
+    if file_name_lower.endswith('.xml'):
         logger.info(f"Skipping XML file: {file_name}")
         return {
             'file_key': file_key,
             'file_name': file_name,
             'job_id': 'N/A',
             'tables': [],
-            'skipped': True
+            'raw_text': '',
+            'skipped': True,
+            'reason': 'XML_FILE'
         }
     
     job_id = event['textract_job']['JobId']

@@ -188,9 +188,9 @@ def lambda_handler(event, context):
         # Tentar extrair do Payload se vier do Step Functions
         if 'Payload' in event:
             process_id = event['Payload'].get('process_id')
-        if not process_id:
-            print("ERROR: process_id not found in event")
-            return {'statusCode': 400, 'error': 'process_id not found'}
+    if not process_id:
+        print("ERROR: process_id not found in event")
+        return {'statusCode': 400, 'error': 'process_id not found'}
     
     # Extrair validation_results do evento
     # Pode estar em: validation_result.Payload.validation_results ou validation_results diretamente
@@ -254,7 +254,7 @@ def lambda_handler(event, context):
                                         "campo": f"{rule_name} - Item {item.get('item', 'N/A')} - {', '.join(failed_fields)}",
                                         "mensagemErro": f"Documento: {doc_file}. Divergências: " + 
                                                        ", ".join([f"{f}: DANFE={fields[f].get('danfe', 'N/A')} vs DOC={fields[f].get('doc', 'N/A')}" 
-                                                                  for f in failed_fields])
+                                                              for f in failed_fields])
                                     })
                                 else:
                                     # Item com status MISMATCH mas sem campos específicos

@@ -124,3 +124,4 @@ O script tenta replicar exatamente o que o Postman faz quando você configura:
 - **Client Secret**: `{{clientSecret}}`
 - **Client Authentication**: Basic Auth ou Body (testa ambos)
 
+
