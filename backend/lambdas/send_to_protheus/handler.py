@@ -25,19 +25,28 @@ def map_tipo_documento(modelo):
 def map_especie(modelo):
     """
     Mapeia espécie do documento conforme modelo.
-    ide/mod = 55 → "NF"
-    ide/mod = 65 → "NFCe"
+    
+    Regras de mapeamento:
+    - modelo 55 → "SPED"
+    - modelo 65 → "NFCe"
+    - outros → "NF" (padrão)
+    
+    Para adicionar novas regras, adicione novos casos no dicionário especie_map abaixo.
     """
     if not modelo:
         return "NF"
     
     modelo_str = str(modelo).strip()
-    if modelo_str == "55":
-        return "NF"
-    elif modelo_str == "65":
-        return "NFCe"
-    # Padrão para outros modelos
-    return "NF"
+    
+    # Dicionário de mapeamento: modelo -> espécie
+    # Fácil de adicionar novas regras aqui
+    especie_map = {
+        "55": "SPED",  # NF-e → SPED
+        "65": "NFCe"   # NFCe → NFCe
+    }
+    
+    # Retornar mapeamento se existir, senão usar padrão
+    return especie_map.get(modelo_str, "NF")
 
 def map_serie(serie):
     """
@@ -641,31 +650,25 @@ def lambda_handler(event, context):
     print(f"  taxaCambio: {taxa_cambio}")
     
     # Montar payload com APENAS os campos especificados
-    # Extrair número do documento do XML - OBRIGATÓRIO: codigo_nf
-    print(f"\n[7.2] Extraindo número do documento (codigo_nf) do XML...")
-    codigo_nf_raw = xml_data.get('codigo_nf')
-    
-    if not codigo_nf_raw:
-        error_msg = "Campo 'codigo_nf' não encontrado no XML. Este campo é obrigatório."
-        print(f"  [7.2.1] ERRO: {error_msg}")
-        print(f"  [7.2.2] Campos disponíveis no XML: {list(xml_data.keys())[:20]}...")
-        raise Exception(error_msg)
-    
-    # Extrair apenas dígitos do codigo_nf
-    codigo_nf_str = str(codigo_nf_raw).strip()
-    numero_documento = ''.join(filter(str.isdigit, codigo_nf_str))
-    
+    # Extrair número do documento do campo codigo_nf do XML e garantir que tenha pelo menos 9 dígitos (com zeros à esquerda)
+    numero_documento = xml_data.get('codigo_nf', '').strip()
     if not numero_documento:
-        error_msg = f"Campo 'codigo_nf' encontrado mas não contém dígitos válidos: '{codigo_nf_raw}'"
-        print(f"  [7.2.3] ERRO: {error_msg}")
-        raise Exception(error_msg)
+        # Fallback para numero_nota se codigo_nf não existir
+        numero_documento = xml_data.get('numero_nota', '').strip()
     
-    # Protheus requer que o número da nota tenha pelo menos 9 dígitos, preenchendo com zeros à esquerda
-    numero_documento = numero_documento.zfill(9)
-    
-    print(f"  [7.2.4] codigo_nf encontrado: '{codigo_nf_raw}'")
-    print(f"  [7.2.5] codigo_nf (apenas dígitos): '{numero_documento}' (antes do zfill)")
-    print(f"  [7.2.6] numero_documento final (9 dígitos): '{numero_documento}'")
+    if numero_documento.isdigit():
+        # Protheus exige que o número da nota fiscal tenha pelo menos 9 dígitos
+        # Preencher com zeros à esquerda se necessário
+        numero_documento = numero_documento.zfill(9)
+    elif numero_documento:
+        # Se não for apenas dígitos, tentar extrair apenas os dígitos e fazer pad
+        digitos = ''.join(filter(str.isdigit, numero_documento))
+        if digitos:
+            numero_documento = digitos.zfill(9)
+        else:
+            numero_documento = '0' * 9  # Fallback: 9 zeros
+    else:
+        numero_documento = '0' * 9  # Fallback: 9 zeros
     
     # Extrair CNPJ emitente - tentar múltiplas fontes
     print(f"\n[7.3] Extraindo CNPJ do emitente...")
@@ -956,7 +959,7 @@ def lambda_handler(event, context):
             
             item = {
                 "codigoProduto": codigo_produto,
-                "quantidade": 2,
+                "quantidade": quantidade,
                 "valorUnitario": valor_unitario,
                 "codigoOperacao": codigo_operacao,
                 "pedidoDeCompra": pedido_de_compra
@@ -1142,34 +1145,29 @@ def lambda_handler(event, context):
             status_code = response.status_code
             error_message = f"Falha ao enviar para Protheus"
             error_details = {}
+            protheus_cause = None
             
             try:
                 response_body = response.json()
                 error_code = response_body.get('errorCode', 'N/A')
                 error_msg = response_body.get('message', 'Sem mensagem de erro')
-                cause = response_body.get('cause', [])
                 
-                # Formatar cause para incluir na mensagem
-                cause_text = ''
-                if cause:
-                    if isinstance(cause, list):
-                        cause_text = '\n'.join(str(item) for item in cause)
+                # Extrair campo "cause" se existir (erro do Protheus)
+                if 'cause' in response_body:
+                    protheus_cause = response_body.get('cause')
+                    # Se for uma lista, manter como lista; se for string, manter como string
+                    if isinstance(protheus_cause, list):
+                        error_details['cause'] = protheus_cause
                     else:
-                        cause_text = str(cause)
+                        error_details['cause'] = [protheus_cause] if protheus_cause else []
                 
-                error_details = {
+                error_details.update({
                     'status_code': status_code,
                     'response_body': response_body,
                     'error_code': error_code,
-                    'error_message': error_msg,
-                    'cause': cause
-                }
-                
-                # Incluir cause na mensagem de erro
-                if cause_text:
-                    error_message = f"Falha ao enviar para Protheus (HTTP {status_code}): {error_code} - {error_msg}\n\nCausa:\n{cause_text}"
-                else:
-                    error_message = f"Falha ao enviar para Protheus (HTTP {status_code}): {error_code} - {error_msg}"
+                    'error_message': error_msg
+                })
+                error_message = f"Falha ao enviar para Protheus (HTTP {status_code}): {error_code} - {error_msg}"
             except:
                 # Se não for JSON, usar texto
                 response_text = response.text[:500] if response.text else 'Sem resposta'
@@ -1185,8 +1183,12 @@ def lambda_handler(event, context):
             import traceback
             traceback.print_exc()
             
-            # Lançar exceção com detalhes completos
-            raise Exception(error_message)
+            # Criar exceção com detalhes completos, incluindo cause se for erro do Protheus
+            # O cause será serializado no Cause do Step Functions e enviado no SNS
+            error_with_details = Exception(error_message)
+            error_with_details.error_details = error_details
+            # O cause já está em error_details, será serializado no Cause do Step Functions
+            raise error_with_details
         
         # Se chegou aqui, status code é 2xx - sucesso
         protheus_response = response.json()
@@ -1195,6 +1197,7 @@ def lambda_handler(event, context):
         # Fallback para capturar HTTPError se ainda ocorrer
         error_message = f"Falha ao enviar para Protheus"
         error_details = {}
+        protheus_cause = None
         
         if hasattr(http_err, 'response') and http_err.response is not None:
             status_code = http_err.response.status_code
@@ -1202,29 +1205,23 @@ def lambda_handler(event, context):
                 response_body = http_err.response.json()
                 error_code = response_body.get('errorCode', 'N/A')
                 error_msg = response_body.get('message', http_err.response.text[:500])
-                cause = response_body.get('cause', [])
                 
-                # Formatar cause para incluir na mensagem
-                cause_text = ''
-                if cause:
-                    if isinstance(cause, list):
-                        cause_text = '\n'.join(str(item) for item in cause)
+                # Extrair campo "cause" se existir (erro do Protheus)
+                if 'cause' in response_body:
+                    protheus_cause = response_body.get('cause')
+                    # Se for uma lista, manter como lista; se for string, manter como string
+                    if isinstance(protheus_cause, list):
+                        error_details['cause'] = protheus_cause
                     else:
-                        cause_text = str(cause)
+                        error_details['cause'] = [protheus_cause] if protheus_cause else []
                 
-                error_details = {
+                error_details.update({
                     'status_code': status_code,
                     'response_body': response_body,
                     'error_code': error_code,
-                    'error_message': error_msg,
-                    'cause': cause
-                }
-                
-                # Incluir cause na mensagem de erro
-                if cause_text:
-                    error_message = f"Falha ao enviar para Protheus (HTTP {status_code}): {error_code} - {error_msg}\n\nCausa:\n{cause_text}"
-                else:
-                    error_message = f"Falha ao enviar para Protheus (HTTP {status_code}): {error_code} - {error_msg}"
+                    'error_message': error_msg
+                })
+                error_message = f"Falha ao enviar para Protheus (HTTP {status_code}): {error_code} - {error_msg}"
             except:
                 response_text = http_err.response.text[:500] if http_err.response.text else 'Sem resposta'
                 error_details = {
@@ -1241,17 +1238,23 @@ def lambda_handler(event, context):
         import traceback
         traceback.print_exc()
         
-        raise Exception(error_message)
+        # Criar exceção com detalhes completos, incluindo cause se for erro do Protheus
+        # O cause já está em error_details, será serializado no Cause do Step Functions
+        error_with_details = Exception(error_message)
+        error_with_details.error_details = error_details
+        raise error_with_details
     except Exception as e:
         print(f"\n[10] ERRO ao chamar API Protheus: {e}")
         import traceback
         traceback.print_exc()
         
-        # Criar exceção com detalhes para o SNS
+        # Se a exceção já tem error_details com cause, apenas re-raise
+        if hasattr(e, 'error_details') and isinstance(e.error_details, dict):
+            raise e
+        
+        # Caso contrário, criar exceção simples sem cause
         error_with_details = Exception(f"Falha ao enviar para Protheus: {str(e)}")
         error_with_details.error_details = {'error': str(e), 'error_type': type(e).__name__}
-        error_with_details.process_id = process_id
-        error_with_details.api_url = api_url
         raise error_with_details
     
     # Se chegou aqui, API foi chamada com sucesso
