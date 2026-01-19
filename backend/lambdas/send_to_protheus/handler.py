@@ -1025,6 +1025,36 @@ def lambda_handler(event, context):
                 print(f"[8.{idx}] ERRO ao converter valores numéricos: {e}")
                 continue
     
+    # Verificar se existe campo "duplicatas" no JSON e incluir no payload se houver
+    print(f"\n[8.5] Verificando campo 'duplicatas' no JSON...")
+    if request_body_data and 'duplicatas' in request_body_data:
+        duplicatas = request_body_data.get('duplicatas')
+        if duplicatas and isinstance(duplicatas, list) and len(duplicatas) > 0:
+            print(f"[8.5.1] Campo 'duplicatas' encontrado: {len(duplicatas)} duplicata(s)")
+            # Validar formato das duplicatas
+            duplicatas_validas = []
+            for dup in duplicatas:
+                if isinstance(dup, dict) and all(key in dup for key in ['numero', 'vencimento', 'valor']):
+                    duplicatas_validas.append({
+                        'numero': str(dup.get('numero', '')),
+                        'vencimento': str(dup.get('vencimento', '')),
+                        'valor': str(dup.get('valor', ''))
+                    })
+                else:
+                    print(f"[8.5.2] WARNING: Duplicata inválida ignorada: {dup}")
+            
+            if duplicatas_validas:
+                payload['duplicatas'] = duplicatas_validas
+                print(f"[8.5.3] {len(duplicatas_validas)} duplicata(s) adicionada(s) ao payload")
+                for idx, dup in enumerate(duplicatas_validas, 1):
+                    print(f"[8.5.4] Duplicata {idx}: numero={dup['numero']}, vencimento={dup['vencimento']}, valor={dup['valor']}")
+            else:
+                print(f"[8.5.5] WARNING: Nenhuma duplicata válida encontrada, campo não será incluído")
+        else:
+            print(f"[8.5.6] Campo 'duplicatas' vazio ou inválido, não será incluído")
+    else:
+        print(f"[8.5.7] Campo 'duplicatas' não encontrado no JSON, não será incluído")
+    
     # Enviar para Protheus
     api_url = os.environ.get('PROTHEUS_API_URL', 'https://api.agroamazonia.com/hom-ocr')
     
