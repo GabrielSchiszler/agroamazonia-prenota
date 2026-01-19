@@ -10,16 +10,6 @@ logger.setLevel(logging.INFO)
 textract = boto3.client('textract')
 s3 = boto3.client('s3')
 
-def is_textract_supported(file_name):
-    """Verifica se o tipo de arquivo é suportado pelo Textract"""
-    if not file_name:
-        return False
-    
-    file_name_lower = file_name.lower()
-    # Textract suporta: PDF, PNG, JPEG, TIFF
-    supported_extensions = ['.pdf', '.png', '.jpg', '.jpeg', '.tiff', '.tif']
-    return any(file_name_lower.endswith(ext) for ext in supported_extensions)
-
 def handler(event, context):
     """Extrai tabelas de UM arquivo usando Textract"""
     logger.info(f"Received event: {json.dumps(event)}")
@@ -27,33 +17,6 @@ def handler(event, context):
     file_info = event['file']
     bucket_name = os.environ['BUCKET_NAME']
     file_key = file_info['FILE_KEY']
-    file_name = file_info.get('FILE_NAME', '')
-    
-    # Verificar se Textract está habilitado (padrão: desativado)
-    textract_enabled = os.environ.get('TEXTRACT_ENABLED', 'false').lower() == 'true'
-    
-    if not textract_enabled:
-        logger.info(f"Textract está desativado. Pulando arquivo: {file_name}")
-        return {
-            'file_key': file_key,
-            'file_name': file_name,
-            'job_id': 'N/A',
-            'tables': [],
-            'skipped': True,
-            'reason': 'TEXTRACT_DISABLED'
-        }
-    
-    # Verificar se o tipo de arquivo é suportado pelo Textract
-    if not is_textract_supported(file_name):
-        logger.info(f"Tipo de arquivo não suportado pelo Textract: {file_name}")
-        return {
-            'file_key': file_key,
-            'file_name': file_name,
-            'job_id': 'N/A',
-            'tables': [],
-            'skipped': True,
-            'reason': 'FILE_TYPE_NOT_SUPPORTED'
-        }
     
     logger.info(f"Starting Textract for: {file_key}")
     

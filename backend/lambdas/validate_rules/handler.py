@@ -91,22 +91,6 @@ def handler(event, context):
             parsed = json.loads(item.get('PARSED_DATA', '{}'))
             docs_data.append({'file_name': item['FILE_NAME'], 'data': parsed})
     
-    # IMPORTANTE: Incluir arquivos que têm metadados JSON mas não passaram pelo OCR
-    # (ex: arquivos .docx que não são suportados pelo Textract)
-    # Esses arquivos têm metadados em FILE# mas não têm PARSED_OCR=
-    for file_name, metadados in file_metadata.items():
-        # Verificar se já está em docs_data (foi processado pelo OCR)
-        if any(doc['file_name'] == file_name for doc in docs_data):
-            continue
-        
-        # Se tem metadados mas não está em docs_data, criar entrada vazia
-        # O metadados será mesclado depois no doc_prepared
-        logger.info(f"[handler] Arquivo {file_name} tem metadados mas não foi processado pelo OCR. Criando entrada em docs_data.")
-        docs_data.append({
-            'file_name': file_name,
-            'data': {}  # Dados OCR vazios, mas metadados serão usados
-        })
-    
     if not danfe_data:
         logger.warning("DANFE XML not found, skipping validation")
         return {

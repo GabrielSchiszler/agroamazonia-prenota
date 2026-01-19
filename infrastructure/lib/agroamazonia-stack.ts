@@ -220,16 +220,13 @@ export class AgroAmazoniaStack extends cdk.Stack {
     documentTable.grantReadWriteData(updateMetricsLambda);
 
     // Lambda: Check Textract
-    // Configuração: TEXTRACT_ENABLED (padrão: false - desativado)
-    const textractEnabled = this.node.tryGetContext('textractEnabled') || process.env.TEXTRACT_ENABLED || 'false';
     const checkTextractLambda = new lambda.Function(this, 'CheckTextractFunction', {
       functionName: name('lambda', 'check-textract'),
       runtime: lambda.Runtime.PYTHON_3_11,
       handler: 'handler.handler',
       code: lambda.Code.fromAsset('../backend/lambdas/check_textract'),
       environment: {
-        TABLE_NAME: documentTable.tableName,
-        TEXTRACT_ENABLED: textractEnabled
+        TABLE_NAME: documentTable.tableName
       },
       timeout: cdk.Duration.seconds(30)
     });
@@ -242,9 +239,6 @@ export class AgroAmazoniaStack extends cdk.Stack {
       runtime: lambda.Runtime.PYTHON_3_11,
       handler: 'handler.handler',
       code: lambda.Code.fromAsset('../backend/lambdas/get_textract'),
-      environment: {
-        TEXTRACT_ENABLED: textractEnabled
-      },
       timeout: cdk.Duration.minutes(5),
       memorySize: 512
     });

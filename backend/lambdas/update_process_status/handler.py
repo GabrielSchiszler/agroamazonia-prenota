@@ -25,6 +25,7 @@ def handler(event, context):
     lambda_name = event.get('lambda_name') or event.get('lambdaName') or 'unknown'
     
     # Se o evento vem do Step Functions Catch, extrair informações do erro
+    protheus_cause = None
     if 'error' in event:
         error_info = event.get('error', {})
         if isinstance(error_info, dict):
@@ -36,6 +37,11 @@ def handler(event, context):
                     error_json = json.loads(error_message)
                     if isinstance(error_json, dict):
                         error_message = error_json.get('errorMessage', error_json.get('error', error_message))
+                        # Extrair campo "cause" do Protheus se existir no error_details
+                        if 'error_details' in error_json:
+                            error_details = error_json.get('error_details', {})
+                            if isinstance(error_details, dict) and 'cause' in error_details:
+                                protheus_cause = error_details.get('cause')
                 except:
                     pass
             # O process_id deve estar no nível raiz do evento (Step Functions mantém variáveis do contexto)
@@ -65,6 +71,10 @@ def handler(event, context):
             'lambda': lambda_name
         }
         
+        # Incluir campo "cause" do Protheus se disponível
+        if protheus_cause is not None:
+            error_info['protheus_cause'] = protheus_cause
+        
         if 'Item' in response:
             # Atualizar item existente
             table.update_item(
@@ -92,12 +102,19 @@ def handler(event, context):
             })
             logger.info(f"Item METADATA criado com status FAILED para processo {process_id}")
         
-        return {
+        result = {
             'statusCode': 200,
             'process_id': process_id,
             'status': 'FAILED',
-            'message': 'Status atualizado com sucesso'
+            'message': 'Status atualizado com sucesso',
+            'error_info': error_info
         }
+        
+        # Incluir protheus_cause no resultado se disponível
+        if protheus_cause is not None:
+            result['protheus_cause'] = protheus_cause
+        
+        return result
         
     except Exception as e:
         logger.error(f"Erro ao atualizar status: {str(e)}")
