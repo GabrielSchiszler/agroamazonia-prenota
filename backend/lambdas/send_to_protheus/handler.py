@@ -1098,14 +1098,8 @@ def lambda_handler(event, context):
     # Se a URL não termina com /documento-entrada, adicionar (baseado no padrão do token URL)
     # O token é obtido de: /hom-ocr/documento-entrada/oauth2/token
     # A API provavelmente está em: /hom-ocr/documento-entrada
-    if '/documento-entrada' not in api_url and not api_url.endswith('/'):
-        # Tentar inferir a URL correta baseada na URL do token
-        auth_url = os.environ.get('PROTHEUS_AUTH_URL', '')
-        if auth_url and '/documento-entrada/oauth2/token' in auth_url:
-            # Extrair a base URL e adicionar /documento-entrada
-            base_url = auth_url.replace('/documento-entrada/oauth2/token', '')
-            api_url = f"{base_url}/documento-entrada"
-            print(f"[9.0] URL da API inferida da URL do token: {api_url}")
+    auth_url = os.environ.get('PROTHEUS_AUTH_URL', '')
+
     
     print(f"\n{'='*80}")
     print(f"[9] PREPARANDO ENVIO PARA PROTHEUS")
@@ -1182,7 +1176,7 @@ def lambda_handler(event, context):
         print(f"{'-'*80}")
         
         print(f"\n[9.7] Fazendo requisição POST para: {api_url}")
-        response = requests.post(api_url, json=payload, headers=headers, timeout=30)
+        response = requests.post(api_url + '/documento-entrada', json=payload, headers=headers, timeout=30)
         
         print(f"\n{'='*80}")
         print(f"[10] RESPOSTA DA API PROTHEUS")
