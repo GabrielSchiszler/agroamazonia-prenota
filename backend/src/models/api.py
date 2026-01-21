@@ -92,6 +92,67 @@ class DocsPresignedUrlResponse(BaseModel):
             }
         }
 
+class PedidoCompraMetadataRequest(BaseModel):
+    process_id: str = Field(..., description="ID do processo (UUID gerado pelo frontend)")
+    metadados: Dict[str, Any] = Field(..., description="Metadados do pedido de compra (JSON)")
+    
+    class Config:
+        schema_extra = {
+            "example": {
+                "process_id": "7d48cd96-c099-48dd-bbb6-d4fe8b2de318",
+                "metadados": {
+                    "header": {
+                        "tenantId": "123"
+                    },
+                    "requestBody": {
+                        "cnpjEmitente": "02290510001652",
+                        "cnpjDestinatario": "13563680000101",
+                        "itens": [
+                            {
+                                "codigoProduto": "41500001BD00205",
+                                "quantidade": 1,
+                                "valorUnitario": 880,
+                                "codigoOperacao": "1B",
+                                "pedidoDeCompra": {
+                                    "pedidoErp": "AAAAYX",
+                                    "itemPedidoErp": "0004"
+                                }
+                            }
+                        ],
+                        "duplicatas": [
+                            {
+                                "vencimento": "2026-01-30",
+                                "valor": 440
+                            }
+                        ]
+                    }
+                }
+            }
+        }
+
+class PedidoCompraMetadataResponse(BaseModel):
+    success: bool
+    message: str
+    process_id: str
+    metadados: Dict[str, Any]
+    
+    class Config:
+        schema_extra = {
+            "example": {
+                "success": True,
+                "message": "Metadados do pedido de compra vinculados com sucesso",
+                "process_id": "7d48cd96-c099-48dd-bbb6-d4fe8b2de318",
+                "metadados": {
+                    "header": {
+                        "tenantId": "123"
+                    },
+                    "requestBody": {
+                        "cnpjEmitente": "02290510001652"
+                    }
+                }
+            }
+        }
+
 class ProcessStartRequest(BaseModel):
     process_id: str = Field(..., description="ID do processo a ser iniciado")
     
