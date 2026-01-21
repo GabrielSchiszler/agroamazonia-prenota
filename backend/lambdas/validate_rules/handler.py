@@ -55,7 +55,32 @@ def handler(event, context):
             except Exception as e:
                 logger.warning(f"Failed to parse INPUT_JSON: {str(e)}")
     
-    # Buscar metadados dos arquivos
+    # Buscar metadados do pedido de compra (SK: PEDIDO_COMPRA_METADATA) - PRIORIDADE 1
+    pedido_compra_item = next((item for item in items if item.get('SK') == 'PEDIDO_COMPRA_METADATA'), None)
+    if pedido_compra_item:
+        metadados_str = pedido_compra_item.get('METADADOS', '')
+        if metadados_str:
+            try:
+                metadados = json.loads(metadados_str) if isinstance(metadados_str, str) else metadados_str
+                
+                # Verificar se está no formato do pedido de compra (com header e requestBody)
+                if isinstance(metadados, dict):
+                    if 'requestBody' in metadados:
+                        logger.info(f"[handler] PEDIDO_COMPRA_METADATA - Metadados no formato pedido de compra (tem header e requestBody)")
+                        logger.info(f"[handler] PEDIDO_COMPRA_METADATA - requestBody keys: {list(metadados.get('requestBody', {}).keys())}")
+                        logger.info(f"[handler] PEDIDO_COMPRA_METADATA - requestBody.cnpjEmitente: {metadados.get('requestBody', {}).get('cnpjEmitente')}")
+                        logger.info(f"[handler] PEDIDO_COMPRA_METADATA - requestBody.cnpjDestinatario: {metadados.get('requestBody', {}).get('cnpjDestinatario')}")
+                        logger.info(f"[handler] PEDIDO_COMPRA_METADATA - requestBody.itens: {len(metadados.get('requestBody', {}).get('itens', []))} itens")
+                    
+                    # Salvar como "Metadados do Pedido de Compra" (sem arquivo físico)
+                    file_metadata['Metadados do Pedido de Compra'] = metadados
+                    logger.info(f"[handler] Metadados do pedido de compra salvos (sem arquivo físico)")
+            except Exception as e:
+                logger.warning(f"[handler] Falha ao parsear metadados do pedido de compra: {str(e)}")
+                import traceback
+                traceback.print_exc()
+    
+    # Buscar metadados dos arquivos (FILE#) - PRIORIDADE 2
     for item in items:
         if 'FILE#' in item['SK']:
             file_name = item.get('FILE_NAME', '')
@@ -87,9 +112,10 @@ def handler(event, context):
         if 'PARSED_XML=' in item['SK']:
             parsed = json.loads(item.get('PARSED_DATA', '{}'))
             danfe_data = {'file_name': item['FILE_NAME'], 'data': parsed}
-        elif 'PARSED_OCR=' in item['SK']:
-            parsed = json.loads(item.get('PARSED_DATA', '{}'))
-            docs_data.append({'file_name': item['FILE_NAME'], 'data': parsed})
+        # Removido: não processa mais OCR de documentos adicionais
+        # elif 'PARSED_OCR=' in item['SK']:
+        #     parsed = json.loads(item.get('PARSED_DATA', '{}'))
+        #     docs_data.append({'file_name': item['FILE_NAME'], 'data': parsed})
     
     if not danfe_data:
         logger.warning("DANFE XML not found, skipping validation")
@@ -128,6 +154,14 @@ def handler(event, context):
             }
             for item in request_body_itens
         ]
+    
+    # Se não houver docs_data mas houver metadados do pedido de compra, criar um doc virtual
+    if not docs_data and 'Metadados do Pedido de Compra' in file_metadata:
+        logger.info(f"[handler] Criando doc virtual para metadados do pedido de compra (sem arquivo físico)")
+        docs_data.append({
+            'file_name': 'Metadados do Pedido de Compra',
+            'data': {}
+        })
     
     for doc in docs_data:
         file_name = doc['file_name']

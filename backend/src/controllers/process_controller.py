@@ -3,7 +3,8 @@ from fastapi import APIRouter, HTTPException
 from src.models.api import (
     XmlPresignedUrlRequest, DocsPresignedUrlRequest, DocsPresignedUrlResponse,
     ProcessStartRequest, ProcessStartResponse,
-    ProcessResponse, UpdateFileMetadataRequest, UpdateFileMetadataResponse
+    ProcessResponse, UpdateFileMetadataRequest, UpdateFileMetadataResponse,
+    PedidoCompraMetadataRequest, PedidoCompraMetadataResponse
 )
 from src.services.process_service import ProcessService
 
@@ -28,12 +29,34 @@ async def get_docs_presigned_url(request: DocsPresignedUrlRequest):
     """Gera URL para upload de documento adicional"""
     try:
         return service.generate_presigned_url(
-            request.process_id, request.file_name, "application/pdf", "ADDITIONAL", request.metadados
+            request.process_id, request.file_name, request.file_type, "ADDITIONAL", request.metadados
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/metadados/pedido", response_model=PedidoCompraMetadataResponse, summary="Vincular Metadados do Pedido de Compra")
+async def link_pedido_compra_metadata(request: PedidoCompraMetadataRequest):
+    """
+    Vincula metadados do pedido de compra ao processo (sem arquivo físico).
+    
+    Os metadados são salvos no DynamoDB e serão lidos pelo Lambda send_to_protheus
+    durante o processamento, mantendo compatibilidade com o código existente.
+    """
+    try:
+        logger.info(f"Linking pedido compra metadata for process: {request.process_id}")
+        logger.info(f"Metadados type: {type(request.metadados)}, keys: {list(request.metadados.keys()) if isinstance(request.metadados, dict) else 'N/A'}")
+        result = service.link_pedido_compra_metadata(request.process_id, request.metadados)
+        logger.info(f"Successfully linked metadata for process: {request.process_id}")
+        return result
+    except ValueError as e:
+        logger.error(f"Validation error linking pedido compra metadata: {str(e)}")
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error linking pedido compra metadata: {str(e)}")
+        logger.exception("Full traceback:")
+        raise HTTPException(status_code=500, detail=f"Erro interno ao vincular metadados: {str(e)}")
 
 @router.post("/start", response_model=ProcessStartResponse, summary="Iniciar Processamento")
 async def start_process(request: ProcessStartRequest):

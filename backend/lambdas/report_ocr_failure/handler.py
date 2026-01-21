@@ -203,7 +203,7 @@ def lambda_handler(event, context):
             validation_results = payload.get('validation_results', [])
     elif 'validation_results' in event:
         # Estrutura direta
-    validation_results = event.get('validation_results', [])
+        validation_results = event.get('validation_results', [])
     
     error_info = event.get('error', {})
     print(f"Processing failure for process_id: {process_id}")
@@ -246,13 +246,13 @@ def lambda_handler(event, context):
                         for item in items:
                             item_status = item.get('status', 'MISMATCH')
                             if item_status == 'MISMATCH':
-                            fields = item.get('fields', {})
-                            failed_fields = [f for f, v in fields.items() if v.get('status') == 'MISMATCH']
-                            if failed_fields:
-                                detalhes.append({
-                                    "pagina": 1,
+                                fields = item.get('fields', {})
+                                failed_fields = [f for f, v in fields.items() if v.get('status') == 'MISMATCH']
+                                if failed_fields:
+                                    detalhes.append({
+                                        "pagina": 1,
                                         "campo": f"{rule_name} - Item {item.get('item', 'N/A')} - {', '.join(failed_fields)}",
-                                    "mensagemErro": f"Documento: {doc_file}. Divergências: " + 
+                                        "mensagemErro": f"Documento: {doc_file}. Divergências: " + 
                                                        ", ".join([f"{f}: DANFE={fields[f].get('danfe', 'N/A')} vs DOC={fields[f].get('doc', 'N/A')}" 
                                                               for f in failed_fields])
                                     })
@@ -269,7 +269,7 @@ def lambda_handler(event, context):
                             "pagina": 1,
                             "campo": rule_name,
                             "mensagemErro": f"Documento: {doc_file}. {message}. {doc_value}"
-                                })
+                        })
                 else:
                     # Validação simples (não produtos)
                     detalhes.append({

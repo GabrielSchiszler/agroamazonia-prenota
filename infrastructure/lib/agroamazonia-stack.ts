@@ -328,74 +328,10 @@ export class AgroAmazoniaStack extends cdk.Stack {
       resultPath: '$.notify_result'
     });
 
-    const checkTextractTask = new tasks.LambdaInvoke(this, 'CheckTextract', {
-      lambdaFunction: checkTextractLambda,
-      resultPath: '$.textract_check'
-    });
-
-    // Textract Start Job
-    const startTextract = new tasks.CallAwsService(this, 'StartTextractJob', {
-      service: 'textract',
-      action: 'startDocumentAnalysis',
-      parameters: {
-        DocumentLocation: {
-          S3Object: {
-            Bucket: rawDocumentsBucket.bucketName,
-            Name: sfn.JsonPath.stringAt('$.FILE_KEY')
-          }
-        },
-        FeatureTypes: ['TABLES']
-      },
-      iamResources: ['*'],
-      resultPath: '$.textract_job'
-    });
-
-    // Get and Parse Textract Results
-    const getTextract = new tasks.LambdaInvoke(this, 'GetTextractResults', {
-      lambdaFunction: getTextractLambda,
-      outputPath: '$.Payload'
-    });
-
-    const textractFlow = startTextract.next(getTextract);
-
-    const mapState = new sfn.Map(this, 'ProcessFiles', {
-      maxConcurrency: 5,
-      itemsPath: '$.files',
-      resultPath: '$.textract_results'
-    });
-
-    mapState.iterator(textractFlow);
-
-    const skipTextract = new sfn.Pass(this, 'SkipTextract', {
-      resultPath: '$.textract_results',
-      result: sfn.Result.fromArray([])
-    });
-
-    const checkChoice = new sfn.Choice(this, 'NeedsTextract?')
-      .when(sfn.Condition.booleanEquals('$.textract_check.Payload.needs_textract', true), mapState)
-      .otherwise(skipTextract);
-
-    const processorTask = new tasks.LambdaInvoke(this, 'ProcessResults', {
-      lambdaFunction: processorLambda,
-      resultPath: '$.processor_result'
-    });
-
     const parseXmlTask = new tasks.LambdaInvoke(this, 'ParseXml', {
       lambdaFunction: parseXmlLambda,
       resultPath: '$.xml_result'
     });
-
-    const parseOcrTask = new tasks.LambdaInvoke(this, 'ParseOcr', {
-      lambdaFunction: parseOcrLambda,
-      resultPath: '$.ocr_result'
-    });
-
-    const parallelParsing = new sfn.Parallel(this, 'ParallelParsing', {
-      resultPath: '$.parsing_results'
-    });
-
-    parallelParsing.branch(parseXmlTask);
-    parallelParsing.branch(parseOcrTask);
 
     const validateTask = new tasks.LambdaInvoke(this, 'ValidateRules', {
       lambdaFunction: validateRulesLambda,
@@ -493,24 +429,15 @@ export class AgroAmazoniaStack extends cdk.Stack {
     // Catch para capturar falhas: primeiro atualiza status, depois envia SNS (global)
     updateMetricsTask.addCatch(updateStatusBeforeErrorTask, { resultPath: '$.error' });
     notifyTask.addCatch(updateStatusBeforeErrorTask, { resultPath: '$.error' });
-    checkTextractTask.addCatch(updateStatusBeforeErrorTask, { resultPath: '$.error' });
-    processorTask.addCatch(updateStatusBeforeErrorTask, { resultPath: '$.error' });
-    parallelParsing.addCatch(updateStatusBeforeErrorTask, { resultPath: '$.error' });
+    parseXmlTask.addCatch(updateStatusBeforeErrorTask, { resultPath: '$.error' });
     validateTask.addCatch(updateStatusBeforeErrorTask, { resultPath: '$.error' });
     sendToProtheusTask.addCatch(updateStatusBeforeErrorTask, { resultPath: '$.error' });
     reportFailureTask.addCatch(updateStatusBeforeErrorTask, { resultPath: '$.error' });
 
-    mapState.next(processorTask);
-    skipTextract.next(processorTask);
-    
-    processorTask
-      .next(parallelParsing)
+    const definition = notifyTask
+      .next(parseXmlTask)
       .next(validateTask)
       .next(validationChoice);
-
-    const definition = notifyTask
-      .next(checkTextractTask)
-      .next(checkChoice);
 
 
 

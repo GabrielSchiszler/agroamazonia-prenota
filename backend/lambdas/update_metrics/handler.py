@@ -17,7 +17,7 @@ def lambda_handler(event, context):
     try:
         print(f"UpdateMetrics - Event type: {type(event)}")
         print(f"UpdateMetrics - Event keys: {list(event.keys()) if isinstance(event, dict) else 'N/A'}")
-    print(f"UpdateMetrics - Event: {json.dumps(event, default=str)}")
+        print(f"UpdateMetrics - Event: {json.dumps(event, default=str)}")
     except Exception as e:
         print(f"ERRO ao fazer dump do event: {e}")
         print(f"Event (repr): {repr(event)}")
@@ -138,7 +138,7 @@ def lambda_handler(event, context):
         # Verificar se protheus_response não é vazio
         if protheus_response and isinstance(protheus_response, dict) and len(protheus_response) > 0:
             protheus_status = protheus_response.get('codigoStatus', '00')
-        status = 'SUCCESS' if protheus_status == '00' else 'FAILED'
+            status = 'SUCCESS' if protheus_status == '00' else 'FAILED'
         else:
             # Se protheus_response está vazio, considerar como sucesso (processo completou)
             status = 'SUCCESS'
@@ -384,12 +384,12 @@ def update_daily_metrics(date_key, status, processing_time, error_type, hour, pr
         # Atualizar registro
         try:
             print(f"[update_daily_metrics] Executando update_item...")
-        table.update_item(
-            Key={'PK': f'METRICS#{date_key}', 'SK': 'SUMMARY'},
-            UpdateExpression=update_expr,
-            ExpressionAttributeNames=expr_names if expr_names else None,
-            ExpressionAttributeValues=expr_values
-        )
+            table.update_item(
+                Key={'PK': f'METRICS#{date_key}', 'SK': 'SUMMARY'},
+                UpdateExpression=update_expr,
+                ExpressionAttributeNames=expr_names if expr_names else None,
+                ExpressionAttributeValues=expr_values
+            )
             print(f"[update_daily_metrics] ✓ Métricas diárias atualizadas com sucesso para {date_key}")
             
             # Verificar se foi salvo corretamente
