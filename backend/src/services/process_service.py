@@ -79,6 +79,77 @@ class ProcessService:
         
         return {'upload_url': url, 'file_key': file_key, 'file_name': safe_name, 'content_type': file_type, 'doc_type': doc_type}
     
+    def link_pedido_compra_metadata(self, process_id: str, metadados: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Vincula metadados do pedido de compra ao processo (sem arquivo físico).
+        
+        Cria um registro no DynamoDB com os metadados usando SK diferente de FILE#
+        para que não apareça na listagem de arquivos. O Lambda send_to_protheus
+        lê esses metadados durante o processamento.
+        """
+        try:
+            # Validar metadados
+            if not metadados:
+                raise ValueError("Metadados não podem ser vazios")
+            
+            if not isinstance(metadados, dict):
+                raise ValueError("Metadados devem ser um objeto JSON (dict)")
+            
+            # Criar processo se não existir
+            pk = f'PROCESS#{process_id}'
+            items = self.repository.query_by_pk_and_sk_prefix(pk, 'METADATA')
+            
+            if not items:
+                timestamp = int(datetime.now().timestamp())
+                self.repository.put_item('PROCESS', f'PROCESS#{process_id}', {
+                    'PROCESS_ID': process_id,
+                    'TIMESTAMP': timestamp
+                })
+                self.repository.put_item(pk, 'METADATA', {
+                    'STATUS': 'CREATED',
+                    'TIMESTAMP': timestamp
+                })
+            
+            # Usar SK específica para metadados de pedido de compra (não FILE#)
+            # Isso evita que apareça na listagem de arquivos
+            sk = 'PEDIDO_COMPRA_METADATA'
+            
+            # Preparar dados dos metadados
+            # Se metadados já for string JSON, usar diretamente; senão, serializar
+            if isinstance(metadados, str):
+                # Validar se é JSON válido
+                try:
+                    json.loads(metadados)
+                    metadata_json_str = metadados
+                except json.JSONDecodeError:
+                    raise ValueError("Metadados em formato string não é um JSON válido")
+            else:
+                metadata_json_str = json.dumps(metadados)
+            
+            metadata_data = {
+                'METADADOS': metadata_json_str,
+                'TIMESTAMP': int(datetime.now().timestamp())
+            }
+            
+            # Salvar no DynamoDB com SK diferente de FILE#
+            self.repository.put_item(pk, sk, metadata_data)
+            
+            logger.info(f"Metadados do pedido de compra vinculados ao processo {process_id}")
+            
+            return {
+                'success': True,
+                'message': 'Metadados do pedido de compra vinculados com sucesso',
+                'process_id': process_id,
+                'metadados': metadados if isinstance(metadados, dict) else json.loads(metadata_json_str)
+            }
+        except ValueError as e:
+            logger.error(f"Erro de validação ao vincular metadados: {str(e)}")
+            raise
+        except Exception as e:
+            logger.error(f"Erro ao vincular metadados do pedido de compra: {str(e)}")
+            logger.exception("Traceback completo:")
+            raise
+    
     def start_process(self, process_id: str) -> Dict[str, Any]:
         pk = f'PROCESS#{process_id}'
         items = self.repository.query_by_pk(pk)
@@ -96,19 +167,22 @@ class ProcessService:
         
         files = [item for item in items if item['SK'].startswith('FILE#')]
         danfe_files = [f for f in files if f.get('DOC_TYPE') == 'DANFE']
-        additional_files = [f for f in files if f.get('DOC_TYPE') == 'ADDITIONAL']
+        
+        # Verificar se há metadados de pedido de compra (obrigatório)
+        has_pedido_compra_metadata = any(item.get('SK') == 'PEDIDO_COMPRA_METADATA' for item in items)
         
         if not danfe_files:
             raise ValueError("DANFE obrigatório não encontrado")
-        if not additional_files:
-            raise ValueError("Pelo menos um documento adicional é necessário")
         
-        pdf_files = [f for f in files if f.get('FILE_NAME', '').lower().endswith('.pdf')]
+        # Metadados do pedido de compra são obrigatórios (não precisa mais de arquivos adicionais)
+        if not has_pedido_compra_metadata:
+            raise ValueError("Metadados do pedido de compra são obrigatórios")
         
+        # Não precisa mais passar arquivos para o Step Functions - apenas metadados JSON
         input_data = {
             'process_id': process_id,
             'process_type': process_type,
-            'files': [{'FILE_NAME': f.get('FILE_NAME'), 'FILE_KEY': f.get('FILE_KEY'), 'STATUS': f.get('STATUS')} for f in pdf_files]
+            'files': []  # Não precisa mais de arquivos adicionais
         }
         
         response = self.sfn_client.start_execution(
@@ -133,7 +207,9 @@ class ProcessService:
         
         files = [item for item in items if item['SK'].startswith('FILE#')]
         danfe_files = [f for f in files if f.get('DOC_TYPE') == 'DANFE']
-        additional_files = [f for f in files if f.get('DOC_TYPE') == 'ADDITIONAL']
+        # Filtrar apenas arquivos adicionais que têm FILE_KEY (arquivos físicos)
+        # Metadados apenas (sem arquivo) não devem aparecer na listagem
+        additional_files = [f for f in files if f.get('DOC_TYPE') == 'ADDITIONAL' and f.get('FILE_KEY')]
         
         # Buscar resultados de parsing (XML e OCR)
         parsing_results = []
@@ -186,9 +262,16 @@ class ProcessService:
         def process_file_data(file_item):
             file_data = {
                 'file_name': file_item.get('FILE_NAME'),
-                'file_key': file_item.get('FILE_KEY'),
                 'status': file_item.get('STATUS', 'UNKNOWN')
             }
+            
+            # Adicionar file_key apenas se existir (arquivos físicos)
+            if file_item.get('FILE_KEY'):
+                file_data['file_key'] = file_item.get('FILE_KEY')
+            
+            # Adicionar flag metadata_only se existir
+            if file_item.get('METADATA_ONLY'):
+                file_data['metadata_only'] = True
             
             # Adicionar metadados se existirem
             if file_item.get('METADADOS'):
@@ -200,6 +283,30 @@ class ProcessService:
             
             return file_data
         
+        # Buscar metadados do pedido de compra (sem arquivo físico)
+        pedido_compra_metadata_item = next((item for item in items if item.get('SK') == 'PEDIDO_COMPRA_METADATA'), None)
+        pedido_compra_metadata = None
+        if pedido_compra_metadata_item and pedido_compra_metadata_item.get('METADADOS'):
+            try:
+                metadados_str = pedido_compra_metadata_item.get('METADADOS')
+                if isinstance(metadados_str, str):
+                    pedido_compra_metadata = json.loads(metadados_str)
+                else:
+                    pedido_compra_metadata = metadados_str
+            except Exception as e:
+                logger.error(f"Erro ao parsear metadados do pedido de compra: {e}")
+        
+        # Adicionar metadados do pedido de compra como um "arquivo virtual" na lista de adicionais
+        additional_files_list = [process_file_data(f) for f in additional_files]
+        if pedido_compra_metadata:
+            # Adicionar como um item virtual na lista de arquivos adicionais
+            additional_files_list.append({
+                'file_name': 'Metadados do Pedido de Compra',
+                'status': 'LINKED',
+                'metadata_only': True,
+                'metadados': pedido_compra_metadata
+            })
+        
         result = {
             'process_id': process_id,
             'process_type': metadata.get('PROCESS_TYPE'),
@@ -207,7 +314,7 @@ class ProcessService:
             'sctask_id': sctask_id,
             'files': {
                 'danfe': [process_file_data(f) for f in danfe_files],
-                'additional': [process_file_data(f) for f in additional_files]
+                'additional': additional_files_list
             },
             'parsing_results': parsing_results,
             'created_at': str(int(metadata.get('TIMESTAMP', 0)))

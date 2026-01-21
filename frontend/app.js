@@ -1042,9 +1042,10 @@ async function loadProcessFiles() {
     // Additional docs
     if (selectedProcess.files.additional && selectedProcess.files.additional.length > 0) {
         docsList.innerHTML = selectedProcess.files.additional.map(f => {
-            const statusClass = f.status === 'UPLOADED' ? 'uploaded' : 'pending';
-            const statusIcon = f.status === 'UPLOADED' ? '✅' : '⏳';
-            const downloadBtn = f.status === 'UPLOADED' ? `<button onclick="downloadFile('${f.file_key}', '${f.file_name}')" style="padding: 4px 8px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 0.85em;">📥 Baixar</button>` : '';
+            const isMetadataOnly = f.metadata_only === true;
+            const statusClass = f.status === 'UPLOADED' ? 'uploaded' : f.status === 'LINKED' ? 'linked' : 'pending';
+            const statusIcon = f.status === 'UPLOADED' ? '✅' : f.status === 'LINKED' ? '🔗' : '⏳';
+            const downloadBtn = (f.status === 'UPLOADED' && f.file_key) ? `<button onclick="downloadFile('${f.file_key}', '${f.file_name}')" style="padding: 4px 8px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 0.85em;">📥 Baixar</button>` : '';
             
             // Exibir metadados se existirem
             let metadataDisplay = '';
@@ -1052,19 +1053,20 @@ async function loadProcessFiles() {
             if (f.metadados && Object.keys(f.metadados).length > 0) {
                 const metadataJson = JSON.stringify(f.metadados, null, 2);
                 const metadataEscaped = metadataJson.replace(/</g, '&lt;').replace(/>/g, '&gt;');
+                const editButton = !isMetadataOnly ? `<button onclick="editMetadata('${fileNameEscaped}', 'ADDITIONAL')" 
+                                    style="padding: 4px 12px; background: #28a745; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 0.85em;">
+                                ✏️ Editar
+                            </button>` : '';
                 metadataDisplay = `
                     <div style="margin-top: 12px; padding: 12px; background: #f8f9fa; border: 1px solid #dee2e6; border-radius: 6px;">
                         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
                             <strong style="color: #495057; font-size: 0.9em;">📊 Metadados JSON</strong>
-                            <button onclick="editMetadata('${fileNameEscaped}', 'ADDITIONAL')" 
-                                    style="padding: 4px 12px; background: #28a745; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 0.85em;">
-                                ✏️ Editar
-                            </button>
+                            ${editButton}
                         </div>
-                        <pre style="background: white; padding: 10px; border-radius: 4px; overflow-x: auto; font-size: 0.85em; max-height: 200px; overflow-y: auto; margin: 0;">${metadataEscaped}</pre>
+                        <pre style="background: white; padding: 10px; border-radius: 4px; overflow-x: auto; font-size: 0.85em; max-height: 400px; overflow-y: auto; margin: 0; white-space: pre-wrap; word-wrap: break-word;">${metadataEscaped}</pre>
                     </div>
                 `;
-            } else {
+            } else if (!isMetadataOnly) {
                 metadataDisplay = `
                     <div style="margin-top: 12px;">
                         <button onclick="editMetadata('${fileNameEscaped}', 'ADDITIONAL')" 
@@ -1175,21 +1177,59 @@ function handleDanfeSelect() {
     }
 }
 
-function handleDocsSelect() {
-    const fileInput = document.getElementById('docsInput');
-    const files = Array.from(fileInput.files);
-    const metadataText = document.getElementById('docsMetadata').value.trim();
-    let metadados = null;
-    if (metadataText) {
-        try {
-            metadados = JSON.parse(metadataText);
-        } catch (e) {
-            showToast(`❌ Erro ao parsear JSON de metadados: ${e.message}`, 'error');
-            return;
-        }
+async function sendMetadataOnly() {
+    if (!selectedProcess) {
+        showToast('❌ Selecione um processo primeiro', 'error');
+        return;
     }
-    files.forEach(file => uploadFile(file, 'ADDITIONAL', fileInput, metadados));
+    
+    const metadataText = document.getElementById('docsMetadata').value.trim();
+    if (!metadataText) {
+        showToast('❌ Metadados JSON são obrigatórios quando enviando apenas metadados', 'error');
+        return;
+    }
+    
+    let metadados;
+    try {
+        metadados = JSON.parse(metadataText);
+    } catch (e) {
+        showToast(`❌ Erro ao parsear JSON de metadados: ${e.message}`, 'error');
+        return;
+    }
+    
+    try {
+        const response = await fetch(`${API_URL}/api/process/metadados/pedido`, {
+            method: 'POST',
+            headers: { 
+                'Content-Type': 'application/json',
+                'x-api-key': API_KEY
+            },
+            body: JSON.stringify({
+                process_id: selectedProcess.process_id,
+                metadados: metadados
+            })
+        });
+        
+        if (!response.ok) {
+            const errorData = await response.json().catch(() => ({ detail: 'Erro desconhecido' }));
+            throw new Error(errorData.detail || 'Falha ao enviar metadados');
+        }
+        
+        const data = await response.json();
+        showToast(`✓ Metadados do pedido de compra vinculados com sucesso!`, 'success');
+        
+        // Limpar campo de metadados
+        document.getElementById('docsMetadata').value = '';
+        
+        // Atualizar processo após 1 segundo
+        setTimeout(() => selectProcess(selectedProcess.process_id, true), 1000);
+        
+    } catch (error) {
+        showToast(`❌ Erro: ${error.message}`, 'error');
+    }
 }
+
+// Função removida - não há mais upload de documentos adicionais
 
 async function uploadFile(file, docType, fileInput, userMetadata = null) {
     if (!file || !selectedProcess) return;
@@ -1287,8 +1327,10 @@ async function startProcess() {
         return;
     }
 
-    if (!selectedProcess.files.additional || selectedProcess.files.additional.length === 0) {
-        showToast('❌ Envie pelo menos um documento adicional', 'error');
+    // Verificar se há metadados do pedido de compra vinculados
+    const hasPedidoCompraMetadata = selectedProcess.files.additional && selectedProcess.files.additional.some(f => f.metadata_only === true);
+    if (!hasPedidoCompraMetadata) {
+        showToast('❌ Vincule os metadados do pedido de compra antes de iniciar o processamento', 'error');
         return;
     }
 

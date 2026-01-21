@@ -97,26 +97,26 @@
                         </div>
 
                         <div class="details-card">
-                            <h4>📎 Documentos Adicionais</h4>
-                            <p style="color: #666; font-size: 0.9em; margin-bottom: 10px;">Pedidos de compra e outros documentos</p>
-                            <div class="upload-area">
-                                <input type="file" id="docsInput" accept=".pdf" multiple onchange="handleDocsSelect()">
-                                <label for="docsInput" class="upload-label">
-                                    <span class="upload-icon">📁</span>
-                                    <span>Upload Documentos</span>
-                                </label>
+                            <h4>📊 Metadados do Pedido de Compra</h4>
+                            <p style="color: #666; font-size: 0.9em; margin-bottom: 10px;">Vincule os metadados JSON do pedido de compra</p>
+                            
+                            <div style="margin-bottom: 15px;">
+                                <button onclick="sendMetadataOnly()" class="btn-primary" style="width: 100%; padding: 12px;">
+                                    📊 Vincular Metadados do Pedido de Compra
+                                </button>
                             </div>
+                            
                             <div style="margin-top: 15px;">
                                 <label style="display: block; margin-bottom: 5px; font-weight: bold; color: #333;">
-                                    📊 Metadados JSON (Opcional)
+                                    📊 Metadados JSON <span style="color: #d32f2f; font-weight: normal;">(Obrigatório)</span>
                                 </label>
                                 <textarea 
                                     id="docsMetadata" 
-                                    placeholder='{"moeda": "BRL", "pedidoFornecedor": "369763", "pedidoErp": "023037", "itens": [{"codigoProduto": "...", ...}]}'
-                                    style="width: 100%; min-height: 120px; padding: 10px; border: 1px solid #ddd; border-radius: 4px; font-family: monospace; font-size: 0.9em; resize: vertical;"
+                                    placeholder='{"header": {"tenantId": "123"}, "requestBody": {"cnpjEmitente": "...", "itens": [...], "duplicatas": [...]}}'
+                                    style="width: 100%; min-height: 200px; padding: 10px; border: 1px solid #ddd; border-radius: 4px; font-family: monospace; font-size: 0.9em; resize: vertical;"
                                 ></textarea>
                                 <small style="color: #666; display: block; margin-top: 5px;">
-                                    Metadados estruturados que serão usados nas validações. Exemplo: moeda, pedidoFornecedor, pedidoErp, duplicata, condicaoPagamento, itens, etc.
+                                    Metadados estruturados do pedido de compra. Campos obrigatórios: header.tenantId, requestBody.cnpjEmitente, requestBody.itens, requestBody.duplicatas (opcional).
                                 </small>
                             </div>
                             <div id="docsList"></div>

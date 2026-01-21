@@ -380,32 +380,59 @@ def lambda_handler(event, context):
     tenant_id = None
     pedido_compra_json = None
     
-    # PRIORIDADE 1: Buscar nos arquivos (METADADOS) primeiro
-    print(f"\n[3.4] Buscando pedido de compra nos arquivos do processo (PRIORIDADE 1)...")
-    for sk, item in items.items():
-        if sk.startswith('FILE#'):
-            file_metadata = item.get('METADADOS')
-            if file_metadata:
-                try:
-                    if isinstance(file_metadata, str):
-                        file_metadata = json.loads(file_metadata)
+    # PRIORIDADE 1: Buscar metadados do pedido de compra (SK: PEDIDO_COMPRA_METADATA)
+    print(f"\n[3.4] Buscando metadados do pedido de compra (PRIORIDADE 1)...")
+    pedido_compra_item = items.get('PEDIDO_COMPRA_METADATA')
+    if pedido_compra_item:
+        file_metadata = pedido_compra_item.get('METADADOS')
+        if file_metadata:
+            try:
+                if isinstance(file_metadata, str):
+                    file_metadata = json.loads(file_metadata)
+                
+                # Verificar se é um pedido de compra (tem header e requestBody)
+                if isinstance(file_metadata, dict) and ('header' in file_metadata or 'requestBody' in file_metadata):
+                    pedido_compra_json = file_metadata
+                    input_json = file_metadata  # Usar como input_json também
+                    print(f"[3.4.1] Pedido de compra encontrado em PEDIDO_COMPRA_METADATA")
+                    print(f"[3.4.2] Pedido de compra tem header: {bool(pedido_compra_json.get('header'))}")
+                    print(f"[3.4.3] Pedido de compra tem requestBody: {bool(pedido_compra_json.get('requestBody'))}")
                     
-                    # Verificar se é um pedido de compra (tem header e requestBody)
-                    if isinstance(file_metadata, dict) and ('header' in file_metadata or 'requestBody' in file_metadata):
-                        pedido_compra_json = file_metadata
-                        input_json = file_metadata  # Usar como input_json também
-                        print(f"[3.4.1] Pedido de compra encontrado no arquivo: {item.get('FILE_NAME')}")
-                        print(f"[3.4.2] Pedido de compra tem header: {bool(pedido_compra_json.get('header'))}")
-                        print(f"[3.4.3] Pedido de compra tem requestBody: {bool(pedido_compra_json.get('requestBody'))}")
+                    # Extrair tenantId
+                    if pedido_compra_json.get('header'):
+                        tenant_id = pedido_compra_json['header'].get('tenantId') or pedido_compra_json['header'].get('tenant_id')
+                        if tenant_id:
+                            print(f"[3.4.4] tenantId encontrado no pedido de compra: {tenant_id}")
+            except Exception as e:
+                print(f"[3.4] ERRO ao processar metadados do pedido de compra: {e}")
+    
+    # PRIORIDADE 1.5: Buscar nos arquivos (METADADOS) como fallback
+    if not pedido_compra_json:
+        print(f"\n[3.4.5] Buscando pedido de compra nos arquivos do processo (fallback)...")
+        for sk, item in items.items():
+            if sk.startswith('FILE#'):
+                file_metadata = item.get('METADADOS')
+                if file_metadata:
+                    try:
+                        if isinstance(file_metadata, str):
+                            file_metadata = json.loads(file_metadata)
                         
-                        # Extrair tenantId
-                        if pedido_compra_json.get('header'):
-                            tenant_id = pedido_compra_json['header'].get('tenantId') or pedido_compra_json['header'].get('tenant_id')
-                            if tenant_id:
-                                print(f"[3.4.4] tenantId encontrado no pedido de compra: {tenant_id}")
-                        break
-                except Exception as e:
-                    print(f"[3.4] ERRO ao processar metadados do arquivo {item.get('FILE_NAME')}: {e}")
+                        # Verificar se é um pedido de compra (tem header e requestBody)
+                        if isinstance(file_metadata, dict) and ('header' in file_metadata or 'requestBody' in file_metadata):
+                            pedido_compra_json = file_metadata
+                            input_json = file_metadata  # Usar como input_json também
+                            print(f"[3.4.6] Pedido de compra encontrado no arquivo: {item.get('FILE_NAME')} (fallback)")
+                            print(f"[3.4.7] Pedido de compra tem header: {bool(pedido_compra_json.get('header'))}")
+                            print(f"[3.4.8] Pedido de compra tem requestBody: {bool(pedido_compra_json.get('requestBody'))}")
+                            
+                            # Extrair tenantId
+                            if pedido_compra_json.get('header'):
+                                tenant_id = pedido_compra_json['header'].get('tenantId') or pedido_compra_json['header'].get('tenant_id')
+                                if tenant_id:
+                                    print(f"[3.4.9] tenantId encontrado no pedido de compra: {tenant_id}")
+                            break
+                    except Exception as e:
+                        print(f"[3.4.5] ERRO ao processar metadados do arquivo {item.get('FILE_NAME')}: {e}")
     
     # PRIORIDADE 2: Buscar INPUT_JSON nos metadados do processo
     if not input_json:
@@ -651,24 +678,12 @@ def lambda_handler(event, context):
     
     # Montar payload com APENAS os campos especificados
     # Extrair número do documento do campo codigo_nf do XML e garantir que tenha pelo menos 9 dígitos (com zeros à esquerda)
-    numero_documento = xml_data.get('codigo_nf', '').strip()
+    numero_documento = xml_data.get('numero_nota', '').strip()
     if not numero_documento:
         # Fallback para numero_nota se codigo_nf não existir
         numero_documento = xml_data.get('numero_nota', '').strip()
-    
-    if numero_documento.isdigit():
-        # Protheus exige que o número da nota fiscal tenha pelo menos 9 dígitos
-        # Preencher com zeros à esquerda se necessário
-        numero_documento = numero_documento.zfill(9)
-    elif numero_documento:
-        # Se não for apenas dígitos, tentar extrair apenas os dígitos e fazer pad
-        digitos = ''.join(filter(str.isdigit, numero_documento))
-        if digitos:
-            numero_documento = digitos.zfill(9)
-        else:
-            numero_documento = '0' * 9  # Fallback: 9 zeros
-    else:
-        numero_documento = '0' * 9  # Fallback: 9 zeros
+ 
+   
     
     # Extrair CNPJ emitente - tentar múltiplas fontes
     print(f"\n[7.3] Extraindo CNPJ do emitente...")
@@ -1025,35 +1040,57 @@ def lambda_handler(event, context):
                 print(f"[8.{idx}] ERRO ao converter valores numéricos: {e}")
                 continue
     
-    # Verificar se existe campo "duplicatas" no JSON e incluir no payload se houver
-    print(f"\n[8.5] Verificando campo 'duplicatas' no JSON...")
+    # Verificar se existe campo "duplicatas" no JSON ou no XML e incluir no payload se houver
+    print(f"\n[8.5] Verificando campo 'duplicatas'...")
+    duplicatas = None
+    duplicatas_source = None
+    
+    # Prioridade 1: Buscar em request_body_data.duplicatas
     if request_body_data and 'duplicatas' in request_body_data:
         duplicatas = request_body_data.get('duplicatas')
-        if duplicatas and isinstance(duplicatas, list) and len(duplicatas) > 0:
-            print(f"[8.5.1] Campo 'duplicatas' encontrado: {len(duplicatas)} duplicata(s)")
-            # Validar formato das duplicatas
-            duplicatas_validas = []
-            for dup in duplicatas:
-                if isinstance(dup, dict) and all(key in dup for key in ['numero', 'vencimento', 'valor']):
-                    duplicatas_validas.append({
-                        'numero': str(dup.get('numero', '')),
+        duplicatas_source = "request_body_data"
+        print(f"[8.5.1] Campo 'duplicatas' encontrado em request_body_data")
+    
+    # Prioridade 2: Buscar em xml_data.cobranca.duplicatas
+    elif cobranca and 'duplicatas' in cobranca:
+        duplicatas = cobranca.get('duplicatas')
+        duplicatas_source = "xml_data.cobranca"
+        print(f"[8.5.1] Campo 'duplicatas' encontrado em xml_data.cobranca")
+    
+    if duplicatas and isinstance(duplicatas, list) and len(duplicatas) > 0:
+        print(f"[8.5.2] Processando {len(duplicatas)} duplicata(s) de {duplicatas_source}")
+        # Validar formato das duplicatas
+        duplicatas_validas = []
+        for dup in duplicatas:
+            if isinstance(dup, dict) and all(key in dup for key in ['vencimento', 'valor']):
+                try:
+                    # Converter valor para numérico (float)
+                    valor_numerico = float(dup.get('valor', 0))
+                    duplicata_valida = {
                         'vencimento': str(dup.get('vencimento', '')),
-                        'valor': str(dup.get('valor', ''))
-                    })
-                else:
-                    print(f"[8.5.2] WARNING: Duplicata inválida ignorada: {dup}")
-            
-            if duplicatas_validas:
-                payload['duplicatas'] = duplicatas_validas
-                print(f"[8.5.3] {len(duplicatas_validas)} duplicata(s) adicionada(s) ao payload")
-                for idx, dup in enumerate(duplicatas_validas, 1):
-                    print(f"[8.5.4] Duplicata {idx}: numero={dup['numero']}, vencimento={dup['vencimento']}, valor={dup['valor']}")
+                        'valor': valor_numerico
+                    }
+                    # Sempre incluir numero se existir no JSON original
+                    if 'numero' in dup and dup.get('numero') is not None:
+                        duplicata_valida['numero'] = str(dup.get('numero', ''))
+                    duplicatas_validas.append(duplicata_valida)
+                except (ValueError, TypeError) as e:
+                    print(f"[8.5.3] WARNING: Erro ao converter valor da duplicata para numérico: {e}, duplicata ignorada: {dup}")
             else:
-                print(f"[8.5.5] WARNING: Nenhuma duplicata válida encontrada, campo não será incluído")
+                print(f"[8.5.3] WARNING: Duplicata inválida ignorada (campos obrigatórios: vencimento, valor): {dup}")
+        
+        if duplicatas_validas:
+            payload['duplicatas'] = duplicatas_validas
+            print(f"[8.5.4] {len(duplicatas_validas)} duplicata(s) adicionada(s) ao payload")
+            for idx, dup in enumerate(duplicatas_validas, 1):
+                numero_info = f", numero={dup.get('numero', 'N/A')}" if 'numero' in dup else ""
+                print(f"[8.5.5] Duplicata {idx}: vencimento={dup['vencimento']}, valor={dup['valor']}{numero_info}")
         else:
-            print(f"[8.5.6] Campo 'duplicatas' vazio ou inválido, não será incluído")
+            print(f"[8.5.6] WARNING: Nenhuma duplicata válida encontrada, campo não será incluído")
+    elif duplicatas is not None:
+        print(f"[8.5.7] Campo 'duplicatas' vazio ou inválido, não será incluído")
     else:
-        print(f"[8.5.7] Campo 'duplicatas' não encontrado no JSON, não será incluído")
+        print(f"[8.5.8] Campo 'duplicatas' não encontrado em request_body_data nem em xml_data.cobranca, não será incluído")
     
     # Enviar para Protheus
     api_url = os.environ.get('PROTHEUS_API_URL', 'https://api.agroamazonia.com/hom-ocr')

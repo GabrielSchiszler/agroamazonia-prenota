@@ -559,57 +559,36 @@ def test_create_process(api_url: str, api_key: str, xml_file: str = None, start_
         print(f"❌ Erro ao fazer upload do XML: {e}")
         return None
     
-    # 3. Obter presigned URL para documento adicional (com metadados JSON)
+    # 3. Vincular metadados do pedido de compra (sem arquivo físico)
     print(f"\n{'='*80}")
-    print("3️⃣  OBTENDO URL PARA UPLOAD DO DOCUMENTO ADICIONAL")
+    print("3️⃣  VINCULANDO METADADOS DO PEDIDO DE COMPRA")
     print(f"{'='*80}")
     
     metadata = get_metadata_json()
-    pdf_filename = "documento_adicional.pdf"
     
-    docs_url_response = requests.post(
-        f"{api_url}/api/process/presigned-url/docs",
+    metadata_response = requests.post(
+        f"{api_url}/api/process/metadados/pedido",
         headers={
             'Content-Type': 'application/json',
             'x-api-key': api_key
         },
         json={
             'process_id': process_id,
-            'file_name': pdf_filename,
-            'file_type': 'application/pdf',
             'metadados': metadata
         }
     )
     
-    if not docs_url_response.ok:
-        print(f"❌ Erro ao obter URL para documento adicional: {docs_url_response.status_code}")
-        print(docs_url_response.text)
+    if not metadata_response.ok:
+        print(f"❌ Erro ao vincular metadados: {metadata_response.status_code}")
+        print(metadata_response.text)
         return None
     
-    docs_url_data = docs_url_response.json()
-    print(f"✓ URL obtida: {docs_url_data['upload_url'][:80]}...")
-    print(f"✓ Metadados JSON incluídos no documento adicional")
+    metadata_data = metadata_response.json()
+    print(f"✓ Metadados vinculados com sucesso!")
+    print(f"   Nome do documento: {metadata_data.get('file_name')}")
+    print(f"   Process ID: {metadata_data.get('process_id')}")
     
-    # 4. Criar PDF vazio e fazer upload
-    print(f"\n{'='*80}")
-    print("4️⃣  CRIANDO E FAZENDO UPLOAD DO PDF VAZIO")
-    print(f"{'='*80}")
-    
-    pdf_content = create_empty_pdf()
-    print(f"✓ PDF vazio criado ({len(pdf_content)} bytes)")
-    
-    try:
-        upload_file_to_s3(
-            docs_url_data['upload_url'],
-            pdf_content,
-            'application/pdf'
-        )
-        print(f"✓ PDF enviado com sucesso!")
-    except Exception as e:
-        print(f"❌ Erro ao fazer upload do PDF: {e}")
-        return None
-    
-    # 5. Verificar processo criado
+    # 4. Verificar processo criado
     print(f"\n{'='*80}")
     print("5️⃣  VERIFICANDO PROCESSO CRIADO")
     print(f"{'='*80}")
@@ -628,23 +607,23 @@ def test_create_process(api_url: str, api_key: str, xml_file: str = None, start_
             print(f"   DANFE: {len(process_data.get('files', {}).get('danfe', []))} arquivo(s)")
             print(f"   Adicionais: {len(process_data.get('files', {}).get('additional', []))} arquivo(s)")
             
-            # Mostrar metadados do documento adicional
+            # Mostrar metadados do pedido de compra
             additional_files = process_data.get('files', {}).get('additional', [])
             if additional_files:
                 for file_info in additional_files:
-                    if file_info.get('file_name') == pdf_filename:
+                    if file_info.get('metadata_only'):
                         if 'metadados' in file_info:
-                            print(f"\n   Metadados do documento adicional:")
+                            print(f"\n   Metadados do pedido de compra:")
                             print(f"   {json.dumps(file_info['metadados'], indent=6, ensure_ascii=False)}")
         else:
             print(f"⚠️  Não foi possível verificar o processo: {process_response.status_code}")
     except Exception as e:
         print(f"⚠️  Erro ao verificar processo: {e}")
     
-    # 6. Iniciar processo (opcional)
+    # 5. Iniciar processo (opcional)
     if start_process:
         print(f"\n{'='*80}")
-        print("6️⃣  INICIANDO PROCESSAMENTO")
+        print("5️⃣  INICIANDO PROCESSAMENTO")
         print(f"{'='*80}")
         
         try:
@@ -676,7 +655,7 @@ def test_create_process(api_url: str, api_key: str, xml_file: str = None, start_
     print(f"{'='*80}")
     print(f"\nProcess ID: {process_id}")
     print(f"XML: {xml_filename}")
-    print(f"PDF: {pdf_filename} (com metadados JSON)")
+    print(f"Metadados do pedido de compra: vinculados (sem arquivo físico)")
     print(f"\nPara verificar o processo:")
     print(f"  GET {api_url}/api/process/{process_id}")
     print(f"\nPara iniciar o processamento:")
