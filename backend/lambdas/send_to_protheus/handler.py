@@ -1196,7 +1196,7 @@ def lambda_handler(event, context):
             
             # Adicionar unidade_trib se disponível no XML
             if unidade_trib:
-                item["unidadeTrib"] = unidade_trib
+                item["unidadeMedida"] = unidade_trib
             payload['itens'].append(item)
             print(f"[8.{idx}.10] ✅ Produto {idx} adicionado ao payload: código={codigo_produto}, qtd={quantidade}, valor={valor_unitario}, op={codigo_operacao}, pedido={pedido_de_compra.get('pedidoErp')}")
             
@@ -1255,7 +1255,7 @@ def lambda_handler(event, context):
                 # Adicionar unidade_trib se disponível no XML
                 unidade_trib = produto.get('unidade_trib', '').strip()
                 if unidade_trib:
-                    item["unidadeTrib"] = unidade_trib
+                    item["unidadeMedida"] = unidade_trib
                 
                 payload['itens'].append(item)
                 print(f"[8.{idx}] Produto {idx} adicionado: {codigo}, qtd={item['quantidade']}, valor={item['valorUnitario']}, op={codigo_operacao}")
@@ -1318,10 +1318,6 @@ def lambda_handler(event, context):
     
     # Enviar para Protheus
     api_url = os.environ.get('PROTHEUS_API_URL', 'https://api.agroamazonia.com/hom-ocr')
-    
-    # Se a URL não termina com /documento-entrada, adicionar (baseado no padrão do token URL)
-    # O token é obtido de: /hom-ocr/documento-entrada/oauth2/token
-    # A API provavelmente está em: /hom-ocr/documento-entrada
     auth_url = os.environ.get('PROTHEUS_AUTH_URL', '')
 
     
@@ -1401,7 +1397,7 @@ def lambda_handler(event, context):
         
         api_url_doc = api_url + '/documento-entrada'
         print(f"\n[9.7] Fazendo requisição POST para: {api_url_doc}")
-        response = requests.post(api_url_doc + '/documento-entrada', json=payload, headers=headers, timeout=30)
+        response = requests.post(api_url_doc, json=payload, headers=headers, timeout=30)
         
         print(f"\n{'='*80}")
         print(f"[10] RESPOSTA DA API PROTHEUS")

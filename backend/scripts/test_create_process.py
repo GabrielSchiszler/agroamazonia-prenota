@@ -51,16 +51,20 @@ def create_xml_file(xml_path: str):
     """Sempre cria um novo arquivo XML com número aleatório para cNF"""
     # Gerar número aleatório de 8 dígitos para cNF
     cnf_random = f"{random.randint(0, 99999999):08d}"
-    
+    nnf_random = f"{random.randint(0, 99999):08d}"
+
     if os.path.exists(xml_path):
         print(f"ℹ️  Arquivo XML já existe: {xml_path} - será recriado com novo número aleatório")
     
     # Gerar ID da NFe baseado no cNF aleatório (mantendo estrutura de 44 dígitos)
     # Formato: NFe + 44 dígitos (onde os últimos 8 são o cNF)
     # Exemplo: NFe3125094718062500561055005000016620{cNF}
-    nfe_id_base = "3125094718062500561055005000016620"  # 36 dígitos fixos
+    # A base deve ter 36 dígitos para que com o cNF de 8 dígitos totalize 44
+    nfe_id_base = "3125094718062500561055005000016620"  # 34 dígitos fixos
+    # Adicionar 2 dígitos para completar 36 (totalizando 44 com cNF de 8)
+    nfe_id_base = nfe_id_base + "00"  # Agora tem 36 dígitos
     nfe_id = f"NFe{nfe_id_base}{cnf_random}"
-    ch_nfe = f"{nfe_id_base}{cnf_random}"
+    ch_nfe = f"{nfe_id_base}{cnf_random}"  # Total: 36 + 8 = 44 dígitos
     
     xml_content = f'''<?xml version="1.0" encoding="UTF-8"?>
 <nfeProc xmlns="http://www.portalfiscal.inf.br/nfe" versao="4.00">
@@ -72,7 +76,7 @@ def create_xml_file(xml_path: str):
 <natOp>Venda merc.adq.receb.de terceiros</natOp>
 <mod>55</mod>
 <serie>5</serie>
-<nNF>16620</nNF>
+<nNF>{nnf_random}</nNF>
 <dhEmi>2025-09-27T13:50:46-03:00</dhEmi>
 <dhSaiEnt>2025-09-27T13:50:46-03:00</dhSaiEnt>
 <tpNF>1</tpNF>

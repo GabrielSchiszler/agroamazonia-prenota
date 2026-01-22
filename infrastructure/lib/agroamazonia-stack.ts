@@ -407,7 +407,6 @@ export class AgroAmazoniaStack extends cdk.Stack {
         'application': 'AgroAmazonia-Prenota',
         'error': sfn.JsonPath.stringAt('$.error.Error'),
         'cause': sfn.JsonPath.stringAt('$.error.Cause'),
-        'protheus_cause': sfn.JsonPath.stringAt('$.status_update.Payload.protheus_cause'),
         'process_id': sfn.JsonPath.stringAt('$.process_id'),
         'timestamp': sfn.JsonPath.stringAt('$$.State.EnteredTime'),
         'state_name': sfn.JsonPath.stringAt('$$.State.Name'),
