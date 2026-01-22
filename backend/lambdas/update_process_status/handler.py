@@ -31,6 +31,8 @@ def handler(event, context):
         if isinstance(error_info, dict):
             # Step Functions Catch coloca Error e Cause no objeto error
             error_message = error_info.get('Error', error_info.get('Cause', error_message))
+            cause_str = error_info.get('Cause', '')
+            
             # Tentar extrair do JSON string se Error ou Cause for uma string JSON
             if isinstance(error_message, str):
                 try:
@@ -44,6 +46,21 @@ def handler(event, context):
                                 protheus_cause = error_details.get('cause')
                 except:
                     pass
+            
+            # Tentar extrair cause diretamente do Cause do Step Functions (pode ser JSON string)
+            if not protheus_cause and cause_str:
+                try:
+                    cause_json = json.loads(cause_str)
+                    if isinstance(cause_json, dict):
+                        # Se cause_json tem error_details com cause
+                        if 'error_details' in cause_json:
+                            error_details = cause_json.get('error_details', {})
+                            if isinstance(error_details, dict) and 'cause' in error_details:
+                                protheus_cause = error_details.get('cause')
+                except:
+                    # Se não for JSON, pode ser que cause_str já seja o cause
+                    pass
+            
             # O process_id deve estar no nível raiz do evento (Step Functions mantém variáveis do contexto)
             # Se não encontrou, tentar extrair do error_info (pode estar em alguns casos)
             if not process_id:

@@ -196,7 +196,14 @@ export class AgroAmazoniaStack extends cdk.Stack {
         PROTHEUS_API_URL: protheusApiUrl,
         PROTHEUS_AUTH_URL: protheusAuthUrl,
         PROTHEUS_CLIENT_ID: protheusClientId,
-        PROTHEUS_CLIENT_SECRET: protheusClientSecret
+        PROTHEUS_CLIENT_SECRET: protheusClientSecret,
+        // Variáveis para reportar falhas do Protheus para SCTASK
+        OCR_FAILURE_API_URL: ocrFailureApiUrl,
+        OCR_FAILURE_AUTH_URL: ocrFailureAuthUrl,
+        OCR_FAILURE_CLIENT_ID: ocrFailureClientId,
+        OCR_FAILURE_CLIENT_SECRET: ocrFailureClientSecret,
+        OCR_FAILURE_USERNAME: ocrFailureUsername,
+        OCR_FAILURE_PASSWORD: ocrFailurePassword
       },
       timeout: cdk.Duration.minutes(2),
       memorySize: 512

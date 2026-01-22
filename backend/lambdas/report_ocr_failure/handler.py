@@ -286,6 +286,30 @@ def lambda_handler(event, context):
         })
     
     # Preparar payload para API externa
+    # Construir texto explicativo dos erros para o campo detalhes
+    texto_erros = []
+    
+    if failed_rules:
+        rule_names = [r.get('rule', 'Desconhecida') for r in failed_rules]
+        texto_erros.append(f"Validação falhou: {len(failed_rules)} regra(s) com divergência ({', '.join(rule_names)})")
+        
+        # Adicionar detalhes de cada erro
+        for detalhe in detalhes:
+            campo = detalhe.get('campo', 'Campo desconhecido')
+            mensagem = detalhe.get('mensagemErro', 'Sem mensagem')
+            texto_erros.append(f"\n• {campo}: {mensagem}")
+    else:
+        texto_erros.append("Erro no processamento")
+        # Adicionar detalhes técnicos se houver
+        for detalhe in detalhes:
+            campo = detalhe.get('campo', 'Erro técnico')
+            mensagem = detalhe.get('mensagemErro', 'Sem mensagem')
+            texto_erros.append(f"\n• {campo}: {mensagem}")
+    
+    # Juntar tudo em um texto único para o campo detalhes
+    texto_detalhes = ''.join(texto_erros) if texto_erros else "Erro no processamento"
+    
+    # Manter descricaoFalha como resumo simples (formato original)
     if failed_rules:
         rule_names = [r.get('rule', 'Desconhecida') for r in failed_rules]
         descricao_falha = f"Validação falhou: {len(failed_rules)} regra(s) com divergência ({', '.join(rule_names)})"
@@ -296,7 +320,7 @@ def lambda_handler(event, context):
         "idUnico": id_unico,
         "descricaoFalha": descricao_falha,
         "traceAWS": process_id,
-        "detalhes": detalhes
+        "detalhes": texto_detalhes  # Texto explicativo completo ao invés de array
     }
     
     # Obter token OAuth2

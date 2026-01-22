@@ -51,16 +51,20 @@ def create_xml_file(xml_path: str):
     """Sempre cria um novo arquivo XML com número aleatório para cNF"""
     # Gerar número aleatório de 8 dígitos para cNF
     cnf_random = f"{random.randint(0, 99999999):08d}"
-    
+    nnf_random = f"{random.randint(0, 99999):08d}"
+
     if os.path.exists(xml_path):
         print(f"ℹ️  Arquivo XML já existe: {xml_path} - será recriado com novo número aleatório")
     
     # Gerar ID da NFe baseado no cNF aleatório (mantendo estrutura de 44 dígitos)
     # Formato: NFe + 44 dígitos (onde os últimos 8 são o cNF)
     # Exemplo: NFe3125094718062500561055005000016620{cNF}
-    nfe_id_base = "3125094718062500561055005000016620"  # 36 dígitos fixos
+    # A base deve ter 36 dígitos para que com o cNF de 8 dígitos totalize 44
+    nfe_id_base = "3125094718062500561055005000016620"  # 34 dígitos fixos
+    # Adicionar 2 dígitos para completar 36 (totalizando 44 com cNF de 8)
+    nfe_id_base = nfe_id_base + "00"  # Agora tem 36 dígitos
     nfe_id = f"NFe{nfe_id_base}{cnf_random}"
-    ch_nfe = f"{nfe_id_base}{cnf_random}"
+    ch_nfe = f"{nfe_id_base}{cnf_random}"  # Total: 36 + 8 = 44 dígitos
     
     xml_content = f'''<?xml version="1.0" encoding="UTF-8"?>
 <nfeProc xmlns="http://www.portalfiscal.inf.br/nfe" versao="4.00">
@@ -72,7 +76,7 @@ def create_xml_file(xml_path: str):
 <natOp>Venda merc.adq.receb.de terceiros</natOp>
 <mod>55</mod>
 <serie>5</serie>
-<nNF>16620</nNF>
+<nNF>{nnf_random}</nNF>
 <dhEmi>2025-09-27T13:50:46-03:00</dhEmi>
 <dhSaiEnt>2025-09-27T13:50:46-03:00</dhSaiEnt>
 <tpNF>1</tpNF>
@@ -667,7 +671,7 @@ def test_create_process(api_url: str, api_key: str, xml_file: str = None, start_
 
 def main():
     parser = argparse.ArgumentParser(description='Cria um processo de teste com documentos')
-    parser.add_argument('--api-url', help='URL base da API (padrão: https://l7ergug2q0.execute-api.us-east-1.amazonaws.com/v1)')
+    parser.add_argument('--api-url', help='URL base da API (padrão: https://kv8riifhmh.execute-api.us-east-1.amazonaws.com/v1)')
     parser.add_argument('--api-key', help='Chave de API (padrão: agroamazonia_key_UPXsb8Hb8sjbxWBQqouzYnTL5w-V_dJx)')
     parser.add_argument('--xml-file', help='Caminho para arquivo XML (padrão: test_nfe.xml)')
     parser.add_argument('--start', action='store_true', help='Iniciar processamento após criar')
@@ -675,8 +679,8 @@ def main():
     
     args = parser.parse_args()
     
-    # Valores padrão de produção
-    default_api_url = 'https://l7ergug2q0.execute-api.us-east-1.amazonaws.com/v1'
+    # Valores padrão (dev environment)
+    default_api_url = 'https://kv8riifhmh.execute-api.us-east-1.amazonaws.com/v1'
     default_api_key = 'agroamazonia_key_UPXsb8Hb8sjbxWBQqouzYnTL5w-V_dJx'
     
     # Tentar carregar do arquivo .env se existir

@@ -3,10 +3,223 @@ import os
 import boto3
 import requests
 import base64
+import random
 from datetime import datetime
 
 dynamodb = boto3.resource('dynamodb')
 table = dynamodb.Table(os.environ['TABLE_NAME'])
+
+def get_ocr_failure_oauth2_token():
+    """
+    Obtém token de acesso OAuth2 para API de reporte de falhas OCR.
+    Retorna o access_token ou None em caso de erro.
+    """
+    auth_url = os.environ.get('OCR_FAILURE_AUTH_URL')
+    client_id = os.environ.get('OCR_FAILURE_CLIENT_ID')
+    client_secret = os.environ.get('OCR_FAILURE_CLIENT_SECRET')
+    username = os.environ.get('OCR_FAILURE_USERNAME')
+    password = os.environ.get('OCR_FAILURE_PASSWORD')
+    
+    if not all([auth_url, client_id, client_secret, username, password]):
+        print("WARNING: OCR_FAILURE OAuth2 credentials not fully configured")
+        return None
+    
+    try:
+        credentials = f"{client_id}:{client_secret}"
+        encoded_credentials = base64.b64encode(credentials.encode('utf-8')).decode('utf-8')
+        
+        headers = {
+            'Authorization': f'Basic {encoded_credentials}',
+            'Content-Type': 'application/x-www-form-urlencoded'
+        }
+        
+        data = {
+            'grant_type': 'password',
+            'username': username,
+            'password': password
+        }
+        
+        response = requests.post(auth_url, data=data, headers=headers, timeout=30)
+        response.raise_for_status()
+        
+        token_response = response.json()
+        access_token = token_response.get('access_token') or token_response.get('accessToken') or token_response.get('token')
+        
+        if access_token:
+            return access_token
+        else:
+            print("WARNING: No access_token in OCR_FAILURE OAuth2 response")
+            return None
+    except Exception as e:
+        print(f"WARNING: Failed to obtain OCR_FAILURE OAuth2 token: {str(e)}")
+        return None
+
+def report_protheus_failure_to_sctask(process_id, error_details):
+    """
+    Reporta falha do Protheus para a API do SCTASK (mesma API usada pelo report_ocr_failure).
+    
+    Args:
+        process_id: ID do processo
+        error_details: Dicionário com detalhes do erro, incluindo 'cause' se disponível
+    """
+    try:
+        api_url = os.environ.get('OCR_FAILURE_API_URL')
+        if not api_url:
+            print("WARNING: OCR_FAILURE_API_URL not configured, skipping SCTASK report")
+            return None
+        
+        # Gerar ID único numérico de 6 dígitos
+        id_unico = random.randint(100000, 999999)
+        
+        # Extrair causa do erro do Protheus
+        protheus_cause = error_details.get('cause', [])
+        if isinstance(protheus_cause, str):
+            protheus_cause = [protheus_cause]
+        elif not isinstance(protheus_cause, list):
+            protheus_cause = []
+        
+        # Construir texto explicativo do erro
+        texto_erros = []
+        texto_erros.append(f"Falha ao enviar para Protheus (HTTP {error_details.get('status_code', 'N/A')})")
+        
+        error_code = error_details.get('error_code', 'N/A')
+        error_msg = error_details.get('error_message', 'Sem mensagem')
+        texto_erros.append(f"\nCódigo de erro: {error_code}")
+        texto_erros.append(f"\nMensagem: {error_msg}")
+        
+        # Adicionar causa do Protheus se disponível
+        if protheus_cause:
+            texto_erros.append(f"\n\nCausa do erro (Protheus):")
+            for idx, causa_item in enumerate(protheus_cause, 1):
+                if isinstance(causa_item, str):
+                    texto_erros.append(f"\n{idx}. {causa_item}")
+                else:
+                    texto_erros.append(f"\n{idx}. {str(causa_item)}")
+        
+        # descricaoFalha: resumo simples
+        descricao_falha = f"Falha no envio para Protheus"
+        
+        # detalhes: texto completo explicativo
+        detalhes_texto = "\n".join(texto_erros)
+        
+        payload = {
+            "idUnico": id_unico,
+            "descricaoFalha": descricao_falha,
+            "traceAWS": process_id,
+            "detalhes": detalhes_texto  # Texto único, não array
+        }
+        
+        # Obter token OAuth2
+        access_token = get_ocr_failure_oauth2_token()
+        
+        # Preparar headers
+        headers = {
+            'Content-Type': 'application/json'
+        }
+        if access_token:
+            headers['Authorization'] = f'Bearer {access_token}'
+        
+        print(f"Reporting Protheus failure to SCTASK API: {api_url}")
+        print(f"Payload: {json.dumps(payload, ensure_ascii=False, indent=2)}")
+        print(f"Headers: {json.dumps({k: v for k, v in headers.items() if k != 'Authorization'}, indent=2)}")
+        print(f"Has Authorization token: {bool(access_token)}")
+        
+        try:
+            response = requests.post(api_url, json=payload, headers=headers, timeout=30)
+            
+            # Log detalhado da resposta
+            print(f"[SCTASK] Response Status Code: {response.status_code}")
+            print(f"[SCTASK] Response Headers: {dict(response.headers)}")
+            print(f"[SCTASK] Response Body (raw): {response.text}")
+            
+            # Tentar parsear JSON se possível
+            try:
+                api_response = response.json()
+                print(f"[SCTASK] Response Body (parsed): {json.dumps(api_response, ensure_ascii=False, indent=2)}")
+            except:
+                print(f"[SCTASK] Response não é JSON válido")
+            
+            # Verificar se houve erro HTTP
+            response.raise_for_status()
+            
+            # Se chegou aqui, a resposta foi bem-sucedida
+            api_response = response.json() if response.text else {}
+            
+            # Extrair SCTASK ID da resposta
+            # A API retorna: {"result": {"requisicao": "REQ1684015", ...}}
+            # Ou pode retornar: {"tarefa": "..."}
+            sctask_id = None
+            if 'result' in api_response and 'requisicao' in api_response['result']:
+                sctask_id = api_response['result']['requisicao']
+                print(f"[SCTASK] SCTASK ID extraído de result.requisicao: {sctask_id}")
+            elif 'tarefa' in api_response:
+                sctask_id = api_response['tarefa']
+                print(f"[SCTASK] SCTASK ID extraído de tarefa: {sctask_id}")
+            else:
+                print(f"[SCTASK] WARNING: Não foi possível extrair SCTASK ID da resposta")
+                print(f"[SCTASK] Estrutura da resposta: {list(api_response.keys())}")
+                if 'result' in api_response:
+                    print(f"[SCTASK] Estrutura de result: {list(api_response['result'].keys()) if isinstance(api_response['result'], dict) else 'N/A'}")
+            
+        except requests.exceptions.HTTPError as http_err:
+            print(f"[SCTASK] HTTP Error: {http_err}")
+            print(f"[SCTASK] Status Code: {http_err.response.status_code if http_err.response else 'N/A'}")
+            if http_err.response:
+                print(f"[SCTASK] Response Headers: {dict(http_err.response.headers)}")
+                print(f"[SCTASK] Response Body: {http_err.response.text}")
+            raise
+        except requests.exceptions.RequestException as req_err:
+            print(f"[SCTASK] Request Exception: {req_err}")
+            print(f"[SCTASK] Exception type: {type(req_err).__name__}")
+            raise
+        
+        # Atualizar DynamoDB com sctask_id
+        if sctask_id:
+            try:
+                table.update_item(
+                    Key={'PK': f'PROCESS#{process_id}', 'SK': 'METADATA'},
+                    UpdateExpression='SET sctask_id = :sctask, updated_at = :timestamp',
+                    ExpressionAttributeValues={
+                        ':sctask': sctask_id,
+                        ':timestamp': datetime.utcnow().isoformat()
+                    }
+                )
+                print(f"SCTASK ID {sctask_id} saved to DynamoDB")
+            except Exception as e:
+                print(f"WARNING: Failed to save SCTASK ID to DynamoDB: {str(e)}")
+        
+        return sctask_id
+    except requests.exceptions.HTTPError as http_err:
+        print(f"[SCTASK] HTTP Error ao reportar falha para SCTASK:")
+        print(f"  - Status Code: {http_err.response.status_code if http_err.response else 'N/A'}")
+        print(f"  - URL: {api_url}")
+        if http_err.response:
+            print(f"  - Response Headers: {dict(http_err.response.headers)}")
+            print(f"  - Response Body: {http_err.response.text}")
+            try:
+                error_json = http_err.response.json()
+                print(f"  - Response JSON: {json.dumps(error_json, ensure_ascii=False, indent=2)}")
+            except:
+                pass
+        import traceback
+        traceback.print_exc()
+        return None
+    except requests.exceptions.RequestException as req_err:
+        print(f"[SCTASK] Request Exception ao reportar falha para SCTASK:")
+        print(f"  - Exception type: {type(req_err).__name__}")
+        print(f"  - Exception message: {str(req_err)}")
+        print(f"  - URL: {api_url}")
+        import traceback
+        traceback.print_exc()
+        return None
+    except Exception as e:
+        print(f"[SCTASK] Unexpected error ao reportar falha para SCTASK:")
+        print(f"  - Exception type: {type(e).__name__}")
+        print(f"  - Exception message: {str(e)}")
+        print(f"  - URL: {api_url}")
+        import traceback
+        traceback.print_exc()
+        return None
 
 def map_tipo_documento(modelo):
     """
@@ -879,12 +1092,13 @@ def lambda_handler(event, context):
     for original_idx, produto_xml, pedido_de_compra, codigo_produto_rb in produtos_filtrados:
         idx = len(payload['itens']) + 1  # Índice sequencial no payload
         try:
-            # Usar dados do XML (quantidade, valor unitário)
+            # Usar dados do XML (quantidade, valor unitário, unidade_trib)
             # E código do produto e pedidoDeCompra do requestBody (já encontrado na filtragem)
             
-            # Extrair quantidade e valor unitário do XML
+            # Extrair quantidade, valor unitário e unidade_trib do XML
             quantidade = float(produto_xml.get('quantidade', 0))
             valor_unitario = float(produto_xml.get('valor_unitario', 0))
+            unidade_trib = produto_xml.get('unidade_trib', '').strip()
             
             # Usar código do produto do requestBody (já encontrado na filtragem)
             codigo_produto = codigo_produto_rb if codigo_produto_rb else None
@@ -969,6 +1183,10 @@ def lambda_handler(event, context):
                 "codigoOperacao": codigo_operacao,
                 "pedidoDeCompra": pedido_de_compra
             }
+            
+            # Adicionar unidade_trib se disponível no XML
+            if unidade_trib:
+                item["unidadeMedida"] = unidade_trib
             payload['itens'].append(item)
             print(f"[8.{idx}.10] ✅ Produto {idx} adicionado ao payload: código={codigo_produto}, qtd={quantidade}, valor={valor_unitario}, op={codigo_operacao}, pedido={pedido_de_compra.get('pedidoErp')}")
             
@@ -1023,6 +1241,12 @@ def lambda_handler(event, context):
                     "codigoOperacao": codigo_operacao,
                     "pedidoDeCompra": pedido_de_compra
                 }
+                
+                # Adicionar unidade_trib se disponível no XML
+                unidade_trib = produto.get('unidade_trib', '').strip()
+                if unidade_trib:
+                    item["unidadeMedida"] = unidade_trib
+                
                 payload['itens'].append(item)
                 print(f"[8.{idx}] Produto {idx} adicionado: {codigo}, qtd={item['quantidade']}, valor={item['valorUnitario']}, op={codigo_operacao}")
                 
@@ -1084,7 +1308,6 @@ def lambda_handler(event, context):
     
     # Enviar para Protheus
     api_url = os.environ.get('PROTHEUS_API_URL', 'https://api.agroamazonia.com/hom-ocr')
-    
 
     auth_url = os.environ.get('PROTHEUS_AUTH_URL', '')
 
@@ -1163,8 +1386,9 @@ def lambda_handler(event, context):
                 print(f"  {key}: {value}")
         print(f"{'-'*80}")
         
-        print(f"\n[9.7] Fazendo requisição POST para: {api_url}")
-        response = requests.post(api_url + '/documento-entrada', json=payload, headers=headers, timeout=30)
+        api_url_doc = api_url + '/documento-entrada'
+        print(f"\n[9.7] Fazendo requisição POST para: {api_url_doc}")
+        response = requests.post(api_url_doc, json=payload, headers=headers, timeout=30)
         
         print(f"\n{'='*80}")
         print(f"[10] RESPOSTA DA API PROTHEUS")
@@ -1232,6 +1456,18 @@ def lambda_handler(event, context):
             import traceback
             traceback.print_exc()
             
+            # Reportar falha para API do SCTASK
+            print(f"\n[10.7] Reportando falha do Protheus para API do SCTASK...")
+            try:
+                sctask_id = report_protheus_failure_to_sctask(process_id, error_details)
+                if sctask_id:
+                    print(f"[10.8] Falha reportada com sucesso. SCTASK ID: {sctask_id}")
+                else:
+                    print(f"[10.8] Falha ao reportar para SCTASK (mas continuando com o erro)")
+            except Exception as sctask_err:
+                print(f"[10.8] Erro ao reportar para SCTASK: {str(sctask_err)}")
+                # Não bloquear o fluxo de erro principal
+            
             # Criar exceção com detalhes completos, incluindo cause se for erro do Protheus
             # O cause será serializado no Cause do Step Functions e enviado no SNS
             error_with_details = Exception(error_message)
@@ -1286,6 +1522,18 @@ def lambda_handler(event, context):
         print(f"[10.5] Detalhes: {json.dumps(error_details, indent=2, default=str)}")
         import traceback
         traceback.print_exc()
+        
+        # Reportar falha para API do SCTASK
+        print(f"\n[10.7] Reportando falha do Protheus para API do SCTASK...")
+        try:
+            sctask_id = report_protheus_failure_to_sctask(process_id, error_details)
+            if sctask_id:
+                print(f"[10.8] Falha reportada com sucesso. SCTASK ID: {sctask_id}")
+            else:
+                print(f"[10.8] Falha ao reportar para SCTASK (mas continuando com o erro)")
+        except Exception as sctask_err:
+            print(f"[10.8] Erro ao reportar para SCTASK: {str(sctask_err)}")
+            # Não bloquear o fluxo de erro principal
         
         # Criar exceção com detalhes completos, incluindo cause se for erro do Protheus
         # O cause já está em error_details, será serializado no Cause do Step Functions
