@@ -3,10 +3,157 @@ import os
 import boto3
 import requests
 import base64
+import random
 from datetime import datetime
 
 dynamodb = boto3.resource('dynamodb')
 table = dynamodb.Table(os.environ['TABLE_NAME'])
+
+def get_ocr_failure_oauth2_token():
+    """
+    Obtém token de acesso OAuth2 para API de reporte de falhas OCR.
+    Retorna o access_token ou None em caso de erro.
+    """
+    auth_url = os.environ.get('OCR_FAILURE_AUTH_URL')
+    client_id = os.environ.get('OCR_FAILURE_CLIENT_ID')
+    client_secret = os.environ.get('OCR_FAILURE_CLIENT_SECRET')
+    username = os.environ.get('OCR_FAILURE_USERNAME')
+    password = os.environ.get('OCR_FAILURE_PASSWORD')
+    
+    if not all([auth_url, client_id, client_secret, username, password]):
+        print("WARNING: OCR_FAILURE OAuth2 credentials not fully configured")
+        return None
+    
+    try:
+        credentials = f"{client_id}:{client_secret}"
+        encoded_credentials = base64.b64encode(credentials.encode('utf-8')).decode('utf-8')
+        
+        headers = {
+            'Authorization': f'Basic {encoded_credentials}',
+            'Content-Type': 'application/x-www-form-urlencoded'
+        }
+        
+        data = {
+            'grant_type': 'password',
+            'username': username,
+            'password': password
+        }
+        
+        response = requests.post(auth_url, data=data, headers=headers, timeout=30)
+        response.raise_for_status()
+        
+        token_response = response.json()
+        access_token = token_response.get('access_token') or token_response.get('accessToken') or token_response.get('token')
+        
+        if access_token:
+            return access_token
+        else:
+            print("WARNING: No access_token in OCR_FAILURE OAuth2 response")
+            return None
+    except Exception as e:
+        print(f"WARNING: Failed to obtain OCR_FAILURE OAuth2 token: {str(e)}")
+        return None
+
+def report_protheus_failure_to_sctask(process_id, error_details):
+    """
+    Reporta falha do Protheus para a API do SCTASK (mesma API usada pelo report_ocr_failure).
+    
+    Args:
+        process_id: ID do processo
+        error_details: Dicionário com detalhes do erro, incluindo 'cause' se disponível
+    """
+    try:
+        api_url = os.environ.get('OCR_FAILURE_API_URL')
+        if not api_url:
+            print("WARNING: OCR_FAILURE_API_URL not configured, skipping SCTASK report")
+            return None
+        
+        # Gerar ID único numérico de 6 dígitos
+        id_unico = random.randint(100000, 999999)
+        
+        # Extrair causa do erro do Protheus
+        protheus_cause = error_details.get('cause', [])
+        if isinstance(protheus_cause, str):
+            protheus_cause = [protheus_cause]
+        elif not isinstance(protheus_cause, list):
+            protheus_cause = []
+        
+        # Construir texto explicativo do erro
+        texto_erros = []
+        texto_erros.append(f"Falha ao enviar para Protheus (HTTP {error_details.get('status_code', 'N/A')})")
+        
+        error_code = error_details.get('error_code', 'N/A')
+        error_msg = error_details.get('error_message', 'Sem mensagem')
+        texto_erros.append(f"\nCódigo de erro: {error_code}")
+        texto_erros.append(f"\nMensagem: {error_msg}")
+        
+        # Adicionar causa do Protheus se disponível
+        if protheus_cause:
+            texto_erros.append(f"\n\nCausa do erro (Protheus):")
+            for idx, causa_item in enumerate(protheus_cause, 1):
+                if isinstance(causa_item, str):
+                    texto_erros.append(f"\n{idx}. {causa_item}")
+                else:
+                    texto_erros.append(f"\n{idx}. {str(causa_item)}")
+        
+        descricao_falha = ''.join(texto_erros)
+        
+        # Preparar detalhes no formato esperado pela API
+        detalhes = []
+        detalhes.append({
+            "pagina": 1,
+            "campo": "Erro ao enviar para Protheus",
+            "mensagemErro": descricao_falha
+        })
+        
+        payload = {
+            "idUnico": id_unico,
+            "descricaoFalha": descricao_falha,
+            "traceAWS": process_id,
+            "detalhes": detalhes
+        }
+        
+        # Obter token OAuth2
+        access_token = get_ocr_failure_oauth2_token()
+        
+        # Preparar headers
+        headers = {
+            'Content-Type': 'application/json'
+        }
+        if access_token:
+            headers['Authorization'] = f'Bearer {access_token}'
+        
+        print(f"Reporting Protheus failure to SCTASK API: {api_url}")
+        print(f"Payload: {json.dumps(payload, ensure_ascii=False, indent=2)}")
+        
+        response = requests.post(api_url, json=payload, headers=headers, timeout=30)
+        response.raise_for_status()
+        
+        api_response = response.json()
+        sctask_id = api_response.get('tarefa')
+        print(f"SCTASK ID from API: {sctask_id}")
+        
+        # Atualizar DynamoDB com sctask_id
+        if sctask_id:
+            try:
+                table.update_item(
+                    Key={'PK': f'PROCESS#{process_id}', 'SK': 'METADATA'},
+                    UpdateExpression='SET sctask_id = :sctask, updated_at = :timestamp',
+                    ExpressionAttributeValues={
+                        ':sctask': sctask_id,
+                        ':timestamp': datetime.utcnow().isoformat()
+                    }
+                )
+                print(f"SCTASK ID {sctask_id} saved to DynamoDB")
+            except Exception as e:
+                print(f"WARNING: Failed to save SCTASK ID to DynamoDB: {str(e)}")
+        
+        return sctask_id
+    except Exception as e:
+        print(f"WARNING: Failed to report Protheus failure to SCTASK API: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return None
 
 def map_tipo_documento(modelo):
     """
@@ -1175,8 +1322,9 @@ def lambda_handler(event, context):
                 print(f"  {key}: {value}")
         print(f"{'-'*80}")
         
-        print(f"\n[9.7] Fazendo requisição POST para: {api_url}")
-        response = requests.post(api_url + '/documento-entrada', json=payload, headers=headers, timeout=30)
+        api_url_doc = api_url + '/documento-entrada'
+        print(f"\n[9.7] Fazendo requisição POST para: {api_url_doc}")
+        response = requests.post(api_url_doc + '/documento-entrada', json=payload, headers=headers, timeout=30)
         
         print(f"\n{'='*80}")
         print(f"[10] RESPOSTA DA API PROTHEUS")
@@ -1244,6 +1392,18 @@ def lambda_handler(event, context):
             import traceback
             traceback.print_exc()
             
+            # Reportar falha para API do SCTASK
+            print(f"\n[10.7] Reportando falha do Protheus para API do SCTASK...")
+            try:
+                sctask_id = report_protheus_failure_to_sctask(process_id, error_details)
+                if sctask_id:
+                    print(f"[10.8] Falha reportada com sucesso. SCTASK ID: {sctask_id}")
+                else:
+                    print(f"[10.8] Falha ao reportar para SCTASK (mas continuando com o erro)")
+            except Exception as sctask_err:
+                print(f"[10.8] Erro ao reportar para SCTASK: {str(sctask_err)}")
+                # Não bloquear o fluxo de erro principal
+            
             # Criar exceção com detalhes completos, incluindo cause se for erro do Protheus
             # O cause será serializado no Cause do Step Functions e enviado no SNS
             error_with_details = Exception(error_message)
@@ -1298,6 +1458,18 @@ def lambda_handler(event, context):
         print(f"[10.5] Detalhes: {json.dumps(error_details, indent=2, default=str)}")
         import traceback
         traceback.print_exc()
+        
+        # Reportar falha para API do SCTASK
+        print(f"\n[10.7] Reportando falha do Protheus para API do SCTASK...")
+        try:
+            sctask_id = report_protheus_failure_to_sctask(process_id, error_details)
+            if sctask_id:
+                print(f"[10.8] Falha reportada com sucesso. SCTASK ID: {sctask_id}")
+            else:
+                print(f"[10.8] Falha ao reportar para SCTASK (mas continuando com o erro)")
+        except Exception as sctask_err:
+            print(f"[10.8] Erro ao reportar para SCTASK: {str(sctask_err)}")
+            # Não bloquear o fluxo de erro principal
         
         # Criar exceção com detalhes completos, incluindo cause se for erro do Protheus
         # O cause já está em error_details, será serializado no Cause do Step Functions

@@ -1,0 +1,982 @@
+{
+  "_type": "export",
+  "__export_format": 4,
+  "__export_date": "2026-01-21T14:00:00.000Z",
+  "__export_source": "insomnia.desktop.app:v2023.5.8",
+  "resources": [
+    {
+      "_id": "wrk_agroamazonia",
+      "_type": "workspace",
+      "parentId": null,
+      "name": "AgroAmazonia API",
+      "description": "API AgroAmazonia - Todas as rotas",
+      "scope": "collection"
+    },
+    {
+      "_id": "env_base",
+      "_type": "environment",
+      "parentId": "wrk_agroamazonia",
+      "name": "Base Environment",
+      "data": {
+        "base_url": "https://kv8riifhmh.execute-api.us-east-1.amazonaws.com/v1",
+        "api_key": "agroamazonia_key_UPXsb8Hb8sjbxWBQqouzYnTL5w-V_dJx",
+        "process_id": "7d48cd96-c099-48dd-bbb6-d4fe8b2de318"
+      },
+      "color": null,
+      "isPrivate": false,
+      "metaSortKey": 1000000000000
+    },
+    {
+      "_id": "fld_process",
+      "_type": "request_group",
+      "parentId": "wrk_agroamazonia",
+      "name": "Process",
+      "description": "Endpoints para gerenciamento de processos",
+      "environment": {},
+      "environmentPropertyOrder": null,
+      "metaSortKey": 1000000000000
+    },
+    {
+      "_id": "req_presigned_xml",
+      "_type": "request",
+      "parentId": "fld_process",
+      "name": "1. Obter Presigned URL - XML (DANFE)",
+      "url": "{{ base_url }}/api/process/presigned-url/xml",
+      "description": "Gera URL para upload do XML da DANFE",
+      "method": "POST",
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"process_id\": \"{{ process_id }}\",\n  \"file_name\": \"51251013563680006304550010000026551833379679.XML\",\n  \"file_type\": \"application/xml\",\n  \"metadados\": {\n    \"moeda\": \"BRL\",\n    \"pedidoFornecedor\": \"369763\",\n    \"pedidoErp\": \"023037\"\n  }\n}"
+      },
+      "parameters": [],
+      "headers": [
+        {
+          "name": "Content-Type",
+          "value": "application/json"
+        },
+        {
+          "name": "x-api-key",
+          "value": "{{ api_key }}"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": 1000000000000,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global"
+    },
+    {
+      "_id": "req_presigned_docs",
+      "_type": "request",
+      "parentId": "fld_process",
+      "name": "2. Obter Presigned URL - Documentos Adicionais",
+      "url": "{{ base_url }}/api/process/presigned-url/docs",
+      "description": "Gera URL para upload de documento adicional",
+      "method": "POST",
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"process_id\": \"{{ process_id }}\",\n  \"file_name\": \"pedido_compra.pdf\",\n  \"file_type\": \"application/pdf\",\n  \"metadados\": {\n    \"tipo_documento\": \"pedido_compra\",\n    \"fornecedor\": \"Empresa XYZ\",\n    \"valor_total\": 15000.50\n  }\n}"
+      },
+      "parameters": [],
+      "headers": [
+        {
+          "name": "Content-Type",
+          "value": "application/json"
+        },
+        {
+          "name": "x-api-key",
+          "value": "{{ api_key }}"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": 2000000000000,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global"
+    },
+    {
+      "_id": "req_metadados_pedido",
+      "_type": "request",
+      "parentId": "fld_process",
+      "name": "3. Vincular Metadados do Pedido de Compra",
+      "url": "{{ base_url }}/api/process/metadados/pedido",
+      "description": "Vincula metadados do pedido de compra ao processo (sem arquivo físico)",
+      "method": "POST",
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"process_id\": \"{{ process_id }}\",\n  \"metadados\": {\n    \"header\": {\n      \"tenantId\": \"123\"\n    },\n    \"requestBody\": {\n      \"cnpjEmitente\": \"02290510001652\",\n      \"cnpjDestinatario\": \"13563680000101\",\n      \"itens\": [\n        {\n          \"codigoProduto\": \"41500001BD00205\",\n          \"quantidade\": 1,\n          \"valorUnitario\": 880,\n          \"codigoOperacao\": \"1B\",\n          \"pedidoDeCompra\": {\n            \"pedidoErp\": \"AAAAYX\",\n            \"itemPedidoErp\": \"0004\"\n          }\n        }\n      ],\n      \"duplicatas\": [\n        {\n          \"vencimento\": \"2026-01-30\",\n          \"valor\": 440\n        },\n        {\n          \"vencimento\": \"2026-02-28\",\n          \"valor\": 440\n        }\n      ]\n    }\n  }\n}"
+      },
+      "parameters": [],
+      "headers": [
+        {
+          "name": "Content-Type",
+          "value": "application/json"
+        },
+        {
+          "name": "x-api-key",
+          "value": "{{ api_key }}"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": 3000000000000,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global"
+    },
+    {
+      "_id": "req_start_process",
+      "_type": "request",
+      "parentId": "fld_process",
+      "name": "4. Iniciar Processamento",
+      "url": "{{ base_url }}/api/process/start",
+      "description": "Inicia processamento via Step Functions",
+      "method": "POST",
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"process_id\": \"{{ process_id }}\"\n}"
+      },
+      "parameters": [],
+      "headers": [
+        {
+          "name": "Content-Type",
+          "value": "application/json"
+        },
+        {
+          "name": "x-api-key",
+          "value": "{{ api_key }}"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": 4000000000000,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global"
+    },
+    {
+      "_id": "req_get_process",
+      "_type": "request",
+      "parentId": "fld_process",
+      "name": "5. Buscar Processo",
+      "url": "{{ base_url }}/api/process/{{ process_id }}",
+      "description": "Busca detalhes do processo",
+      "method": "GET",
+      "body": {},
+      "parameters": [],
+      "headers": [
+        {
+          "name": "x-api-key",
+          "value": "{{ api_key }}"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": 5000000000000,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global"
+    },
+    {
+      "_id": "req_list_processes",
+      "_type": "request",
+      "parentId": "fld_process",
+      "name": "6. Listar Processos",
+      "url": "{{ base_url }}/api/process/",
+      "description": "Lista todos os processos",
+      "method": "GET",
+      "body": {},
+      "parameters": [],
+      "headers": [
+        {
+          "name": "x-api-key",
+          "value": "{{ api_key }}"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": 6000000000000,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global"
+    },
+    {
+      "_id": "req_download_file",
+      "_type": "request",
+      "parentId": "fld_process",
+      "name": "7. Download de Arquivo",
+      "url": "{{ base_url }}/api/process/download",
+      "description": "Gera URL de download para arquivo",
+      "method": "POST",
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"file_key\": \"processes/{{ process_id }}/danfe/nota_fiscal.xml\"\n}"
+      },
+      "parameters": [],
+      "headers": [
+        {
+          "name": "Content-Type",
+          "value": "application/json"
+        },
+        {
+          "name": "x-api-key",
+          "value": "{{ api_key }}"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": 7000000000000,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global"
+    },
+    {
+      "_id": "req_get_validations",
+      "_type": "request",
+      "parentId": "fld_process",
+      "name": "8. Buscar Validações",
+      "url": "{{ base_url }}/api/process/{{ process_id }}/validations",
+      "description": "Retorna resultados das validações",
+      "method": "GET",
+      "body": {},
+      "parameters": [],
+      "headers": [
+        {
+          "name": "x-api-key",
+          "value": "{{ api_key }}"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": 8000000000000,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global"
+    },
+    {
+      "_id": "req_update_file_metadata",
+      "_type": "request",
+      "parentId": "fld_process",
+      "name": "9. Atualizar Metadados de Arquivo",
+      "url": "{{ base_url }}/api/process/file/metadata",
+      "description": "Atualiza metadados JSON de um arquivo",
+      "method": "PUT",
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"process_id\": \"{{ process_id }}\",\n  \"file_name\": \"pedido_compra.pdf\",\n  \"metadados\": {\n    \"tipo_documento\": \"pedido_compra\",\n    \"fornecedor\": \"Empresa XYZ\",\n    \"valor_total\": 15000.50\n  }\n}"
+      },
+      "parameters": [],
+      "headers": [
+        {
+          "name": "Content-Type",
+          "value": "application/json"
+        },
+        {
+          "name": "x-api-key",
+          "value": "{{ api_key }}"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": 9000000000000,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global"
+    },
+    {
+      "_id": "fld_rules",
+      "_type": "request_group",
+      "parentId": "wrk_agroamazonia",
+      "name": "Rules",
+      "description": "Endpoints para gerenciamento de regras de validação",
+      "environment": {},
+      "environmentPropertyOrder": null,
+      "metaSortKey": 2000000000000
+    },
+    {
+      "_id": "req_list_available_rules",
+      "_type": "request",
+      "parentId": "fld_rules",
+      "name": "1. Listar Regras Disponíveis",
+      "url": "{{ base_url }}/api/rules/available",
+      "description": "Lista todas as regras disponíveis com descrições",
+      "method": "GET",
+      "body": {},
+      "parameters": [],
+      "headers": [
+        {
+          "name": "x-api-key",
+          "value": "{{ api_key }}"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": 1000000000000,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global"
+    },
+    {
+      "_id": "req_list_rules",
+      "_type": "request",
+      "parentId": "fld_rules",
+      "name": "2. Listar Regras por Tipo",
+      "url": "{{ base_url }}/api/rules/{{ process_type }}",
+      "description": "Lista regras de um tipo de processo",
+      "method": "GET",
+      "body": {},
+      "parameters": [
+        {
+          "name": "process_type",
+          "value": "AGROQUIMICOS",
+          "description": "Tipo de processo (AGROQUIMICOS, SEMENTES, FERTILIZANTES)"
+        }
+      ],
+      "headers": [
+        {
+          "name": "x-api-key",
+          "value": "{{ api_key }}"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": 2000000000000,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global"
+    },
+    {
+      "_id": "req_create_rule",
+      "_type": "request",
+      "parentId": "fld_rules",
+      "name": "3. Criar Regra",
+      "url": "{{ base_url }}/api/rules/",
+      "description": "Cria nova regra de validação",
+      "method": "POST",
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"process_type\": \"AGROQUIMICOS\",\n  \"rule_name\": \"validar_cnpj_fornecedor\",\n  \"order\": 1,\n  \"enabled\": true\n}"
+      },
+      "parameters": [],
+      "headers": [
+        {
+          "name": "Content-Type",
+          "value": "application/json"
+        },
+        {
+          "name": "x-api-key",
+          "value": "{{ api_key }}"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": 3000000000000,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global"
+    },
+    {
+      "_id": "req_update_rule",
+      "_type": "request",
+      "parentId": "fld_rules",
+      "name": "4. Atualizar Regra",
+      "url": "{{ base_url }}/api/rules/{{ process_type }}/{{ rule_name }}",
+      "description": "Atualiza regra existente",
+      "method": "PUT",
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"order\": 2,\n  \"enabled\": false\n}"
+      },
+      "parameters": [
+        {
+          "name": "process_type",
+          "value": "AGROQUIMICOS",
+          "description": "Tipo de processo"
+        },
+        {
+          "name": "rule_name",
+          "value": "validar_cnpj_fornecedor",
+          "description": "Nome da regra"
+        }
+      ],
+      "headers": [
+        {
+          "name": "Content-Type",
+          "value": "application/json"
+        },
+        {
+          "name": "x-api-key",
+          "value": "{{ api_key }}"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": 4000000000000,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global"
+    },
+    {
+      "_id": "req_delete_rule",
+      "_type": "request",
+      "parentId": "fld_rules",
+      "name": "5. Remover Regra",
+      "url": "{{ base_url }}/api/rules/{{ process_type }}/{{ rule_name }}",
+      "description": "Remove regra",
+      "method": "DELETE",
+      "body": {},
+      "parameters": [
+        {
+          "name": "process_type",
+          "value": "AGROQUIMICOS",
+          "description": "Tipo de processo"
+        },
+        {
+          "name": "rule_name",
+          "value": "validar_cnpj_fornecedor",
+          "description": "Nome da regra"
+        }
+      ],
+      "headers": [
+        {
+          "name": "x-api-key",
+          "value": "{{ api_key }}"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": 5000000000000,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global"
+    },
+    {
+      "_id": "req_list_all_process_types",
+      "_type": "request",
+      "parentId": "fld_rules",
+      "name": "6. Listar Todos os Tipos",
+      "url": "{{ base_url }}/api/rules/process-types/all",
+      "description": "Lista todos os tipos de processo e suas regras",
+      "method": "GET",
+      "body": {},
+      "parameters": [],
+      "headers": [
+        {
+          "name": "x-api-key",
+          "value": "{{ api_key }}"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": 6000000000000,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global"
+    },
+    {
+      "_id": "fld_cfop",
+      "_type": "request_group",
+      "parentId": "wrk_agroamazonia",
+      "name": "CFOP Operation",
+      "description": "Endpoints para gerenciamento de regras Chave x CFOP",
+      "environment": {},
+      "environmentPropertyOrder": null,
+      "metaSortKey": 3000000000000
+    },
+    {
+      "_id": "req_cfop_list_all",
+      "_type": "request",
+      "parentId": "fld_cfop",
+      "name": "1. Listar Todas as Regras CFOP",
+      "url": "{{ base_url }}/api/cfop-operation/",
+      "description": "Lista todas as regras Chave x CFOP",
+      "method": "GET",
+      "body": {},
+      "parameters": [],
+      "headers": [
+        {
+          "name": "x-api-key",
+          "value": "{{ api_key }}"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": 1000000000000,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global"
+    },
+    {
+      "_id": "req_cfop_get_by_cfop",
+      "_type": "request",
+      "parentId": "fld_cfop",
+      "name": "2. Buscar por CFOP",
+      "url": "{{ base_url }}/api/cfop-operation/{{ cfop }}",
+      "description": "Busca operação por CFOP",
+      "method": "GET",
+      "body": {},
+      "parameters": [
+        {
+          "name": "cfop",
+          "value": "6102",
+          "description": "Código CFOP (ex: 6102, 5101)"
+        }
+      ],
+      "headers": [
+        {
+          "name": "x-api-key",
+          "value": "{{ api_key }}"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": 2000000000000,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global"
+    },
+    {
+      "_id": "req_cfop_create",
+      "_type": "request",
+      "parentId": "fld_cfop",
+      "name": "3. Criar Regra CFOP",
+      "url": "{{ base_url }}/api/cfop-operation/",
+      "description": "Cria nova regra Chave x CFOP",
+      "method": "POST",
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"chave\": \"1B\",\n  \"descricao\": \"E-096-COMPRA P/ COMERCIALIZACAO - VENDA ORDEM\",\n  \"cfop\": \"6102 5102\",\n  \"operacao\": \"1B\",\n  \"regra\": \"Regra de negócio específica\",\n  \"observacao\": \"Não atualiza Estoque\",\n  \"pedido_compra\": false,\n  \"ativo\": true\n}"
+      },
+      "parameters": [],
+      "headers": [
+        {
+          "name": "Content-Type",
+          "value": "application/json"
+        },
+        {
+          "name": "x-api-key",
+          "value": "{{ api_key }}"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": 3000000000000,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global"
+    },
+    {
+      "_id": "req_cfop_update",
+      "_type": "request",
+      "parentId": "fld_cfop",
+      "name": "4. Atualizar Regra CFOP",
+      "url": "{{ base_url }}/api/cfop-operation/{{ mapping_id }}",
+      "description": "Atualiza regra existente",
+      "method": "PUT",
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"chave\": \"1B\",\n  \"descricao\": \"Descrição atualizada\",\n  \"cfop\": \"6102 5102 5103\",\n  \"operacao\": \"1B\",\n  \"regra\": \"Regra atualizada\",\n  \"observacao\": \"Observação atualizada\",\n  \"pedido_compra\": true,\n  \"ativo\": true\n}"
+      },
+      "parameters": [
+        {
+          "name": "mapping_id",
+          "value": "mapping-123",
+          "description": "ID do mapeamento"
+        }
+      ],
+      "headers": [
+        {
+          "name": "Content-Type",
+          "value": "application/json"
+        },
+        {
+          "name": "x-api-key",
+          "value": "{{ api_key }}"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": 4000000000000,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global"
+    },
+    {
+      "_id": "req_cfop_delete",
+      "_type": "request",
+      "parentId": "fld_cfop",
+      "name": "5. Remover Regra CFOP",
+      "url": "{{ base_url }}/api/cfop-operation/{{ mapping_id }}",
+      "description": "Remove regra",
+      "method": "DELETE",
+      "body": {},
+      "parameters": [
+        {
+          "name": "mapping_id",
+          "value": "mapping-123",
+          "description": "ID do mapeamento"
+        }
+      ],
+      "headers": [
+        {
+          "name": "x-api-key",
+          "value": "{{ api_key }}"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": 5000000000000,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global"
+    },
+    {
+      "_id": "fld_dashboard",
+      "_type": "request_group",
+      "parentId": "wrk_agroamazonia",
+      "name": "Dashboard",
+      "description": "Endpoints para métricas e dashboard",
+      "environment": {},
+      "environmentPropertyOrder": null,
+      "metaSortKey": 4000000000000
+    },
+    {
+      "_id": "req_dashboard_metrics",
+      "_type": "request",
+      "parentId": "fld_dashboard",
+      "name": "1. Métricas Dashboard",
+      "url": "{{ base_url }}/api/dashboard/metrics?start_date={{ start_date }}&end_date={{ end_date }}",
+      "description": "Retorna métricas agregadas. Se start_date e end_date forem fornecidos, retorna métricas do período.",
+      "method": "GET",
+      "body": {},
+      "parameters": [
+        {
+          "name": "start_date",
+          "value": "2026-01-01",
+          "description": "Data inicial (YYYY-MM-DD) - Opcional"
+        },
+        {
+          "name": "end_date",
+          "value": "2026-01-31",
+          "description": "Data final (YYYY-MM-DD) - Opcional"
+        }
+      ],
+      "headers": [
+        {
+          "name": "x-api-key",
+          "value": "{{ api_key }}"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": 1000000000000,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global"
+    },
+    {
+      "_id": "req_dashboard_metrics_date",
+      "_type": "request",
+      "parentId": "fld_dashboard",
+      "name": "2. Métricas por Data",
+      "url": "{{ base_url }}/api/dashboard/metrics/{{ date }}",
+      "description": "Retorna métricas de uma data específica (formato: YYYY-MM-DD)",
+      "method": "GET",
+      "body": {},
+      "parameters": [
+        {
+          "name": "date",
+          "value": "2026-01-21",
+          "description": "Data no formato YYYY-MM-DD"
+        }
+      ],
+      "headers": [
+        {
+          "name": "x-api-key",
+          "value": "{{ api_key }}"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": 2000000000000,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global"
+    },
+    {
+      "_id": "fld_documents_legacy",
+      "_type": "request_group",
+      "parentId": "wrk_agroamazonia",
+      "name": "Documents (Legacy)",
+      "description": "Endpoints legados para documentos",
+      "environment": {},
+      "environmentPropertyOrder": null,
+      "metaSortKey": 5000000000000
+    },
+    {
+      "_id": "req_list_documents",
+      "_type": "request",
+      "parentId": "fld_documents_legacy",
+      "name": "1. Listar Documentos (Legacy)",
+      "url": "{{ base_url }}/api/v1/documents",
+      "description": "Lista todos os documentos (Legacy)",
+      "method": "GET",
+      "body": {},
+      "parameters": [],
+      "headers": [
+        {
+          "name": "x-api-key",
+          "value": "{{ api_key }}"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": 1000000000000,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global"
+    },
+    {
+      "_id": "req_submit_document",
+      "_type": "request",
+      "parentId": "fld_documents_legacy",
+      "name": "2. Submeter Documento (Legacy)",
+      "url": "{{ base_url }}/api/v1/document/submit",
+      "description": "Submete documento para processamento (Método Legacy)",
+      "method": "POST",
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"document_id\": \"doc-123\",\n  \"document_type\": \"PRE_NOTE\",\n  \"process_type\": \"AGROQUIMICOS\",\n  \"s3_path\": \"s3://bucket/pre-notas/doc-123/document.pdf\"\n}"
+      },
+      "parameters": [],
+      "headers": [
+        {
+          "name": "Content-Type",
+          "value": "application/json"
+        },
+        {
+          "name": "x-api-key",
+          "value": "{{ api_key }}"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": 2000000000000,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global"
+    },
+    {
+      "_id": "req_get_document",
+      "_type": "request",
+      "parentId": "fld_documents_legacy",
+      "name": "3. Buscar Documento (Legacy)",
+      "url": "{{ base_url }}/api/v1/document/{{ document_id }}",
+      "description": "Busca dados de um documento",
+      "method": "GET",
+      "body": {},
+      "parameters": [
+        {
+          "name": "document_id",
+          "value": "doc-123",
+          "description": "ID do documento"
+        }
+      ],
+      "headers": [
+        {
+          "name": "x-api-key",
+          "value": "{{ api_key }}"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": 3000000000000,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global"
+    },
+    {
+      "_id": "req_get_pre_note",
+      "_type": "request",
+      "parentId": "fld_documents_legacy",
+      "name": "4. Buscar Pré-Nota (Legacy)",
+      "url": "{{ base_url }}/api/v1/document/{{ document_id }}/pre-note",
+      "description": "Busca dados da pré-nota",
+      "method": "GET",
+      "body": {},
+      "parameters": [
+        {
+          "name": "document_id",
+          "value": "doc-123",
+          "description": "ID do documento"
+        }
+      ],
+      "headers": [
+        {
+          "name": "x-api-key",
+          "value": "{{ api_key }}"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": 4000000000000,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global"
+    },
+    {
+      "_id": "req_get_process_rules",
+      "_type": "request",
+      "parentId": "fld_documents_legacy",
+      "name": "5. Buscar Regras (Legacy)",
+      "url": "{{ base_url }}/api/v1/document/rules/{{ process_type }}",
+      "description": "Retorna regras configuradas para um tipo de processo",
+      "method": "GET",
+      "body": {},
+      "parameters": [
+        {
+          "name": "process_type",
+          "value": "AGROQUIMICOS",
+          "description": "Tipo de processo"
+        }
+      ],
+      "headers": [
+        {
+          "name": "x-api-key",
+          "value": "{{ api_key }}"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": 5000000000000,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global"
+    },
+    {
+      "_id": "req_health",
+      "_type": "request",
+      "parentId": "wrk_agroamazonia",
+      "name": "Health Check",
+      "url": "{{ base_url }}/health",
+      "description": "Status da API",
+      "method": "GET",
+      "body": {},
+      "parameters": [],
+      "headers": [],
+      "authentication": {},
+      "metaSortKey": 6000000000000,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global"
+    },
+    {
+      "_id": "req_root",
+      "_type": "request",
+      "parentId": "wrk_agroamazonia",
+      "name": "Root",
+      "url": "{{ base_url }}/",
+      "description": "Informações da API",
+      "method": "GET",
+      "body": {},
+      "parameters": [],
+      "headers": [],
+      "authentication": {},
+      "metaSortKey": 7000000000000,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global"
+    }
+  ]
+}

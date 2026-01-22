@@ -667,7 +667,7 @@ def test_create_process(api_url: str, api_key: str, xml_file: str = None, start_
 
 def main():
     parser = argparse.ArgumentParser(description='Cria um processo de teste com documentos')
-    parser.add_argument('--api-url', help='URL base da API (padrão: https://l7ergug2q0.execute-api.us-east-1.amazonaws.com/v1)')
+    parser.add_argument('--api-url', help='URL base da API (padrão: https://kv8riifhmh.execute-api.us-east-1.amazonaws.com/v1)')
     parser.add_argument('--api-key', help='Chave de API (padrão: agroamazonia_key_UPXsb8Hb8sjbxWBQqouzYnTL5w-V_dJx)')
     parser.add_argument('--xml-file', help='Caminho para arquivo XML (padrão: test_nfe.xml)')
     parser.add_argument('--start', action='store_true', help='Iniciar processamento após criar')
@@ -675,8 +675,8 @@ def main():
     
     args = parser.parse_args()
     
-    # Valores padrão de produção
-    default_api_url = 'https://l7ergug2q0.execute-api.us-east-1.amazonaws.com/v1'
+    # Valores padrão (dev environment)
+    default_api_url = 'https://kv8riifhmh.execute-api.us-east-1.amazonaws.com/v1'
     default_api_key = 'agroamazonia_key_UPXsb8Hb8sjbxWBQqouzYnTL5w-V_dJx'
     
     # Tentar carregar do arquivo .env se existir
