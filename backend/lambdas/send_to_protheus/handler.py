@@ -96,21 +96,17 @@ def report_protheus_failure_to_sctask(process_id, error_details):
                 else:
                     texto_erros.append(f"\n{idx}. {str(causa_item)}")
         
-        descricao_falha = ''.join(texto_erros)
+        # descricaoFalha: resumo simples
+        descricao_falha = f"Falha no envio para Protheus"
         
-        # Preparar detalhes no formato esperado pela API
-        detalhes = []
-        detalhes.append({
-            "pagina": 1,
-            "campo": "Erro ao enviar para Protheus",
-            "mensagemErro": descricao_falha
-        })
+        # detalhes: texto completo explicativo
+        detalhes_texto = "\n".join(texto_erros)
         
         payload = {
             "idUnico": id_unico,
             "descricaoFalha": descricao_falha,
             "traceAWS": process_id,
-            "detalhes": detalhes
+            "detalhes": detalhes_texto  # Texto único, não array
         }
         
         # Obter token OAuth2
@@ -125,13 +121,57 @@ def report_protheus_failure_to_sctask(process_id, error_details):
         
         print(f"Reporting Protheus failure to SCTASK API: {api_url}")
         print(f"Payload: {json.dumps(payload, ensure_ascii=False, indent=2)}")
+        print(f"Headers: {json.dumps({k: v for k, v in headers.items() if k != 'Authorization'}, indent=2)}")
+        print(f"Has Authorization token: {bool(access_token)}")
         
-        response = requests.post(api_url, json=payload, headers=headers, timeout=30)
-        response.raise_for_status()
-        
-        api_response = response.json()
-        sctask_id = api_response.get('tarefa')
-        print(f"SCTASK ID from API: {sctask_id}")
+        try:
+            response = requests.post(api_url, json=payload, headers=headers, timeout=30)
+            
+            # Log detalhado da resposta
+            print(f"[SCTASK] Response Status Code: {response.status_code}")
+            print(f"[SCTASK] Response Headers: {dict(response.headers)}")
+            print(f"[SCTASK] Response Body (raw): {response.text}")
+            
+            # Tentar parsear JSON se possível
+            try:
+                api_response = response.json()
+                print(f"[SCTASK] Response Body (parsed): {json.dumps(api_response, ensure_ascii=False, indent=2)}")
+            except:
+                print(f"[SCTASK] Response não é JSON válido")
+            
+            # Verificar se houve erro HTTP
+            response.raise_for_status()
+            
+            # Se chegou aqui, a resposta foi bem-sucedida
+            api_response = response.json() if response.text else {}
+            
+            # Extrair SCTASK ID da resposta
+            # A API retorna: {"result": {"requisicao": "REQ1684015", ...}}
+            # Ou pode retornar: {"tarefa": "..."}
+            sctask_id = None
+            if 'result' in api_response and 'requisicao' in api_response['result']:
+                sctask_id = api_response['result']['requisicao']
+                print(f"[SCTASK] SCTASK ID extraído de result.requisicao: {sctask_id}")
+            elif 'tarefa' in api_response:
+                sctask_id = api_response['tarefa']
+                print(f"[SCTASK] SCTASK ID extraído de tarefa: {sctask_id}")
+            else:
+                print(f"[SCTASK] WARNING: Não foi possível extrair SCTASK ID da resposta")
+                print(f"[SCTASK] Estrutura da resposta: {list(api_response.keys())}")
+                if 'result' in api_response:
+                    print(f"[SCTASK] Estrutura de result: {list(api_response['result'].keys()) if isinstance(api_response['result'], dict) else 'N/A'}")
+            
+        except requests.exceptions.HTTPError as http_err:
+            print(f"[SCTASK] HTTP Error: {http_err}")
+            print(f"[SCTASK] Status Code: {http_err.response.status_code if http_err.response else 'N/A'}")
+            if http_err.response:
+                print(f"[SCTASK] Response Headers: {dict(http_err.response.headers)}")
+                print(f"[SCTASK] Response Body: {http_err.response.text}")
+            raise
+        except requests.exceptions.RequestException as req_err:
+            print(f"[SCTASK] Request Exception: {req_err}")
+            print(f"[SCTASK] Exception type: {type(req_err).__name__}")
+            raise
         
         # Atualizar DynamoDB com sctask_id
         if sctask_id:
@@ -149,8 +189,34 @@ def report_protheus_failure_to_sctask(process_id, error_details):
                 print(f"WARNING: Failed to save SCTASK ID to DynamoDB: {str(e)}")
         
         return sctask_id
+    except requests.exceptions.HTTPError as http_err:
+        print(f"[SCTASK] HTTP Error ao reportar falha para SCTASK:")
+        print(f"  - Status Code: {http_err.response.status_code if http_err.response else 'N/A'}")
+        print(f"  - URL: {api_url}")
+        if http_err.response:
+            print(f"  - Response Headers: {dict(http_err.response.headers)}")
+            print(f"  - Response Body: {http_err.response.text}")
+            try:
+                error_json = http_err.response.json()
+                print(f"  - Response JSON: {json.dumps(error_json, ensure_ascii=False, indent=2)}")
+            except:
+                pass
+        import traceback
+        traceback.print_exc()
+        return None
+    except requests.exceptions.RequestException as req_err:
+        print(f"[SCTASK] Request Exception ao reportar falha para SCTASK:")
+        print(f"  - Exception type: {type(req_err).__name__}")
+        print(f"  - Exception message: {str(req_err)}")
+        print(f"  - URL: {api_url}")
+        import traceback
+        traceback.print_exc()
+        return None
     except Exception as e:
-        print(f"WARNING: Failed to report Protheus failure to SCTASK API: {str(e)}")
+        print(f"[SCTASK] Unexpected error ao reportar falha para SCTASK:")
+        print(f"  - Exception type: {type(e).__name__}")
+        print(f"  - Exception message: {str(e)}")
+        print(f"  - URL: {api_url}")
         import traceback
         traceback.print_exc()
         return None
@@ -1036,12 +1102,13 @@ def lambda_handler(event, context):
     for original_idx, produto_xml, pedido_de_compra, codigo_produto_rb in produtos_filtrados:
         idx = len(payload['itens']) + 1  # Índice sequencial no payload
         try:
-            # Usar dados do XML (quantidade, valor unitário)
+            # Usar dados do XML (quantidade, valor unitário, unidade_trib)
             # E código do produto e pedidoDeCompra do requestBody (já encontrado na filtragem)
             
-            # Extrair quantidade e valor unitário do XML
+            # Extrair quantidade, valor unitário e unidade_trib do XML
             quantidade = float(produto_xml.get('quantidade', 0))
             valor_unitario = float(produto_xml.get('valor_unitario', 0))
+            unidade_trib = produto_xml.get('unidade_trib', '').strip()
             
             # Usar código do produto do requestBody (já encontrado na filtragem)
             codigo_produto = codigo_produto_rb if codigo_produto_rb else None
@@ -1126,6 +1193,10 @@ def lambda_handler(event, context):
                 "codigoOperacao": codigo_operacao,
                 "pedidoDeCompra": pedido_de_compra
             }
+            
+            # Adicionar unidade_trib se disponível no XML
+            if unidade_trib:
+                item["unidadeTrib"] = unidade_trib
             payload['itens'].append(item)
             print(f"[8.{idx}.10] ✅ Produto {idx} adicionado ao payload: código={codigo_produto}, qtd={quantidade}, valor={valor_unitario}, op={codigo_operacao}, pedido={pedido_de_compra.get('pedidoErp')}")
             
@@ -1180,6 +1251,12 @@ def lambda_handler(event, context):
                     "codigoOperacao": codigo_operacao,
                     "pedidoDeCompra": pedido_de_compra
                 }
+                
+                # Adicionar unidade_trib se disponível no XML
+                unidade_trib = produto.get('unidade_trib', '').strip()
+                if unidade_trib:
+                    item["unidadeTrib"] = unidade_trib
+                
                 payload['itens'].append(item)
                 print(f"[8.{idx}] Produto {idx} adicionado: {codigo}, qtd={item['quantidade']}, valor={item['valorUnitario']}, op={codigo_operacao}")
                 
