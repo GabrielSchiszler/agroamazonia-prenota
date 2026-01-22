@@ -685,40 +685,30 @@ def lambda_handler(event, context):
  
    
     
-    # Extrair CNPJ emitente - tentar múltiplas fontes
-    print(f"\n[7.3] Extraindo CNPJ do emitente...")
+    # Extrair CNPJ emitente - APENAS do XML
+    print(f"\n[7.3] Extraindo CNPJ do emitente (APENAS do XML)...")
     cnpj_emitente = None
     
-    # Prioridade 1: requestBody.cnpjEmitente
-    if request_body_data and request_body_data.get('cnpjEmitente'):
-        cnpj_emitente = request_body_data.get('cnpjEmitente')
-        print(f"  [7.3.1] CNPJ encontrado no requestBody.cnpjEmitente: {cnpj_emitente}")
-    
-    # Prioridade 2: XML emitente.cnpj
-    if not cnpj_emitente and emitente and emitente.get('cnpj'):
+    # OBRIGATÓRIO: Pegar APENAS do XML emitente.cnpj
+    if emitente and emitente.get('cnpj'):
         cnpj_emitente = emitente.get('cnpj')
-        print(f"  [7.3.2] CNPJ encontrado no XML emitente.cnpj: {cnpj_emitente}")
-    
-    # Prioridade 3: OCR cnpjRemetente
-    if not cnpj_emitente and ocr_data and ocr_data.get('cnpjRemetente'):
-        cnpj_emitente = ocr_data.get('cnpjRemetente')
-        print(f"  [7.3.3] CNPJ encontrado no OCR cnpjRemetente: {cnpj_emitente}")
+        print(f"  [7.3.1] CNPJ encontrado no XML emitente.cnpj: {cnpj_emitente}")
+    else:
+        print(f"  [7.3.2] ERRO: CNPJ do emitente NÃO encontrado no XML!")
+        print(f"    - emitente disponível: {bool(emitente)}")
+        print(f"    - emitente.cnpj: {emitente.get('cnpj') if emitente else 'N/A'}")
+        print(f"    - XML data keys: {list(xml_data.keys()) if xml_data else 'N/A'}")
+        raise Exception(f"CNPJ do emitente é obrigatório e deve estar no XML (emitente.cnpj). CNPJ não encontrado no XML parseado.")
     
     # Normalizar CNPJ emitente (apenas dígitos)
-    if cnpj_emitente:
-        cnpj_emitente = ''.join(filter(str.isdigit, str(cnpj_emitente)))
-        print(f"  [7.3.4] CNPJ emitente normalizado (apenas dígitos): {cnpj_emitente}")
-        print(f"  [7.3.5] CNPJ emitente length: {len(cnpj_emitente)} dígitos")
-        
-        # Validar se tem 14 dígitos (CNPJ válido)
-        if len(cnpj_emitente) != 14:
-            print(f"  [7.3.6] WARNING: CNPJ emitente não tem 14 dígitos! Pode estar incompleto.")
-    else:
-        print(f"  [7.3.7] ERRO: CNPJ do emitente NÃO encontrado em nenhuma fonte!")
-        print(f"    - requestBody.cnpjEmitente: {request_body_data.get('cnpjEmitente') if request_body_data else 'N/A'}")
-        print(f"    - XML emitente.cnpj: {emitente.get('cnpj') if emitente else 'N/A'}")
-        print(f"    - OCR cnpjRemetente: {ocr_data.get('cnpjRemetente') if ocr_data else 'N/A'}")
-        cnpj_emitente = ""  # Manter como string vazia para não quebrar o payload
+    cnpj_emitente = ''.join(filter(str.isdigit, str(cnpj_emitente)))
+    print(f"  [7.3.3] CNPJ emitente normalizado (apenas dígitos): {cnpj_emitente}")
+    print(f"  [7.3.4] CNPJ emitente length: {len(cnpj_emitente)} dígitos")
+    
+    # Validar se tem 14 dígitos (CNPJ válido)
+    if len(cnpj_emitente) != 14:
+        print(f"  [7.3.5] ERRO: CNPJ emitente não tem 14 dígitos! Valor: '{cnpj_emitente}' (length: {len(cnpj_emitente)})")
+        raise Exception(f"CNPJ do emitente deve ter 14 dígitos. Valor encontrado: '{cnpj_emitente}' ({len(cnpj_emitente)} dígitos)")
     
     # Extrair CNPJ destinatário - tentar múltiplas fontes
     print(f"\n[7.4] Extraindo CNPJ do destinatário...")
@@ -1095,9 +1085,7 @@ def lambda_handler(event, context):
     # Enviar para Protheus
     api_url = os.environ.get('PROTHEUS_API_URL', 'https://api.agroamazonia.com/hom-ocr')
     
-    # Se a URL não termina com /documento-entrada, adicionar (baseado no padrão do token URL)
-    # O token é obtido de: /hom-ocr/documento-entrada/oauth2/token
-    # A API provavelmente está em: /hom-ocr/documento-entrada
+
     auth_url = os.environ.get('PROTHEUS_AUTH_URL', '')
 
     
