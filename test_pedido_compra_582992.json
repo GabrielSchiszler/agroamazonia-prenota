@@ -1,0 +1,26 @@
+{
+  "header": {
+    "tenantId": "1"
+  },
+  "requestBody": {
+    "cnpjEmitente": "02329713000200",
+    "cnpjDestinatario": "13563680000365",
+    "itens": [
+      {
+        "codigoProduto": "26480",
+        "produto": "FERTILIZANTE TOP PHOS 280 HP B1",
+        "quantidade": 40.0,
+        "valorUnitario": 4228.0,
+        "valorTotal": 169120.0,
+        "unidadeMedida": "TON",
+        "pedidoDeCompra": {
+          "pedidoErp": "582992",
+          "itemPedidoErp": "0001"
+        }
+      }
+    ]
+  }
+}
+
+
+

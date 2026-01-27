@@ -1,2 +1,10 @@
+# Arquivos de configuração local
 .env
 config.js
+
+# Logs
+*.log
+
+# Sistema operacional
+.DS_Store
+Thumbs.db
