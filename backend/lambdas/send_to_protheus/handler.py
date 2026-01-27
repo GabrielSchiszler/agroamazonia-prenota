@@ -8,6 +8,7 @@ from datetime import datetime
 
 dynamodb = boto3.resource('dynamodb')
 table = dynamodb.Table(os.environ['TABLE_NAME'])
+bedrock = boto3.client('bedrock-runtime', region_name='us-east-1')
 
 def get_ocr_failure_oauth2_token():
     """
@@ -419,6 +420,437 @@ def map_taxa_cambio(moeda, taxa_informada=None):
     
     # Se for moeda estrangeira sem taxa informada, retornar 1 como padrão
     return 1
+
+def extract_lotes_with_ai(info_adicional_text):
+    """
+    Extrai informações de lotes de um texto usando IA (Bedrock Nova).
+    
+    Args:
+        info_adicional_text: Texto contendo informações adicionais (pode ser de produto ou da NF)
+    
+    Returns:
+        Lista de dicionários com informações de lotes:
+        [
+            {
+                "numero": "xpto",
+                "quantidade": 20.0,
+                "dataValidade": "2025-12-31",
+                "dataFabricacao": "2025-01-15"
+            },
+            ...
+        ]
+        Retorna lista vazia se não encontrar lotes.
+    """
+    if not info_adicional_text or not info_adicional_text.strip():
+        return []
+    
+    print(f"[EXTRACT_LOTES] Extraindo lotes do texto (tamanho: {len(info_adicional_text)} chars)")
+    print(f"[EXTRACT_LOTES] Preview do texto: {info_adicional_text[:200]}...")
+    
+    prompt = f'''Você é um sistema de extração de informações de lotes de produtos.
+
+TEXTO COM INFORMAÇÕES ADICIONAIS:
+{info_adicional_text}
+
+INSTRUÇÕES:
+1. Extraia TODAS as informações de lotes presentes no texto.
+2. Um lote pode ter as seguintes informações:
+   - Número do lote (obrigatório) - pode aparecer como "LOTE:", "LOTE ", "Lote:", "nLote:", "LT", etc.
+   - Quantidade por lote (obrigatório se houver múltiplos lotes)
+   - Data de validade (formato: YYYY-MM-DD) - pode aparecer como "VALID:", "VAL:", "Validade:", "VALIDADE:", ou "VALID: X MESES" (calcular a data)
+   - Data de fabricação (formato: YYYY-MM-DD) - pode aparecer como "FABRIC:", "FAB:", "Fabricação:", "FABRICAÇÃO:", "FAB:", etc.
+
+3. FORMATOS COMUNS DE LOTE:
+   - "LOTE:331/25" → numero: "331/25"
+   - "LOTE:331/25 FABRIC:06/12/2025" → numero: "331/25", dataFabricacao: "2025-12-06"
+   - "LOTE:331/25 FABRIC:06/12/2025 VALID:18 MESES" → numero: "331/25", dataFabricacao: "2025-12-06", dataValidade: calcular 18 meses a partir da fabricação
+   - "LOTE:331/25 VALID:2026-12-06" → numero: "331/25", dataValidade: "2026-12-06"
+   - "LOTE 12345 QTD: 20.0" → numero: "12345", quantidade: 20.0
+
+4. Se houver múltiplos lotes no mesmo texto, extraia TODOS.
+5. Se houver apenas um lote, extraia apenas esse lote.
+6. Se não houver informações de lote, retorne uma lista vazia.
+7. Se a validade estiver em meses (ex: "VALID:18 MESES"), calcule a data de validade somando os meses à data de fabricação.
+8. Se a data estiver no formato DD/MM/YYYY, converta para YYYY-MM-DD.
+
+FORMATO DE RESPOSTA (JSON):
+{{
+  "lotes": [
+    {{
+      "numero": "331/25",
+      "quantidade": 40.0,
+      "dataValidade": "2027-06-06",
+      "dataFabricacao": "2025-12-06"
+    }}
+  ]
+}}
+
+REGRAS IMPORTANTES:
+- Retorne APENAS JSON válido, sem explicações ou comentários.
+- Se não encontrar lotes, retorne: {{"lotes": []}}
+- Quantidade deve ser um número (float).
+- Datas devem estar no formato YYYY-MM-DD ou null se não encontradas.
+- Número do lote é obrigatório. Se não encontrar, não inclua na lista.
+- Se encontrar "VALID: X MESES" sem data de fabricação, use null para dataValidade.
+- Se encontrar "VALID: X MESES" com data de fabricação, calcule: dataFabricacao + X meses = dataValidade.
+
+EXEMPLOS DE EXTRAÇÃO:
+- "LOTE:331/25 FABRIC:06/12/2025 VALID:18 MESES" → {{"numero": "331/25", "dataFabricacao": "2025-12-06", "dataValidade": "2027-06-06", "quantidade": null}}
+- "LOTE:123 QTD: 20.0" → {{"numero": "123", "quantidade": 20.0, "dataFabricacao": null, "dataValidade": null}}
+- "LOTE:ABC/2025 FABRIC:15/01/2025 VALID:12 MESES" → {{"numero": "ABC/2025", "dataFabricacao": "2025-01-15", "dataValidade": "2026-01-15", "quantidade": null}}
+
+Retorne APENAS o JSON.
+'''
+    
+    try:
+        request_body = {
+            'messages': [{
+                'role': 'user',
+                'content': [{'text': prompt}]
+            }],
+            'inferenceConfig': {
+                'maxTokens': 2000,
+                'temperature': 0.1
+            }
+        }
+        
+        print(f"[EXTRACT_LOTES] Chamando Bedrock Nova Pro...")
+        response = bedrock.invoke_model(
+            modelId='us.amazon.nova-pro-v1:0',
+            body=json.dumps(request_body)
+        )
+        
+        body_content = response['body'].read()
+        result = json.loads(body_content)
+        content = result['output']['message']['content'][0]['text']
+        
+        print(f"[EXTRACT_LOTES] Resposta do Bedrock: {content[:500]}...")
+        
+        # Extrair JSON da resposta
+        start = content.find('{')
+        end = content.rfind('}') + 1
+        
+        if start == -1 or end == 0:
+            print(f"[EXTRACT_LOTES] ERRO: Não foi possível encontrar JSON na resposta")
+            return []
+        
+        json_str = content[start:end]
+        parsed = json.loads(json_str)
+        
+        lotes = parsed.get('lotes', [])
+        print(f"[EXTRACT_LOTES] {len(lotes)} lote(s) extraído(s)")
+        
+        # Validar e normalizar lotes
+        lotes_validos = []
+        for lote in lotes:
+            if not lote.get('numero'):
+                print(f"[EXTRACT_LOTES] WARNING: Lote sem número, ignorando: {lote}")
+                continue
+            
+            # Processar data de validade se for string com meses
+            data_validade = lote.get('dataValidade')
+            data_fabricacao = lote.get('dataFabricacao')
+            
+            # Normalizar data de fabricação se estiver em formato DD/MM/YYYY
+            if isinstance(data_fabricacao, str) and '/' in data_fabricacao and len(data_fabricacao) == 10:
+                try:
+                    from datetime import datetime
+                    dt = datetime.strptime(data_fabricacao, '%d/%m/%Y')
+                    data_fabricacao = dt.strftime('%Y-%m-%d')
+                    print(f"[EXTRACT_LOTES] Data de fabricação normalizada: {lote.get('dataFabricacao')} → {data_fabricacao}")
+                except ValueError:
+                    pass
+            
+            # Se dataValidade contém "MESES", tentar calcular baseado na data de fabricação
+            if isinstance(data_validade, str) and 'MESES' in data_validade.upper():
+                # Tentar extrair número de meses
+                import re
+                meses_match = re.search(r'(\d+)\s*MESES?', data_validade.upper())
+                if meses_match and data_fabricacao:
+                    try:
+                        meses = int(meses_match.group(1))
+                        # Parsear data de fabricação
+                        from datetime import datetime, timedelta
+                        if isinstance(data_fabricacao, str):
+                            # Tentar diferentes formatos de data
+                            dt_fabricacao = None
+                            for fmt in ['%Y-%m-%d', '%d/%m/%Y', '%Y/%m/%d']:
+                                try:
+                                    dt_fabricacao = datetime.strptime(data_fabricacao, fmt)
+                                    break
+                                except ValueError:
+                                    continue
+                            
+                            if dt_fabricacao:
+                                # Calcular data de validade adicionando meses
+                                # Aproximação: adicionar dias (30 dias por mês)
+                                # Melhor seria usar calendar, mas esta aproximação funciona bem
+                                ano = dt_fabricacao.year
+                                mes = dt_fabricacao.month
+                                dia = dt_fabricacao.day
+                                
+                                # Adicionar meses
+                                mes += meses
+                                while mes > 12:
+                                    mes -= 12
+                                    ano += 1
+                                
+                                # Ajustar dia se necessário (ex: 31 de janeiro + 1 mês = 28/29 de fevereiro)
+                                try:
+                                    dt_validade = datetime(ano, mes, dia)
+                                except ValueError:
+                                    # Se o dia não existe no mês (ex: 31 de janeiro -> 28/29 de fevereiro)
+                                    # Usar o último dia do mês
+                                    from calendar import monthrange
+                                    ultimo_dia = monthrange(ano, mes)[1]
+                                    dt_validade = datetime(ano, mes, min(dia, ultimo_dia))
+                                
+                                data_validade = dt_validade.strftime('%Y-%m-%d')
+                                print(f"[EXTRACT_LOTES] Data de validade calculada: {data_fabricacao} + {meses} meses = {data_validade}")
+                    except (ValueError, AttributeError) as e:
+                        print(f"[EXTRACT_LOTES] Erro ao calcular data de validade: {e}")
+                        data_validade = None
+            
+            lote_valido = {
+                'numero': str(lote.get('numero', '')).strip(),
+                'quantidade': float(lote.get('quantidade', 0)) if lote.get('quantidade') else None,
+                'dataValidade': data_validade if data_validade and (not isinstance(data_validade, str) or 'MESES' not in data_validade.upper()) else None,
+                'dataFabricacao': data_fabricacao if data_fabricacao else None
+            }
+            lotes_validos.append(lote_valido)
+            print(f"[EXTRACT_LOTES] Lote válido: {lote_valido['numero']}, qtd={lote_valido['quantidade']}, fab={lote_valido['dataFabricacao']}, valid={lote_valido['dataValidade']}")
+        
+        return lotes_validos
+        
+    except Exception as e:
+        print(f"[EXTRACT_LOTES] ERRO ao extrair lotes com IA: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return []
+
+def convert_rastros_to_lotes(rastros):
+    """
+    Converte rastros do XML para o formato de lotes esperado.
+    
+    Args:
+        rastros: Lista de rastros do XML parseado, cada um com:
+            - lote: número do lote (nLote do XML)
+            - data_fabricacao: data de fabricação (dFab do XML)
+            - data_validade: data de validade (dVal do XML)
+            - quantidade: quantidade do lote (qLote do XML)
+    
+    Returns:
+        Lista de lotes no formato esperado:
+        [
+            {
+                'numero': '...',
+                'dataFabricacao': 'YYYY-MM-DD',
+                'dataValidade': 'YYYY-MM-DD',
+                'quantidade': float ou None
+            },
+            ...
+        ]
+    """
+    if not rastros:
+        return []
+    
+    lotes = []
+    for rastro in rastros:
+        if not rastro:
+            continue
+        
+        # Extrair número do lote (campo 'lote' do JSON parseado)
+        lote_numero = rastro.get('lote')
+        if not lote_numero:
+            print(f"[CONVERT_RASTROS] WARNING: Rastro sem número de lote, ignorando: {rastro}")
+            continue
+        
+        # Normalizar data de fabricação (campo 'data_fabricacao' do JSON parseado)
+        data_fabricacao = rastro.get('data_fabricacao')
+        if data_fabricacao:
+            # Tentar normalizar formato de data (pode vir como DD/MM/YYYY ou YYYY-MM-DD)
+            try:
+                from datetime import datetime
+                if '/' in data_fabricacao and len(data_fabricacao) == 10:
+                    dt = datetime.strptime(data_fabricacao, '%d/%m/%Y')
+                    data_fabricacao = dt.strftime('%Y-%m-%d')
+                elif len(data_fabricacao) == 10 and '-' in data_fabricacao:
+                    # Já está no formato YYYY-MM-DD
+                    pass
+            except ValueError:
+                print(f"[CONVERT_RASTROS] WARNING: Data de fabricação inválida: {data_fabricacao}")
+                data_fabricacao = None
+        
+        # Normalizar data de validade (campo 'data_validade' do JSON parseado)
+        data_validade = rastro.get('data_validade')
+        if data_validade:
+            # Tentar normalizar formato de data
+            try:
+                from datetime import datetime
+                if '/' in data_validade and len(data_validade) == 10:
+                    dt = datetime.strptime(data_validade, '%d/%m/%Y')
+                    data_validade = dt.strftime('%Y-%m-%d')
+                elif len(data_validade) == 10 and '-' in data_validade:
+                    # Já está no formato YYYY-MM-DD
+                    pass
+            except ValueError:
+                print(f"[CONVERT_RASTROS] WARNING: Data de validade inválida: {data_validade}")
+                data_validade = None
+        
+        # Normalizar quantidade (campo 'quantidade' do JSON parseado)
+        quantidade = rastro.get('quantidade')
+        if quantidade:
+            try:
+                quantidade = float(quantidade)
+            except (ValueError, TypeError):
+                quantidade = None
+        else:
+            quantidade = None
+        
+        lote = {
+            'numero': str(lote_numero).strip(),
+            'dataFabricacao': data_fabricacao,
+            'dataValidade': data_validade,
+            'quantidade': quantidade
+        }
+        
+        lotes.append(lote)
+        print(f"[CONVERT_RASTROS] Rastro convertido: lote={lote['numero']}, qtd={lote['quantidade']}, fab={lote['dataFabricacao']}, valid={lote['dataValidade']}")
+    
+    return lotes
+
+def process_produtos_with_lotes(produtos_filtrados, xml_data, request_body_data):
+    """
+    Processa produtos e faz split quando houver múltiplos lotes.
+    
+    Ordem de prioridade para buscar lotes:
+    1. PRIORIDADE 1: Campo rastros do produto (XML estruturado)
+    2. PRIORIDADE 2: info_adicional do produto (passar pela IA)
+    3. PRIORIDADE 3: info_adicional da NF (passar pela IA)
+    
+    Args:
+        produtos_filtrados: Lista de tuplas (idx_xml, produto_xml, pedido_de_compra, codigo_produto_rb)
+        xml_data: Dados do XML parseado
+        request_body_data: Dados do requestBody
+    
+    Returns:
+        Lista de produtos processados, com split quando necessário:
+        [
+            {
+                'produto_xml': {...},
+                'pedido_de_compra': {...},
+                'codigo_produto': '...',
+                'quantidade': 20.0,
+                'lote': {
+                    'numero': 'xpto',
+                    'dataValidade': '2025-12-31',
+                    'dataFabricacao': '2025-01-15'
+                }
+            },
+            ...
+        ]
+    """
+    produtos_processados = []
+    info_adicional_nf = xml_data.get('info_adicional', '') or ''
+    
+    print(f"\n[PROCESS_LOTES] Processando {len(produtos_filtrados)} produto(s) para extrair lotes...")
+    
+    for original_idx, produto_xml, pedido_de_compra, codigo_produto_rb in produtos_filtrados:
+        print(f"\n[PROCESS_LOTES] Produto {original_idx + 1}: {produto_xml.get('descricao', 'N/A')[:50]}...")
+        
+        lotes = []
+        
+        # PRIORIDADE 1: Verificar rastros do produto (XML estruturado)
+        rastros = produto_xml.get('rastro')
+        if rastros:
+            print(f"[PROCESS_LOTES] PRIORIDADE 1: Verificando rastros do produto (XML estruturado)")
+            print(f"[PROCESS_LOTES] {len(rastros) if isinstance(rastros, list) else 1} rastro(s) encontrado(s)")
+            lotes = convert_rastros_to_lotes(rastros if isinstance(rastros, list) else [rastros])
+            print(f"[PROCESS_LOTES] {len(lotes)} lote(s) extraído(s) dos rastros")
+        
+        # PRIORIDADE 2: Se não encontrou nos rastros, verificar info_adicional do produto (IA)
+        if not lotes:
+            info_adicional_produto = produto_xml.get('info_adicional', '') or ''
+            if info_adicional_produto and info_adicional_produto.strip():
+                print(f"[PROCESS_LOTES] PRIORIDADE 2: Verificando info_adicional do produto com IA (tamanho: {len(info_adicional_produto)} chars)")
+                lotes = extract_lotes_with_ai(info_adicional_produto)
+                print(f"[PROCESS_LOTES] {len(lotes)} lote(s) encontrado(s) no produto via IA")
+        
+        # PRIORIDADE 3: Se não encontrou no produto, verificar info_adicional da NF (IA)
+        if not lotes and info_adicional_nf and info_adicional_nf.strip():
+            print(f"[PROCESS_LOTES] PRIORIDADE 3: Verificando info_adicional da NF com IA (tamanho: {len(info_adicional_nf)} chars)")
+            lotes = extract_lotes_with_ai(info_adicional_nf)
+            print(f"[PROCESS_LOTES] {len(lotes)} lote(s) encontrado(s) na NF via IA")
+        
+        quantidade_total = float(produto_xml.get('quantidade', 0))
+        
+        # Se não encontrou lotes, adicionar produto sem lote
+        if not lotes:
+            print(f"[PROCESS_LOTES] Nenhum lote encontrado, adicionando produto sem lote")
+            produtos_processados.append({
+                'produto_xml': produto_xml,
+                'pedido_de_compra': pedido_de_compra,
+                'codigo_produto': codigo_produto_rb,
+                'quantidade': quantidade_total,
+                'lote': None
+            })
+            continue
+        
+        # Se encontrou lotes, fazer split do produto
+        print(f"[PROCESS_LOTES] {len(lotes)} lote(s) encontrado(s), fazendo split do produto")
+        
+        # Se há apenas 1 lote e não tem quantidade específica, usar quantidade total
+        if len(lotes) == 1:
+            lote = lotes[0]
+            if not lote.get('quantidade') or lote['quantidade'] == 0:
+                lote['quantidade'] = quantidade_total
+                print(f"[PROCESS_LOTES] Lote único sem quantidade, usando quantidade total: {quantidade_total}")
+            
+            produtos_processados.append({
+                'produto_xml': produto_xml,
+                'pedido_de_compra': pedido_de_compra,
+                'codigo_produto': codigo_produto_rb,
+                'quantidade': lote['quantidade'],
+                'lote': {
+                    'numero': lote['numero'],
+                    'dataValidade': lote.get('dataValidade'),
+                    'dataFabricacao': lote.get('dataFabricacao')
+                }
+            })
+            print(f"[PROCESS_LOTES] Produto split em 1 item: qtd={lote['quantidade']}, lote={lote['numero']}")
+        
+        # Se há múltiplos lotes, criar um item para cada lote
+        else:
+            quantidade_distribuida = 0
+            for i, lote in enumerate(lotes):
+                qtd_lote = lote.get('quantidade', 0) or 0
+                
+                # Se o último lote não tem quantidade, usar o restante
+                if i == len(lotes) - 1 and qtd_lote == 0:
+                    qtd_lote = quantidade_total - quantidade_distribuida
+                    print(f"[PROCESS_LOTES] Último lote sem quantidade, usando restante: {qtd_lote}")
+                
+                if qtd_lote > 0:
+                    produtos_processados.append({
+                        'produto_xml': produto_xml,
+                        'pedido_de_compra': pedido_de_compra,
+                        'codigo_produto': codigo_produto_rb,
+                        'quantidade': qtd_lote,
+                        'lote': {
+                            'numero': lote['numero'],
+                            'dataValidade': lote.get('dataValidade'),
+                            'dataFabricacao': lote.get('dataFabricacao')
+                        }
+                    })
+                    quantidade_distribuida += qtd_lote
+                    print(f"[PROCESS_LOTES] Item {i+1}/{len(lotes)}: qtd={qtd_lote}, lote={lote['numero']}")
+            
+            # Validar se a soma das quantidades dos lotes bate com a quantidade total
+            if abs(quantidade_distribuida - quantidade_total) > 0.01:
+                print(f"[PROCESS_LOTES] WARNING: Soma das quantidades dos lotes ({quantidade_distribuida}) != quantidade total ({quantidade_total})")
+    
+    print(f"\n[PROCESS_LOTES] Total de produtos processados: {len(produtos_processados)} (incluindo splits)")
+    return produtos_processados
 
 def get_oauth2_token():
     """
@@ -1097,23 +1529,26 @@ def lambda_handler(event, context):
         print(f"[8.2] AVISO: Nenhum produto deu match na validação, mas continuando com todos os produtos")
         produtos_filtrados = [(i, p, None, None) for i, p in enumerate(produtos_para_processar)]
     
-    # Processar apenas produtos filtrados
-    # produtos_filtrados agora contém: (idx_xml, produto_xml, pedido_de_compra, codigo_produto_rb)
-    for original_idx, produto_xml, pedido_de_compra, codigo_produto_rb in produtos_filtrados:
+    # Processar produtos com lotes (fazer split se necessário)
+    print(f"\n[8.3] Processando produtos com extração de lotes...")
+    produtos_processados = process_produtos_with_lotes(produtos_filtrados, xml_data, request_body_data)
+    
+    # Processar produtos processados (já com split de lotes se necessário)
+    for produto_info in produtos_processados:
         idx = len(payload['itens']) + 1  # Índice sequencial no payload
         try:
-            # Usar dados do XML (quantidade, valor unitário, unidade_trib)
-            # E código do produto e pedidoDeCompra do requestBody (já encontrado na filtragem)
+            # Extrair dados do produto processado
+            produto_xml = produto_info['produto_xml']
+            pedido_de_compra = produto_info['pedido_de_compra']
+            codigo_produto = produto_info['codigo_produto']
+            quantidade = produto_info['quantidade']
+            lote = produto_info.get('lote')
             
-            # Extrair quantidade, valor unitário e unidade_trib do XML
-            quantidade = float(produto_xml.get('quantidade', 0))
+            # Usar dados do XML (valor unitário, unidade_trib)
             valor_unitario = float(produto_xml.get('valor_unitario', 0))
             unidade_trib = produto_xml.get('unidade_trib', '').strip()
             
-            # Usar código do produto do requestBody (já encontrado na filtragem)
-            codigo_produto = codigo_produto_rb if codigo_produto_rb else None
-            
-            # Se não encontrou código do requestBody, tentar buscar novamente
+            # Se não encontrou código do produto, tentar buscar novamente
             if not codigo_produto:
                 if request_body_data and request_body_data.get('itens'):
                     # Buscar pelo pedidoDeCompra
@@ -1135,16 +1570,17 @@ def lambda_handler(event, context):
                         codigo_produto = codigo_xml
                     print(f"[8.{idx}.2] AVISO: Usando código do XML como fallback: {codigo_produto}")
             
-            print(f"[8.{idx}] Processando produto (posição XML: {original_idx + 1}):")
-            print(f"[8.{idx}.3] Código do produto (do requestBody): {codigo_produto}")
-            print(f"[8.{idx}.4] Nome (do XML): {produto_xml.get('descricao', 'N/A')[:50]}...")
-            print(f"[8.{idx}.5] Quantidade (do XML): {quantidade}")
-            print(f"[8.{idx}.6] Valor unitário (do XML): {valor_unitario}")
-            print(f"[8.{idx}.7] pedidoDeCompra: {pedido_de_compra}")
+            print(f"[8.{idx}] Processando produto:")
+            print(f"[8.{idx}.3] Código do produto: {codigo_produto}")
+            print(f"[8.{idx}.4] Nome: {produto_xml.get('descricao', 'N/A')[:50]}...")
+            print(f"[8.{idx}.5] Quantidade: {quantidade}")
+            print(f"[8.{idx}.6] Valor unitário: {valor_unitario}")
+            print(f"[8.{idx}.7] Lote: {lote}")
+            print(f"[8.{idx}.8] pedidoDeCompra: {pedido_de_compra}")
             
-            # Se não encontrou pedidoDeCompra na filtragem, tentar buscar novamente
+            # Se não encontrou pedidoDeCompra, tentar buscar novamente
             if not pedido_de_compra or not pedido_de_compra.get('pedidoErp'):
-                print(f"[8.{idx}.6] pedidoDeCompra não encontrado na filtragem, buscando no requestBody...")
+                print(f"[8.{idx}.9] pedidoDeCompra não encontrado, buscando no requestBody...")
                 nome_xml = produto_xml.get('descricao', '').strip() or produto_xml.get('nome', '').strip()
                 
                 if request_body_data and request_body_data.get('itens'):
@@ -1160,7 +1596,7 @@ def lambda_handler(event, context):
                             
                             if len(palavras_comuns) >= 2 or nome_xml_norm in nome_rb_norm or nome_rb_norm in nome_xml_norm:
                                 pedido_de_compra = item_rb.get('pedidoDeCompra', {})
-                                print(f"[8.{idx}.7] pedidoDeCompra encontrado por nome: {pedido_de_compra}")
+                                print(f"[8.{idx}.10] pedidoDeCompra encontrado por nome: {pedido_de_compra}")
                                 break
                     
                     # Fallback: tentar por código
@@ -1169,12 +1605,12 @@ def lambda_handler(event, context):
                             codigo_rb = item_rb.get('codigoProduto', '').lstrip('0') or '0'
                             if codigo_rb == codigo_produto:
                                 pedido_de_compra = item_rb.get('pedidoDeCompra', {})
-                                print(f"[8.{idx}.8] pedidoDeCompra encontrado por código: {pedido_de_compra}")
+                                print(f"[8.{idx}.11] pedidoDeCompra encontrado por código: {pedido_de_compra}")
                                 break
             
             # Validar se pedidoDeCompra foi encontrado
             if not pedido_de_compra or not pedido_de_compra.get('pedidoErp'):
-                print(f"[8.{idx}.9] ERRO: pedidoDeCompra não encontrado para produto {codigo_produto}!")
+                print(f"[8.{idx}.12] ERRO: pedidoDeCompra não encontrado para produto {codigo_produto}!")
                 print(f"  - Nome do produto XML: {produto_xml.get('descricao', 'N/A')}")
                 print(f"  - Código do produto XML: {codigo_produto}")
                 raise Exception(f"pedidoDeCompra não encontrado para produto {codigo_produto} (nome: {produto_xml.get('descricao', 'N/A')[:50]}). É obrigatório para a API Protheus.")
@@ -1197,8 +1633,19 @@ def lambda_handler(event, context):
             # Adicionar unidade_trib se disponível no XML
             if unidade_trib:
                 item["unidadeMedida"] = unidade_trib
+            
+            # Adicionar lote se disponível
+            if lote:
+                item["lote"] = {
+                    "numero": lote['numero'],
+                    "dataValidade": lote.get('dataValidade'),
+                    "dataFabricacao": lote.get('dataFabricacao')
+                }
+                print(f"[8.{idx}.13] Lote adicionado: {lote['numero']}")
+            
             payload['itens'].append(item)
-            print(f"[8.{idx}.10] ✅ Produto {idx} adicionado ao payload: código={codigo_produto}, qtd={quantidade}, valor={valor_unitario}, op={codigo_operacao}, pedido={pedido_de_compra.get('pedidoErp')}")
+            lote_info = f", lote={lote['numero']}" if lote else ""
+            print(f"[8.{idx}.14] ✅ Produto {idx} adicionado ao payload: código={codigo_produto}, qtd={quantidade}, valor={valor_unitario}, op={codigo_operacao}, pedido={pedido_de_compra.get('pedidoErp')}{lote_info}")
             
         except Exception as e:
             print(f"[8.{idx}] ERRO ao processar produto: {str(e)}")

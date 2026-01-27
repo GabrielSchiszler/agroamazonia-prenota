@@ -2,41 +2,43 @@
 
 ## Configuração
 
-### 1. Copiar arquivo de configuração
+### Opção 1: Usando arquivo `.env` (Recomendado)
+
+1. Criar arquivo `.env` na pasta `frontend/`:
 
 ```bash
-cp .env.example .env
-```
-
-### 2. Editar `.env` com suas credenciais
-
-```env
-VITE_API_URL=https://ovyt3c2b2c.execute-api.us-east-1.amazonaws.com/v1
-VITE_API_KEY=agroamazonia_key_UPXsb8Hb8sjbxWBQqouzYnTL5w-V_dJx
-```
-
-### 3. Gerar `config.js`
-
-```bash
-cat > config.js << 'EOF'
-window.ENV = {
-    API_URL: 'https://ovyt3c2b2c.execute-api.us-east-1.amazonaws.com/v1',
-    API_KEY: 'agroamazonia_key_UPXsb8Hb8sjbxWBQqouzYnTL5w-V_dJx'
-};
+cd frontend
+cat > .env << 'EOF'
+API_URL=http://localhost:8001
+API_KEY=dev
 EOF
 ```
 
-### 4. Abrir no navegador
+2. Iniciar o servidor (ele gerará `config.js` automaticamente):
 
 ```bash
-# Servir com Python
-python3 -m http.server 8080
-
-# Ou com Node.js
-npx serve .
+python3 server.py
 ```
 
-Acesse: http://localhost:8080
+### Opção 2: Usando variáveis de ambiente do sistema
+
+```bash
+export API_URL='https://sua-api.com/v1'
+export API_KEY='sua-api-key'
+python3 server.py
+```
+
+### Opção 3: Inline (temporário)
+
+```bash
+API_URL='https://sua-api.com/v1' API_KEY='sua-api-key' python3 server.py
+```
+
+### Acessar
+
+O servidor estará rodando em: http://localhost:8080
+
+**Nota**: O servidor gera automaticamente o arquivo `config.js` a partir das variáveis de ambiente ou do arquivo `.env`. Não é necessário criar o `config.js` manualmente!
 
 ## Estrutura
 

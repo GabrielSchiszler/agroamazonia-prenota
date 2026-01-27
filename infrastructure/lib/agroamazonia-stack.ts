@@ -210,6 +210,10 @@ export class AgroAmazoniaStack extends cdk.Stack {
     });
 
     documentTable.grantReadWriteData(sendToProtheusLambda);
+    sendToProtheusLambda.addToRolePolicy(new iam.PolicyStatement({
+      actions: ['bedrock:InvokeModel'],
+      resources: ['*']
+    }));
 
     // Lambda: Update Metrics
     const updateMetricsLambda = new lambda.Function(this, 'UpdateMetricsFunction', {

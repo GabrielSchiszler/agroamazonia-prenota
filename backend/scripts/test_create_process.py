@@ -48,251 +48,277 @@ def create_empty_pdf():
 
 
 def create_xml_file(xml_path: str):
-    """Sempre cria um novo arquivo XML com número aleatório para cNF"""
-    # Gerar número aleatório de 8 dígitos para cNF
-    cnf_random = f"{random.randint(0, 99999999):08d}"
-    nnf_random = f"{random.randint(0, 99999):08d}"
-
+    """Cria arquivo XML com o XML fornecido do TIMAC AGRO"""
+    
     if os.path.exists(xml_path):
-        print(f"ℹ️  Arquivo XML já existe: {xml_path} - será recriado com novo número aleatório")
+        print(f"ℹ️  Arquivo XML já existe: {xml_path} - será recriado")
     
-    # Gerar ID da NFe baseado no cNF aleatório (mantendo estrutura de 44 dígitos)
-    # Formato: NFe + 44 dígitos (onde os últimos 8 são o cNF)
-    # Exemplo: NFe3125094718062500561055005000016620{cNF}
-    # A base deve ter 36 dígitos para que com o cNF de 8 dígitos totalize 44
-    nfe_id_base = "3125094718062500561055005000016620"  # 34 dígitos fixos
-    # Adicionar 2 dígitos para completar 36 (totalizando 44 com cNF de 8)
-    nfe_id_base = nfe_id_base + "00"  # Agora tem 36 dígitos
-    nfe_id = f"NFe{nfe_id_base}{cnf_random}"
-    ch_nfe = f"{nfe_id_base}{cnf_random}"  # Total: 36 + 8 = 44 dígitos
-    
-    xml_content = f'''<?xml version="1.0" encoding="UTF-8"?>
+    xml_content = '''<?xml version="1.0" encoding="utf-8"?>
 <nfeProc xmlns="http://www.portalfiscal.inf.br/nfe" versao="4.00">
-<NFe xmlns="http://www.portalfiscal.inf.br/nfe">
-<infNFe versao="4.00" Id="{nfe_id}">
-<ide>
-<cUF>31</cUF>
-<cNF>{cnf_random}</cNF>
-<natOp>Venda merc.adq.receb.de terceiros</natOp>
-<mod>55</mod>
-<serie>5</serie>
-<nNF>{nnf_random}</nNF>
-<dhEmi>2025-09-27T13:50:46-03:00</dhEmi>
-<dhSaiEnt>2025-09-27T13:50:46-03:00</dhSaiEnt>
-<tpNF>1</tpNF>
-<idDest>2</idDest>
-<cMunFG>3170107</cMunFG>
-<tpImp>2</tpImp>
-<tpEmis>1</tpEmis>
-<cDV>9</cDV>
-<tpAmb>1</tpAmb>
-<finNFe>1</finNFe>
-<indFinal>0</indFinal>
-<indPres>9</indPres>
-<indIntermed>0</indIntermed>
-<procEmi>0</procEmi>
-<verProc>SAP CLOUD NFE</verProc>
-</ide>
-<emit>
-<CNPJ>47180625005610</CNPJ>
-<xNome>CTVA PROTECAO DE CULTIVOS LTDA.</xNome>
-<xFant>CTVA Uberaba</xFant>
-<enderEmit>
-<xLgr>ROD BR 050</xLgr>
-<nro>S/N</nro>
-<xCpl>KM 185 SAL</xCpl>
-<xBairro>ZONA RURAL</xBairro>
-<cMun>3170107</cMun>
-<xMun>UBERABA</xMun>
-<UF>MG</UF>
-<CEP>38001970</CEP>
-<xPais>Brasil</xPais>
-<fone>1141668034</fone>
-</enderEmit>
-<IE>0030275780279</IE>
-<IM>0</IM>
-<CRT>3</CRT>
-</emit>
-<dest>
-<CNPJ>13563680000101</CNPJ>
-<xNome>AGRO AMAZONIA PROD.AGROPEC.S.A.</xNome>
-<enderDest>
-<xLgr>AV.TENENTE CORONEL DUARTE 1777</xLgr>
-<nro>1777</nro>
-<xBairro>PORTO</xBairro>
-<cMun>5103403</cMun>
-<xMun>CUIABA</xMun>
-<UF>MT</UF>
-<CEP>78015500</CEP>
-<cPais>1058</cPais>
-<xPais>Brasil</xPais>
-<fone>556533192000</fone>
-</enderDest>
-<indIEDest>1</indIEDest>
-<IE>134219686</IE>
-</dest>
-<det nItem="1">
-<prod>
-<cProd>000000000005020943</cProd>
-<cEAN>7898312160344</cEAN>
-<xProd>GARLON480BR BOMBONA 20L HERBICIDA</xProd>
-<NCM>38089329</NCM>
-<CFOP>6102</CFOP>
-<uCom>L</uCom>
-<qCom>3000.0000</qCom>
-<vUnCom>52.0041500000</vUnCom>
-<vProd>156012.45</vProd>
-<cEANTrib>7898312160344</cEANTrib>
-<uTrib>L</uTrib>
-<qTrib>3000.0000</qTrib>
-<vUnTrib>52.0041500000</vUnTrib>
-<indTot>1</indTot>
-<xPed>ID 7942</xPed>
-<rastro>
-<nLote>25I4813004</nLote>
-<qLote>3000.000</qLote>
-<dFab>2025-09-23</dFab>
-<dVal>2028-09-22</dVal>
-</rastro>
-</prod>
-<imposto>
-<ICMS>
-<ICMS20>
-<orig>5</orig>
-<CST>20</CST>
-<modBC>3</modBC>
-<pRedBC>60.0000</pRedBC>
-<vBC>62404.98</vBC>
-<pICMS>7.0000</pICMS>
-<vICMS>4368.35</vICMS>
-<vICMSDeson>6552.52</vICMSDeson>
-<motDesICMS>3</motDesICMS>
-<indDeduzDeson>1</indDeduzDeson>
-</ICMS20>
-</ICMS>
-<IPI>
-<cEnq>999</cEnq>
-<IPINT>
-<CST>53</CST>
-</IPINT>
-</IPI>
-<PIS>
-<PISNT>
-<CST>06</CST>
-</PISNT>
-</PIS>
-<COFINS>
-<COFINSNT>
-<CST>06</CST>
-</COFINSNT>
-</COFINS>
-</imposto>
-<infAdProd>UN1993, LÍQUIDO INFLAMÁVEL, N.E. (Querosene (petróleo), Isobutanol) ,3 , III , Número de risco 30 POLUENTE MARINHO (Triclopir-2-butoxietil éster)</infAdProd>
-</det>
-<total>
-<ICMSTot>
-<vBC>89031.10</vBC>
-<vICMS>6232.18</vICMS>
-<vICMSDeson>9348.26</vICMSDeson>
-<vFCP>0.00</vFCP>
-<vBCST>0.00</vBCST>
-<vST>0.00</vST>
-<vFCPST>0.00</vFCPST>
-<vFCPSTRet>0.00</vFCPSTRet>
-<vProd>222577.76</vProd>
-<vFrete>0.00</vFrete>
-<vSeg>0.00</vSeg>
-<vDesc>0.00</vDesc>
-<vII>0.00</vII>
-<vIPI>0.00</vIPI>
-<vIPIDevol>0.00</vIPIDevol>
-<vPIS>0.00</vPIS>
-<vCOFINS>0.00</vCOFINS>
-<vOutro>0.00</vOutro>
-<vNF>213229.50</vNF>
-</ICMSTot>
-</total>
-<transp>
-<modFrete>0</modFrete>
-<transporta>
-<CNPJ>00950001000105</CNPJ>
-<xNome>BRAVO SERVICOS LOGISTICOS LTDA</xNome>
-<IE>7019582870070</IE>
-<xEnder>ROD BR 050 KM 185 LOJA 08 SN</xEnder>
-<xMun>UBERABA</xMun>
-<UF>MG</UF>
-</transporta>
-<vol>
-<qVol>4280</qVol>
-<esp>Decímetro cúbico</esp>
-<pesoL>4622.400</pesoL>
-<pesoB>5050.400</pesoB>
-</vol>
-</transp>
-<cobr>
-<fat>
-<nFat>7900121806</nFat>
-<vOrig>222577.76</vOrig>
-<vDesc>9348.26</vDesc>
-<vLiq>213229.50</vLiq>
-</fat>
-<dup>
-<nDup>001</nDup>
-<dVenc>2026-02-05</dVenc>
-<vDup>213229.50</vDup>
-</dup>
-</cobr>
-<pag>
-<detPag>
-<indPag>1</indPag>
-<tPag>18</tPag>
-<vPag>213229.50</vPag>
-</detPag>
-</pag>
-<infAdic>
-<infAdFisco>ICMS - Base de cálculo do ICMS reduzida em 60% nos termos da Parte I do Anexo II do RICMS/MG. COFINS - Alíquota do COFINS reduzida a zero nos termos do art. 1º da Lei 10.925/2004. PIS - Alíquota do PIS reduzida a zero nos termos do art. 1º da Lei 10.925/2004. Desconto concedido conforme convenio 100/97: 133.546,66 X 7,00 % = R$ 9.348,26 .</infAdFisco>
-<infCpl>PO: ID 7942 - OV: 1000565147 , DL: 0080839143 FO: 6100743062 Billing: 7900121806 'Declaro que os produtos perigosos estão adequadamente classificados, embalados, identificados, e estivados para suportar os riscos das operações de transporte e que atendem as exigências da regulamentação, Resolução ANTT 5.998/2022'</infCpl>
-</infAdic>
-<infRespTec>
-<CNPJ>74544297000192</CNPJ>
-<xContato>SAP Product Engineering</xContato>
-<email>responsavel.tecnico@sap.com</email>
-<fone>1155032400</fone>
-</infRespTec>
-</infNFe>
-<Signature xmlns="http://www.w3.org/2000/09/xmldsig#">
-<SignedInfo>
-<CanonicalizationMethod Algorithm="http://www.w3.org/TR/2001/REC-xml-c14n-20010315"/>
-<SignatureMethod Algorithm="http://www.w3.org/2000/09/xmldsig#rsa-sha1"/>
-<Reference URI="#{nfe_id}">
-<Transforms>
-<Transform Algorithm="http://www.w3.org/2000/09/xmldsig#enveloped-signature"/>
-<Transform Algorithm="http://www.w3.org/TR/2001/REC-xml-c14n-20010315"/>
-</Transforms>
-<DigestMethod Algorithm="http://www.w3.org/2000/09/xmldsig#sha1"/>
-<DigestValue>n1IEITIksnPsVqNEZhtBJaia/wc=</DigestValue>
-</Reference>
-</SignedInfo>
-<SignatureValue>dLneFqMdF18FdSeTIxlmXQ0LelxtJQTYZRWw45YPUoh1png2IVyyaDa0D5kcWCyWM3szg8tzxnn6wi9XM4cG0FpU4M6RxKP8x5EkJdWp/+Ytqv/4NTNHVncDWeQWFSjcwT51e8mC5HubwW5ACywAU/higpdS/1wj9z85s0lT62r7BBkZc5w9MCx+eVaKABi6KUldUbUIuFX4vqp566flmybL82QmHbwcY+vY1Rmx2+E/ahampcr4BW8YUQpL8Eccgg9iGwjGO9hz1uHXartv+tRrCcOA5XheglbjHMmvO3r936CD/4mrUbE5DhopTYUdKr+fF9m11gx6QsKuH9aSLQ==</SignatureValue>
-<KeyInfo>
-<X509Data>
-<X509Certificate>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</X509Certificate>
-</X509Data>
-</KeyInfo>
-</Signature>
-</NFe>
-<protNFe versao="4.00">
-<infProt>
-<tpAmb>1</tpAmb>
-<verAplic>W-3.3.7</verAplic>
-<chNFe>{ch_nfe}</chNFe>
-<dhRecbto>2025-09-27T13:51:18-03:00</dhRecbto>
-<nProt>131256958571250</nProt>
-<digVal>n1IEITIksnPsVqNEZhtBJaia/wc=</digVal>
-<cStat>100</cStat>
-<xMotivo>Autorizado o uso da NF-e</xMotivo>
-</infProt>
-</protNFe>
+  <protNFe>
+    <infProt>
+      <nProt>243250401092571</nProt>
+      <digVal>uDFG3AOUbDv+HpkHatR+kzsOcjo</digVal>
+      <dhRecbto>2025-12-21T19:13:28-03:00</dhRecbto>
+      <chNFe>43251202329713000200550040004742931458693440</chNFe>
+      <xMotivo>Autorizado o uso da NF-e</xMotivo>
+      <cStat>100</cStat>
+    </infProt>
+  </protNFe>
+  <NFe>
+    <infNFe Id="NFe43251202329713000200550040004742931458693440">
+      <ide>
+        <tpNF>1</tpNF>
+        <mod>55</mod>
+        <indPres>9</indPres>
+        <tpImp>1</tpImp>
+        <nNF>474293</nNF>
+        <cMunFG>4315602</cMunFG>
+        <procEmi>0</procEmi>
+        <finNFe>1</finNFe>
+        <dhEmi>2025-12-21T19:12:51-03:00</dhEmi>
+        <tpAmb>1</tpAmb>
+        <indFinal>0</indFinal>
+        <dhSaiEnt>2025-12-21T19:12:51-03:00</dhSaiEnt>
+        <idDest>2</idDest>
+        <tpEmis>1</tpEmis>
+        <cDV>0</cDV>
+        <cUF>43</cUF>
+        <serie>4</serie>
+        <natOp>VENDA PROD ESTABELECIMENTO</natOp>
+        <cNF>45869344</cNF>
+        <verProc>12.1.2410 | 3.0</verProc>
+        <indIntermed>0</indIntermed>
+      </ide>
+      <emit>
+        <xNome>TIMAC AGRO INDUSTRIA E COMERCIO DE FERTILIZANTES LTDA</xNome>
+        <IM>432060</IM>
+        <CRT>3</CRT>
+        <xFant>RIO GRANDE</xFant>
+        <CNPJ>02329713000200</CNPJ>
+        <enderEmit>
+          <xCpl>KM 002 CONJ.B</xCpl>
+          <fone>5321258100</fone>
+          <UF>RS</UF>
+          <xPais>BRASIL</xPais>
+          <cPais>1058</cPais>
+          <xLgr>ALMT. MAXIMIANO FONSECA</xLgr>
+          <xMun>RIO GRANDE</xMun>
+          <nro>1550</nro>
+          <cMun>4315602</cMun>
+          <xBairro>Zona Portuaria</xBairro>
+          <CEP>96204040</CEP>
+        </enderEmit>
+        <IE>1000194164</IE>
+      </emit>
+      <dest>
+        <xNome>AGRO AMAZONIA PRODUTOS AGROPECUARIOS S.A.</xNome>
+        <IM>1</IM>
+        <CNPJ>13563680000365</CNPJ>
+        <enderDest>
+          <fone>55669938866</fone>
+          <UF>MT</UF>
+          <xPais>BRASIL</xPais>
+          <cPais>1058</cPais>
+          <xLgr>AV ITRIO CORREA DA COST</xLgr>
+          <xMun>RONDONOPOLIS</xMun>
+          <nro>1647</nro>
+          <cMun>5107602</cMun>
+          <xBairro>VILA SALMEM</xBairro>
+          <CEP>78745160</CEP>
+        </enderDest>
+        <IE>130614270</IE>
+        <indIEDest>1</indIEDest>
+      </dest>
+      <det>
+        <nItem>1</nItem>
+        <prod>
+          <cEAN>SEM GTIN</cEAN>
+          <cProd>26480</cProd>
+          <qCom>40.0000</qCom>
+          <cEANTrib>SEM GTIN</cEANTrib>
+          <vUnTrib>4228.0000000000</vUnTrib>
+          <qTrib>40.0000</qTrib>
+          <vProd>169120.00</vProd>
+          <nFCI>ED5E9C4B-8507-4990-B51A-306C1209C47A</nFCI>
+          <xProd>FERTILIZANTE TOP PHOS 280 HP B1</xProd>
+          <vUnCom>4228.0000000000</vUnCom>
+          <indTot>1</indTot>
+          <uTrib>TON</uTrib>
+          <NCM>31055900</NCM>
+          <uCom>TON</uCom>
+          <CFOP>6101</CFOP>
+        </prod>
+        <imposto>
+          <IBSCBS>
+            <CST>515</CST>
+            <cClassTrib>515001</cClassTrib>
+            <gIBSCBS>
+              <vIBS>0.00</vIBS>
+              <gCBS>
+                <gDif>
+                  <pDif>100.0000</pDif>
+                  <vDif>584.48</vDif>
+                </gDif>
+                <pCBS>0.9000</pCBS>
+                <vCBS>0.00</vCBS>
+                <gRed>
+                  <pAliqEfet>0.3600</pAliqEfet>
+                  <pRedAliq>60.0000</pRedAliq>
+                </gRed>
+              </gCBS>
+              <gIBSUF>
+                <gDif>
+                  <pDif>100.0000</pDif>
+                  <vDif>64.94</vDif>
+                </gDif>
+                <pIBSUF>0.1000</pIBSUF>
+                <gRed>
+                  <pAliqEfet>0.0400</pAliqEfet>
+                  <pRedAliq>60.0000</pRedAliq>
+                </gRed>
+                <vIBSUF>0.00</vIBSUF>
+              </gIBSUF>
+              <vBC>162355.54</vBC>
+              <gIBSMun>
+                <gDif>
+                  <pDif>100.0000</pDif>
+                  <vDif>0.00</vDif>
+                </gDif>
+                <pIBSMun>0.0000</pIBSMun>
+                <vIBSMun>0.00</vIBSMun>
+                <gRed>
+                  <pAliqEfet>0.0000</pAliqEfet>
+                  <pRedAliq>60.0000</pRedAliq>
+                </gRed>
+              </gIBSMun>
+            </gIBSCBS>
+          </IBSCBS>
+          <ICMS>
+            <ICMS20>
+              <modBC>3</modBC>
+              <pRedBC>42.8600</pRedBC>
+              <orig>5</orig>
+              <CST>20</CST>
+              <vBC>96635.17</vBC>
+              <vICMS>6764.46</vICMS>
+              <pICMS>7.0000</pICMS>
+            </ICMS20>
+          </ICMS>
+          <IPI>
+            <IPINT>
+              <CST>53</CST>
+            </IPINT>
+            <cEnq>999</cEnq>
+          </IPI>
+          <COFINS>
+            <COFINSNT>
+              <CST>06</CST>
+            </COFINSNT>
+          </COFINS>
+          <PIS>
+            <PISNT>
+              <CST>06</CST>
+            </PISNT>
+          </PIS>
+        </imposto>
+        <vItem>169120.00</vItem>
+        <infAdProd>RS 000155-0.000048 FERTILIZANTE MINERAL COMPLEXO.7% S-SO4 %N: 3,000 %P2O5 Total: 28,000 %P2O5 SOL CNA + H2O: 22,000 %P2O5 SOL H2O: 18,000%CA: 17,000%S: 7,000 Nat. Fisica: GRANULADO RESOLUCAO DO SENADO FEDERAL 13/2012. NUMERO DA FCI ED5E9C4B-8507-4990-B51A-306C1209C47A, CONTEUDO DA IMPORTACAO: 0,00</infAdProd>
+      </det>
+      <total>
+        <vNFTot>169120.00</vNFTot>
+        <ICMSTot>
+          <vCOFINS>0.00</vCOFINS>
+          <vBCST>0.00</vBCST>
+          <vICMSDeson>0.00</vICMSDeson>
+          <vProd>169120.00</vProd>
+          <vSeg>0.00</vSeg>
+          <vFCP>0.00</vFCP>
+          <vFCPST>0.00</vFCPST>
+          <vNF>169120.00</vNF>
+          <vPIS>0.00</vPIS>
+          <vIPIDevol>0.00</vIPIDevol>
+          <vBC>96635.17</vBC>
+          <vST>0.00</vST>
+          <vICMS>6764.46</vICMS>
+          <vII>0.00</vII>
+          <vFCPSTRet>0.00</vFCPSTRet>
+          <vDesc>0.00</vDesc>
+          <vOutro>0.00</vOutro>
+          <vIPI>0.00</vIPI>
+          <vFrete>0.00</vFrete>
+        </ICMSTot>
+        <IBSCBSTot>
+          <gCBS>
+            <vDevTrib>0.00</vDevTrib>
+            <vCredPres>0.00</vCredPres>
+            <vCredPresCondSus>0.00</vCredPresCondSus>
+            <vCBS>0.00</vCBS>
+            <vDif>584.48</vDif>
+          </gCBS>
+          <vBCIBSCBS>162355.54</vBCIBSCBS>
+          <gIBS>
+            <vIBS>0.00</vIBS>
+            <gIBSUF>
+              <vDevTrib>0.00</vDevTrib>
+              <vIBSUF>0.00</vIBSUF>
+              <vDif>64.94</vDif>
+            </gIBSUF>
+            <vCredPres>0.00</vCredPres>
+            <vCredPresCondSus>0.00</vCredPresCondSus>
+            <gIBSMun>
+              <vDevTrib>0.00</vDevTrib>
+              <vIBSMun>0.00</vIBSMun>
+              <vDif>0.00</vDif>
+            </gIBSMun>
+          </gIBS>
+        </IBSCBSTot>
+      </total>
+      <transp>
+        <modFrete>0</modFrete>
+        <vol>
+          <marca>TOP-PHOS</marca>
+          <pesoL>40000.000</pesoL>
+          <esp>BIG-BAG 1000KG</esp>
+          <qVol>40</qVol>
+          <nVol>1/40</nVol>
+          <pesoB>40088.000</pesoB>
+        </vol>
+        <transporta>
+          <xNome>COOCATRANS S.A</xNome>
+          <UF>RS</UF>
+          <xEnder>RUA ANTONIO ARAUJO,1046</xEnder>
+          <xMun>PASSO FUNDO</xMun>
+          <CNPJ>06308626000570</CNPJ>
+          <IE>0910381526</IE>
+        </transporta>
+      </transp>
+      <cobr>
+        <fat>
+          <vOrig>169120.00</vOrig>
+          <nFat>02474293401</nFat>
+          <vDesc>0.00</vDesc>
+          <vLiq>169120.00</vLiq>
+        </fat>
+        <dup>
+          <dVenc>2026-07-20</dVenc>
+          <nDup>001</nDup>
+          <vDup>169120.00</vDup>
+        </dup>
+      </cobr>
+      <pag>
+        <detPag>
+          <vPag>169120.00</vPag>
+          <tPag>15</tPag>
+          <indPag>1</indPag>
+        </detPag>
+      </pag>
+      <infAdic>
+        <infCpl>LOTE:331/25 FABRIC:06/12/2025 VALID:18 MESES COD INTERNO:JDJ4I94 LACRES:656641 ATE 656648 BASE DE CALCULO REDUZIDA CFE RICMS RS LIVRO I, ART 23, INC LXXXIX , ALINEA B. PIS/PASEP E COFINS TRIBUTADOS A ALIQUOTA ZERO PARA USO EXCLUSIVO COMO FER TILIZANTE CFE ART 1 DA LEI 10.925/04. IPI NAO TRIBUTADO CFE CAPITULO 31 DA TIPI END. COBR.: AVENIDA ITRIO CORREA DA COST, 1647 BAIRRO: VILA SALMEM CEP: 78745-160 CIDADE: RONDONOPOLIS UF: MT END. ENTREGA - RAZAO SOCIAL: AGRO AMAZONIA PRODUTOS AGROPECUARIOS ENDERECO: AV ITRIO CORREA DA COST,1647 BAIRRO: VILA SALMEM CEP: 78745-160 CIDADE: RONDONOPOLIS UF: MT CNPJ: 013.563.680/0003-65 INS. ESTADUAL: 130614270 PEDIDO: 582992 NR. ORDEM DE CARREGAMENTO: 653603 DETALHES CALCULO ICMS: PCT ICMS 7,00% PCT RED BASE ICMS 42,86% VALOR BASE ICMS 96635,17 VALOR ICMS 6764,46</infCpl>
+      </infAdic>
+    </infNFe>
+  </NFe>
+  <versao>4.00</versao>
 </nfeProc>
 '''
     
@@ -303,179 +329,28 @@ def create_xml_file(xml_path: str):
 
 
 def get_metadata_json():
-    """Retorna o JSON de metadados de exemplo"""
+    """Retorna o JSON de metadados do pedido de compra 582992"""
     return {
         "header": {
-            "tenantId": "00,010101"
+            "tenantId": "1"
         },
         "requestBody": {
-            "moeda": "BRL",
+            "cnpjEmitente": "02329713000200",
+            "cnpjDestinatario": "13563680000365",
             "itens": [
                 {
-                    "codigoProduto": "DC700001TB00500",
-                    "produto": "TORDON ULTRA-S DRMHPE TB 50 LT",
-                    "valorUnitario": 1927.452188,
+                    "codigoProduto": "26480",
+                    "produto": "FERTILIZANTE TOP PHOS 280 HP B1",
+                    "quantidade": 40.0,
+                    "valorUnitario": 4228.0,
+                    "valorTotal": 169120.0,
+                    "unidadeMedida": "TON",
                     "pedidoDeCompra": {
-                        "pedidoErp": "AA7116",
+                        "pedidoErp": "582992",
                         "itemPedidoErp": "0001"
-                    }
-                },
-                {
-                    "codigoProduto": "DC700001TB00500",
-                    "produto": "TORDON ULTRA-S DRMHPE TB 50 LT",
-                    "valorUnitario": 1927.452188,
-                    "pedidoDeCompra": {
-                        "pedidoErp": "AA7116",
-                        "itemPedidoErp": "0001"
-                    }
-                },
-                {
-                    "codigoProduto": "DC700004BD00200",
-                    "produto": "TORDON ULTRA-S BTLHPE BD 20 LT",
-                    "valorUnitario": 738.6,
-                    "pedidoDeCompra": {
-                        "pedidoErp": "AA7116",
-                        "itemPedidoErp": "0002"
-                    }
-                },
-                {
-                    "codigoProduto": "DC700004BD00200",
-                    "produto": "TORDON ULTRA-S BTLHPE BD 20 LT",
-                    "valorUnitario": 738.6,
-                    "pedidoDeCompra": {
-                        "pedidoErp": "AA7116",
-                        "itemPedidoErp": "0002"
-                    }
-                },
-                {
-                    "codigoProduto": "DLR00002GL00100",
-                    "produto": "DOMINUM XT-S GL 10 LT",
-                    "valorUnitario": 848.6,
-                    "pedidoDeCompra": {
-                        "pedidoErp": "AA7116",
-                        "itemPedidoErp": "0003"
-                    }
-                },
-                {
-                    "codigoProduto": "DLR00002GL00100",
-                    "produto": "DOMINUM XT-S GL 10 LT",
-                    "valorUnitario": 848.6,
-                    "pedidoDeCompra": {
-                        "pedidoErp": "AA7116",
-                        "itemPedidoErp": "0003"
-                    }
-                },
-                {
-                    "codigoProduto": "9BA00001BD00200",
-                    "produto": "GARLON 480 BD 20 LT",
-                    "valorUnitario": 996.4,
-                    "pedidoDeCompra": {
-                        "pedidoErp": "AA7116",
-                        "itemPedidoErp": "0004"
-                    }
-                },
-                {
-                    "codigoProduto": "9BA00001BD00200",
-                    "produto": "GARLON 480 BD 20 LT",
-                    "valorUnitario": 996.4,
-                    "pedidoDeCompra": {
-                        "pedidoErp": "AA7116",
-                        "itemPedidoErp": "0004"
-                    }
-                },
-                {
-                    "codigoProduto": "9OG00001BD00205",
-                    "produto": "PADRON HERBICIDE BD 20 LT",
-                    "valorUnitario": 959.4,
-                    "pedidoDeCompra": {
-                        "pedidoErp": "AA7116",
-                        "itemPedidoErp": "0005"
-                    }
-                },
-                {
-                    "codigoProduto": "9OG00001BD00205",
-                    "produto": "PADRON HERBICIDE BD 20 LT",
-                    "valorUnitario": 959.4,
-                    "pedidoDeCompra": {
-                        "pedidoErp": "AA7116",
-                        "itemPedidoErp": "0005"
-                    }
-                },
-                {
-                    "codigoProduto": "AFG00005BD00203",
-                    "produto": "TRUPER BD 20 LT",
-                    "valorUnitario": 995.6,
-                    "pedidoDeCompra": {
-                        "pedidoErp": "AA7116",
-                        "itemPedidoErp": "0006"
-                    }
-                },
-                {
-                    "codigoProduto": "AFG00005BD00203",
-                    "produto": "TRUPER BD 20 LT",
-                    "valorUnitario": 995.6,
-                    "pedidoDeCompra": {
-                        "pedidoErp": "AA7116",
-                        "itemPedidoErp": "0006"
-                    }
-                },
-                {
-                    "codigoProduto": "DC700004BD00200",
-                    "produto": "TORDON ULTRA-S BTLHPE BD 20 LT",
-                    "valorUnitario": 738.6,
-                    "pedidoDeCompra": {
-                        "pedidoErp": "AA7116",
-                        "itemPedidoErp": "0007"
-                    }
-                },
-                {
-                    "codigoProduto": "DC700004BD00200",
-                    "produto": "TORDON ULTRA-S BTLHPE BD 20 LT",
-                    "valorUnitario": 738.6,
-                    "pedidoDeCompra": {
-                        "pedidoErp": "AA7116",
-                        "itemPedidoErp": "0007"
-                    }
-                },
-                {
-                    "codigoProduto": "DC700004BD00200",
-                    "produto": "TORDON ULTRA-S BTLHPE BD 20 LT",
-                    "valorUnitario": 738.6,
-                    "pedidoDeCompra": {
-                        "pedidoErp": "AA7116",
-                        "itemPedidoErp": "0008"
-                    }
-                },
-                {
-                    "codigoProduto": "DC700004BD00200",
-                    "produto": "TORDON ULTRA-S BTLHPE BD 20 LT",
-                    "valorUnitario": 738.6,
-                    "pedidoDeCompra": {
-                        "pedidoErp": "AA7116",
-                        "itemPedidoErp": "0008"
-                    }
-                },
-                {
-                    "codigoProduto": "DC700004BD00200",
-                    "produto": "TORDON ULTRA-S BTLHPE BD 20 LT",
-                    "valorUnitario": 738.6,
-                    "pedidoDeCompra": {
-                        "pedidoErp": "AA7116",
-                        "itemPedidoErp": "0009"
-                    }
-                },
-                {
-                    "codigoProduto": "DC700004BD00200",
-                    "produto": "TORDON ULTRA-S BTLHPE BD 20 LT",
-                    "valorUnitario": 738.6,
-                    "pedidoDeCompra": {
-                        "pedidoErp": "AA7116",
-                        "itemPedidoErp": "0009"
                     }
                 }
-            ],
-            "cnpjEmitente": "47180625006349",
-            "cnpjDestinatario": "13563680000101"
+            ]
         }
     }
 
@@ -492,7 +367,7 @@ def upload_file_to_s3(presigned_url: str, file_content: bytes, content_type: str
 
 
 def test_create_process(api_url: str, api_key: str, xml_file: str = None, start_process: bool = False):
-    """Cria um processo de teste com documentos"""
+    """Cria um processo de teste com documentos - SEMPRE gera um novo processo único"""
     
     print("="*80)
     print("TESTE DE CRIAÇÃO DE PROCESSO COM DOCUMENTOS")
@@ -501,16 +376,32 @@ def test_create_process(api_url: str, api_key: str, xml_file: str = None, start_
     print(f"API Key: {api_key[:20]}..." if len(api_key) > 20 else f"API Key: {api_key}")
     print()
     
-    # Gerar process_id
+    # SEMPRE gerar um novo process_id único (nunca reutilizar)
+    import time
     process_id = str(uuid.uuid4())
-    print(f"✓ Process ID gerado: {process_id}")
+    timestamp = int(time.time())
+    print(f"✓ Novo Process ID gerado: {process_id}")
+    print(f"   Timestamp: {timestamp}")
+    print(f"   (Cada execução cria um processo completamente novo e único)")
     
-    # Preparar arquivo XML
+    # Preparar arquivo XML com nome único baseado no process_id e timestamp
     if xml_file is None:
-        xml_file = "test_nfe.xml"
+        # Usar nome único baseado no process_id e timestamp para garantir unicidade
+        import time
+        timestamp = int(time.time())
+        xml_file = f"test_nfe_{process_id[:8]}_{timestamp}.xml"
     
-    # Sempre criar um novo XML com número aleatório
-    print(f"\n📄 Criando arquivo XML de exemplo: {xml_file}")
+    # Limpar arquivo XML antigo se existir (para garantir que não há conflitos)
+    if os.path.exists(xml_file):
+        try:
+            os.remove(xml_file)
+            print(f"   (Arquivo XML antigo removido para evitar conflitos)")
+        except Exception as e:
+            print(f"   ⚠️  Aviso: Não foi possível remover arquivo antigo: {e}")
+    
+    # Sempre criar um novo XML
+    print(f"\n📄 Criando arquivo XML: {xml_file}")
+    print(f"   (Nome único para evitar conflitos com execuções anteriores)")
     create_xml_file(xml_file)
     
     # Ler XML
@@ -521,10 +412,40 @@ def test_create_process(api_url: str, api_key: str, xml_file: str = None, start_
     xml_filename = os.path.basename(xml_file)
     print(f"✓ XML carregado ({len(xml_content)} bytes)")
     
+    # 0. Verificar se o processo já existe (não deveria, mas vamos validar)
+    print(f"\n{'='*80}")
+    print("0️⃣  VERIFICANDO SE PROCESSO JÁ EXISTE")
+    print(f"{'='*80}")
+    print(f"   Process ID: {process_id}")
+    
+    try:
+        check_response = requests.get(
+            f"{api_url}/api/process/{process_id}",
+            headers={'x-api-key': api_key}
+        )
+        if check_response.ok:
+            existing_data = check_response.json()
+            existing_files = existing_data.get('files', {}).get('danfe', [])
+            if existing_files:
+                print(f"⚠️  AVISO: Processo {process_id} já existe com {len(existing_files)} arquivo(s) DANFE!")
+                print(f"   Isso não deveria acontecer - gerando novo Process ID...")
+                # Gerar novo process_id se o anterior já existir
+                process_id = str(uuid.uuid4())
+                print(f"✓ Novo Process ID gerado: {process_id}")
+            else:
+                print(f"✓ Processo não existe ou está vazio (OK para criar novo)")
+        else:
+            print(f"✓ Processo não existe (OK para criar novo)")
+    except Exception as e:
+        print(f"ℹ️  Não foi possível verificar processo existente: {e}")
+        print(f"   Continuando com criação do processo...")
+    
     # 1. Obter presigned URL para XML (DANFE)
     print(f"\n{'='*80}")
     print("1️⃣  OBTENDO URL PARA UPLOAD DO XML (DANFE)")
     print(f"{'='*80}")
+    print(f"   Process ID: {process_id}")
+    print(f"   Arquivo: {xml_filename}")
     
     xml_url_response = requests.post(
         f"{api_url}/api/process/presigned-url/xml",
@@ -551,6 +472,9 @@ def test_create_process(api_url: str, api_key: str, xml_file: str = None, start_
     print(f"\n{'='*80}")
     print("2️⃣  FAZENDO UPLOAD DO XML")
     print(f"{'='*80}")
+    print(f"   Process ID: {process_id}")
+    print(f"   Arquivo: {xml_filename}")
+    print(f"   Tamanho: {len(xml_content)} bytes")
     
     try:
         upload_file_to_s3(
@@ -558,7 +482,8 @@ def test_create_process(api_url: str, api_key: str, xml_file: str = None, start_
             xml_content,
             'application/xml'
         )
-        print(f"✓ XML enviado com sucesso!")
+        print(f"✓ XML enviado com sucesso para o processo {process_id}")
+        print(f"   (Este é um processo NOVO - não reutiliza processos anteriores)")
     except Exception as e:
         print(f"❌ Erro ao fazer upload do XML: {e}")
         return None
@@ -567,6 +492,7 @@ def test_create_process(api_url: str, api_key: str, xml_file: str = None, start_
     print(f"\n{'='*80}")
     print("3️⃣  VINCULANDO METADADOS DO PEDIDO DE COMPRA")
     print(f"{'='*80}")
+    print(f"   Process ID: {process_id}")
     
     metadata = get_metadata_json()
     
@@ -588,9 +514,15 @@ def test_create_process(api_url: str, api_key: str, xml_file: str = None, start_
         return None
     
     metadata_data = metadata_response.json()
-    print(f"✓ Metadados vinculados com sucesso!")
+    print(f"✓ Metadados vinculados com sucesso ao processo {process_id}!")
     print(f"   Nome do documento: {metadata_data.get('file_name')}")
-    print(f"   Process ID: {metadata_data.get('process_id')}")
+    print(f"   Process ID verificado: {metadata_data.get('process_id')}")
+    
+    # Validar que o process_id retornado é o mesmo que enviamos
+    if metadata_data.get('process_id') != process_id:
+        print(f"⚠️  AVISO: Process ID retornado difere do enviado!")
+        print(f"   Enviado: {process_id}")
+        print(f"   Retornado: {metadata_data.get('process_id')}")
     
     # 4. Verificar processo criado
     print(f"\n{'='*80}")
@@ -605,14 +537,27 @@ def test_create_process(api_url: str, api_key: str, xml_file: str = None, start_
         
         if process_response.ok:
             process_data = process_response.json()
-            print(f"✓ Processo encontrado:")
+            print(f"✓ Processo verificado:")
+            print(f"   Process ID: {process_data.get('process_id')}")
             print(f"   Status: {process_data.get('status')}")
             print(f"   Tipo: {process_data.get('process_type')}")
-            print(f"   DANFE: {len(process_data.get('files', {}).get('danfe', []))} arquivo(s)")
-            print(f"   Adicionais: {len(process_data.get('files', {}).get('additional', []))} arquivo(s)")
+            
+            danfe_files = process_data.get('files', {}).get('danfe', [])
+            additional_files = process_data.get('files', {}).get('additional', [])
+            
+            print(f"   Arquivos DANFE: {len(danfe_files)} arquivo(s)")
+            for idx, danfe_file in enumerate(danfe_files, 1):
+                print(f"     {idx}. {danfe_file.get('file_name', 'N/A')} - {danfe_file.get('status', 'N/A')}")
+            
+            print(f"   Arquivos adicionais: {len(additional_files)} arquivo(s)")
+            
+            # Validar que há apenas 1 arquivo DANFE (o que acabamos de enviar)
+            if len(danfe_files) != 1:
+                print(f"\n⚠️  AVISO: Esperado 1 arquivo DANFE, mas encontrado {len(danfe_files)}!")
+                print(f"   Isso pode indicar que há arquivos de execuções anteriores.")
+                print(f"   Process ID atual: {process_id}")
             
             # Mostrar metadados do pedido de compra
-            additional_files = process_data.get('files', {}).get('additional', [])
             if additional_files:
                 for file_info in additional_files:
                     if file_info.get('metadata_only'):
@@ -655,16 +600,18 @@ def test_create_process(api_url: str, api_key: str, xml_file: str = None, start_
     
     # Resumo final
     print(f"\n{'='*80}")
-    print("✅ PROCESSO CRIADO COM SUCESSO!")
+    print("✅ NOVO PROCESSO CRIADO COM SUCESSO!")
     print(f"{'='*80}")
-    print(f"\nProcess ID: {process_id}")
-    print(f"XML: {xml_filename}")
-    print(f"Metadados do pedido de compra: vinculados (sem arquivo físico)")
-    print(f"\nPara verificar o processo:")
-    print(f"  GET {api_url}/api/process/{process_id}")
-    print(f"\nPara iniciar o processamento:")
-    print(f"  POST {api_url}/api/process/start")
-    print(f"  Body: {{\"process_id\": \"{process_id}\"}}")
+    print(f"\n📋 Process ID: {process_id}")
+    print(f"   (Este é um processo NOVO e ÚNICO)")
+    print(f"\n📄 Arquivos:")
+    print(f"   - XML (DANFE): {xml_filename}")
+    print(f"   - Metadados do pedido de compra: vinculados")
+    print(f"\n🔗 URLs:")
+    print(f"   - Ver processo: GET {api_url}/api/process/{process_id}")
+    print(f"   - Iniciar processamento: POST {api_url}/api/process/start")
+    print(f"     Body: {{\"process_id\": \"{process_id}\"}}")
+    print(f"\n💡 Dica: Cada execução deste script cria um processo completamente novo!")
     
     return process_id
 
