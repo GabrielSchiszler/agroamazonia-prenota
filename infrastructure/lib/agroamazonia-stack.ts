@@ -367,7 +367,8 @@ export class AgroAmazoniaStack extends cdk.Stack {
     const reportFailureTask = new tasks.LambdaInvoke(this, 'ReportOcrFailure', {
       lambdaFunction: reportOcrFailureLambda,
       payload: sfn.TaskInput.fromObject({
-        'process_id.$': '$.process_id'
+        'process_id.$': '$.process_id',
+        'failed_rules.$': '$.validation_result.Payload.failed_rules'
       }),
       resultPath: '$.failure_result'
     });
@@ -400,8 +401,7 @@ export class AgroAmazoniaStack extends cdk.Stack {
         'status': 'FAILED',
         'protheus_response': {},
         'failure_result': {
-          'status.$': '$.failure_result.Payload.status',
-          'message.$': '$.failure_result.Payload.message'
+          'status.$': '$.failure_result.Payload.status'
         }
       },
       resultPath: '$.metrics_input'
