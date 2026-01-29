@@ -283,6 +283,9 @@ def handler(event, context):
     has_failures = any(r.get('status') == 'FAILED' for r in results)
     validation_status = 'FAILED' if has_failures else 'PASSED'
     
+    # Extrair apenas as regras que falharam para passar ao próximo step
+    failed_rules = [r for r in results_clean if r.get('status') == 'FAILED']
+    
     # Extrair dados do CFOP para facilitar acesso no Protheus
     cfop_mapping_data = {}
     for result in results:
@@ -307,7 +310,8 @@ def handler(event, context):
     
     return {
         'process_id': process_id,
-        'validation_status': validation_status
+        'validation_status': validation_status,
+        'failed_rules': failed_rules  # Passar apenas as regras que falharam
     }
 
 def apply_corrections(process_id, corrections):

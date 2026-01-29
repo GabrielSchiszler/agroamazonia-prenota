@@ -193,30 +193,23 @@ def lambda_handler(event, context):
         print("ERROR: process_id not found in event")
         return {'statusCode': 400, 'error': 'process_id not found'}
     
-    # Extrair validation_results do evento
-    # Pode estar em: validation_result.Payload.validation_results ou validation_results diretamente
-    validation_results = []
-    if 'validation_result' in event:
-        # Estrutura do Step Functions: validation_result.Payload.validation_results
-        validation_result = event.get('validation_result', {})
-        if isinstance(validation_result, dict):
-            payload = validation_result.get('Payload', validation_result)
-            validation_results = payload.get('validation_results', [])
-    elif 'validation_results' in event:
-        # Estrutura direta
-        validation_results = event.get('validation_results', [])
+    # Extrair failed_rules do evento (vem diretamente do validate_rules)
+    failed_rules = []
+    if 'failed_rules' in event:
+        failed_rules = event.get('failed_rules', [])
+        print(f"Found {len(failed_rules)} failed rules from event")
+    else:
+        print("WARNING: failed_rules not found in event")
     
     error_info = event.get('error', {})
     print(f"Processing failure for process_id: {process_id}")
-    print(f"Found {len(validation_results)} validation results")
+    print(f"Found {len(failed_rules)} failed rules")
     
     # Gerar ID único numérico de 6 dígitos
     id_unico = random.randint(100000, 999999)
     
     # Extrair detalhes das validações que falharam
     detalhes = []
-    failed_rules = [r for r in validation_results if r.get('status') == 'FAILED']
-    print(f"Found {len(failed_rules)} failed rules")
     
     if failed_rules:
         for rule in failed_rules:
@@ -297,14 +290,64 @@ def lambda_handler(event, context):
     else:
         html_parts.append('<h2>Erro no Processamento OCR</h2>')
     
-    # Resumo das regras falhadas (se houver)
+    # Detalhes das regras que falharam (se houver)
     if failed_rules:
-        rule_names = [r.get('rule', 'Desconhecida') for r in failed_rules]
-        html_parts.append('<h3>Resumo da Falha</h3>')
-        html_parts.append(f'<p>Validação falhou: <strong>{len(failed_rules)} regra(s)</strong> com divergência</p>')
-        html_parts.append(f'<p>Regras: <code>{", ".join(rule_names)}</code></p>')
+        html_parts.append('<h3>Regras que Falharam</h3>')
+        
+        for idx, rule in enumerate(failed_rules, 1):
+            rule_name = rule.get('rule', 'Desconhecida')
+            message = rule.get('message', 'Sem mensagem')
+            danfe_value = rule.get('danfe_value', 'N/A')
+            comparisons = rule.get('comparisons', [])
+            
+            html_parts.append(f'<h4>Regra #{idx}: {html.escape(str(rule_name))}</h4>')
+            html_parts.append(f'<p><strong>Motivo:</strong> {html.escape(str(message))}</p>')
+            
+            if danfe_value != 'N/A':
+                html_parts.append(f'<p><strong>Valor no DANFE:</strong> {html.escape(str(danfe_value))}</p>')
+            
+            # Detalhar comparações se houver
+            if comparisons:
+                html_parts.append('<ul>')
+                for comp in comparisons:
+                    doc_file = comp.get('doc_file', 'Documento desconhecido')
+                    doc_value = comp.get('doc_value', 'N/A')
+                    comp_status = comp.get('status', 'MISMATCH')
+                    
+                    html_parts.append(f'<li>')
+                    html_parts.append(f'<strong>Documento:</strong> {html.escape(str(doc_file))}<br>')
+                    html_parts.append(f'<strong>Valor no Documento:</strong> {html.escape(str(doc_value))}<br>')
+                    
+                    # Se for validação de produtos, detalhar campos que falharam
+                    if 'items' in comp:
+                        items = comp.get('items', [])
+                        if items:
+                            html_parts.append('<strong>Itens com divergência:</strong>')
+                            html_parts.append('<ul>')
+                            for item in items:
+                                item_status = item.get('status', 'MISMATCH')
+                                if item_status == 'MISMATCH':
+                                    fields = item.get('fields', {})
+                                    failed_fields = [f for f, v in fields.items() if v.get('status') == 'MISMATCH']
+                                    if failed_fields:
+                                        html_parts.append(f'<li>Item {item.get("item", "N/A")}:')
+                                        html_parts.append('<ul>')
+                                        for field_name in failed_fields:
+                                            field_data = fields[field_name]
+                                            danfe_val = field_data.get('danfe', 'N/A')
+                                            doc_val = field_data.get('doc', 'N/A')
+                                            html_parts.append(f'<li><strong>{html.escape(str(field_name))}:</strong> DANFE={html.escape(str(danfe_val))} vs DOC={html.escape(str(doc_val))}</li>')
+                                        html_parts.append('</ul>')
+                                        html_parts.append('</li>')
+                                    else:
+                                        html_parts.append(f'<li>Item {item.get("item", "N/A")}: Item não corresponde ao esperado no DANFE</li>')
+                            html_parts.append('</ul>')
+                    html_parts.append('</li>')
+                html_parts.append('</ul>')
+            
+            html_parts.append('<hr>')
     
-    # Lista de erros detalhados
+    # Lista de erros detalhados (formato antigo para compatibilidade)
     if detalhes:
         html_parts.append('<h3>Detalhes dos Erros</h3>')
         html_parts.append('<ul>')
@@ -388,8 +431,9 @@ def lambda_handler(event, context):
         response.raise_for_status()
         api_response = response.json()
         print(f"API response: {api_response}")
+        result = api_response.get('result')
         # Extrair sctask_id do campo 'tarefa' da resposta
-        sctask_id = api_response.get('tarefa')
+        sctask_id = result.get('requisicao')
         print(f"SCTASK ID from API: {sctask_id}")
     except requests.exceptions.HTTPError as http_err:
         print(f"Erro HTTP ao reportar falha para API externa: {http_err}")

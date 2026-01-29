@@ -80,13 +80,49 @@ def report_protheus_failure_to_sctask(process_id, error_details):
         error_type = error_details.get('error_type', 'UNKNOWN')
         status_code = error_details.get('status_code', 'N/A')
         error_code = error_details.get('error_code', 'N/A')
-        error_msg = error_details.get('error_message', error_details.get('error', 'Sem mensagem'))
+        error_msg = error_details.get('error_message', error_details.get('error', ''))
         timeout_seconds = error_details.get('timeout_seconds')
+        
+        # Determinar motivo específico da falha (prioridade: causa do Protheus > error_message > error > tipo de erro)
+        motivo_falha = None
+        if protheus_cause:
+            # Se houver causa do Protheus, usar como motivo principal
+            if isinstance(protheus_cause, list) and len(protheus_cause) > 0:
+                motivo_falha = str(protheus_cause[0]) if isinstance(protheus_cause[0], str) else str(protheus_cause[0])
+            elif isinstance(protheus_cause, str):
+                motivo_falha = protheus_cause
+        elif error_msg and error_msg.strip() and error_msg != 'Sem mensagem':
+            # Usar mensagem de erro específica
+            motivo_falha = error_msg
+        elif error_details.get('error'):
+            # Usar erro genérico se disponível
+            motivo_falha = str(error_details.get('error'))
+        elif error_type and error_type != 'UNKNOWN':
+            # Usar tipo de erro como fallback
+            if error_type == 'ReadTimeout' or error_type == 'Timeout':
+                motivo_falha = f'Timeout na requisição após {timeout_seconds or 60} segundos'
+            elif error_type == 'ConnectionError' or error_type == 'ConnectTimeout':
+                motivo_falha = 'Erro ao conectar com a API do Protheus'
+            else:
+                motivo_falha = f'Erro do tipo: {error_type}'
+        else:
+            # Último fallback
+            motivo_falha = 'Erro desconhecido ao enviar para Protheus'
+        
+        # Construir descricaoFalha com motivo específico
+        if status_code != 'N/A' and status_code >= 400:
+            descricao_falha = f"Falha no envio para Protheus (HTTP {status_code}): {motivo_falha[:200]}"
+        else:
+            descricao_falha = f"Falha no envio para Protheus: {motivo_falha[:200]}"
         
         # Construir HTML simples
         html_parts = []
         html_parts.append('<div>')
         html_parts.append('<h2>Falha no Envio para Protheus</h2>')
+        
+        # Motivo da falha (sempre presente)
+        html_parts.append('<h3>Motivo da Falha</h3>')
+        html_parts.append(f'<p><strong>{html.escape(str(motivo_falha))}</strong></p>')
         
         # Informações gerais
         html_parts.append('<h3>Informações Gerais</h3>')
@@ -105,18 +141,29 @@ def report_protheus_failure_to_sctask(process_id, error_details):
         
         html_parts.append('</ul>')
         
-        # Mensagem de erro
-        html_parts.append('<h3>Mensagem de Erro</h3>')
-        html_parts.append(f'<p>{html.escape(str(error_msg))}</p>')
-        
-        # Causa do Protheus (se disponível)
-        if protheus_cause:
-            html_parts.append('<h3>Causa do Erro (Protheus)</h3>')
+        # Causa do Protheus (se disponível e diferente do motivo principal)
+        if protheus_cause and len(protheus_cause) > 1:
+            html_parts.append('<h3>Causas Adicionais do Erro (Protheus)</h3>')
             html_parts.append('<ol>')
-            for causa_item in protheus_cause:
+            # Mostrar apenas causas adicionais (pular a primeira que já está no motivo)
+            causas_adicionais = protheus_cause[1:] if isinstance(protheus_cause, list) else []
+            for causa_item in causas_adicionais:
                 causa_text = str(causa_item) if isinstance(causa_item, str) else str(causa_item)
                 html_parts.append(f'<li>{html.escape(causa_text)}</li>')
             html_parts.append('</ol>')
+        elif protheus_cause and (not motivo_falha or motivo_falha not in str(protheus_cause)):
+            # Se a causa não foi usada como motivo principal, mostrar aqui
+            html_parts.append('<h3>Causa do Erro (Protheus)</h3>')
+            html_parts.append('<ol>')
+            for causa_item in (protheus_cause if isinstance(protheus_cause, list) else [protheus_cause]):
+                causa_text = str(causa_item) if isinstance(causa_item, str) else str(causa_item)
+                html_parts.append(f'<li>{html.escape(causa_text)}</li>')
+            html_parts.append('</ol>')
+        
+        # Mensagem de erro adicional (se diferente do motivo)
+        if error_msg and error_msg.strip() and error_msg != motivo_falha and error_msg != 'Sem mensagem':
+            html_parts.append('<h3>Mensagem de Erro Adicional</h3>')
+            html_parts.append(f'<p>{html.escape(str(error_msg))}</p>')
         
         # Detalhes técnicos (se disponíveis)
         if 'response_body' in error_details:
@@ -134,9 +181,6 @@ def report_protheus_failure_to_sctask(process_id, error_details):
         html_parts.append(f'<p><strong>Timestamp:</strong> {datetime.utcnow().isoformat()}</p>')
         
         html_parts.append('</div>')
-        
-        # descricaoFalha: resumo simples
-        descricao_falha = f"Falha no envio para Protheus"
         
         # detalhes: HTML simples
         detalhes_texto = "".join(html_parts)
@@ -1923,14 +1967,14 @@ def lambda_handler(event, context):
         if response.status_code >= 400:
             # Erro HTTP - capturar detalhes antes de lançar exceção
             status_code = response.status_code
-            error_message = f"Falha ao enviar para Protheus"
             error_details = {}
             protheus_cause = None
+            error_message = None  # Será definido com base nos detalhes extraídos
             
             try:
                 response_body = response.json()
                 error_code = response_body.get('errorCode', 'N/A')
-                error_msg = response_body.get('message', 'Sem mensagem de erro')
+                error_msg = response_body.get('message', '')
                 
                 # Extrair campo "cause" se existir (erro do Protheus)
                 if 'cause' in response_body:
@@ -1941,21 +1985,29 @@ def lambda_handler(event, context):
                     else:
                         error_details['cause'] = [protheus_cause] if protheus_cause else []
                 
+                # Construir mensagem de erro específica
+                if error_msg and error_msg.strip():
+                    error_message = f"HTTP {status_code} - {error_code}: {error_msg}"
+                elif error_code != 'N/A':
+                    error_message = f"HTTP {status_code} - Código de erro: {error_code}"
+                else:
+                    error_message = f"HTTP {status_code} - Resposta da API: {response.text[:200] if response.text else 'Sem resposta'}"
+                
                 error_details.update({
                     'status_code': status_code,
                     'response_body': response_body,
                     'error_code': error_code,
-                    'error_message': error_msg
+                    'error_message': error_message
                 })
-                error_message = f"Falha ao enviar para Protheus (HTTP {status_code}): {error_code} - {error_msg}"
             except:
                 # Se não for JSON, usar texto
                 response_text = response.text[:500] if response.text else 'Sem resposta'
+                error_message = f"HTTP {status_code} - Resposta: {response_text[:200]}"
                 error_details = {
                     'status_code': status_code,
-                    'response_body': response_text
+                    'response_body': response_text,
+                    'error_message': error_message
                 }
-                error_message = f"Falha ao enviar para Protheus (HTTP {status_code}): {response_text}"
             
             print(f"\n[10] ERRO HTTP ao chamar API Protheus:")
             print(f"[10.5] Status Code: {status_code}")
@@ -1987,9 +2039,9 @@ def lambda_handler(event, context):
         print(f"[10.4] JSON parseado com sucesso")
     except requests.exceptions.HTTPError as http_err:
         # Fallback para capturar HTTPError se ainda ocorrer
-        error_message = f"Falha ao enviar para Protheus"
         error_details = {}
         protheus_cause = None
+        error_message = None  # Será definido com base nos detalhes extraídos
         
         if hasattr(http_err, 'response') and http_err.response is not None:
             status_code = http_err.response.status_code
@@ -2007,23 +2059,36 @@ def lambda_handler(event, context):
                     else:
                         error_details['cause'] = [protheus_cause] if protheus_cause else []
                 
+                # Construir mensagem de erro específica
+                if error_msg and error_msg.strip():
+                    error_message = f"HTTP {status_code} - {error_code}: {error_msg}"
+                elif error_code != 'N/A':
+                    error_message = f"HTTP {status_code} - Código de erro: {error_code}"
+                else:
+                    error_message = f"HTTP {status_code} - Resposta: {http_err.response.text[:200] if http_err.response and http_err.response.text else 'Sem resposta'}"
+                
                 error_details.update({
                     'status_code': status_code,
                     'response_body': response_body,
                     'error_code': error_code,
-                    'error_message': error_msg
+                    'error_message': error_message
                 })
-                error_message = f"Falha ao enviar para Protheus (HTTP {status_code}): {error_code} - {error_msg}"
             except:
-                response_text = http_err.response.text[:500] if http_err.response.text else 'Sem resposta'
+                response_text = http_err.response.text[:500] if http_err.response and http_err.response.text else 'Sem resposta'
+                error_message = f"HTTP {status_code} - Resposta: {response_text[:200]}"
                 error_details = {
                     'status_code': status_code,
-                    'response_body': response_text
+                    'response_body': response_text,
+                    'error_message': error_message
                 }
-                error_message = f"Falha ao enviar para Protheus (HTTP {status_code}): {response_text}"
         else:
-            error_details = {'error': str(http_err)}
-            error_message = f"Falha ao enviar para Protheus: {str(http_err)}"
+            # Sem response, usar mensagem da exceção
+            error_message = f"HTTPError sem resposta: {str(http_err)}"
+            error_details = {
+                'error': str(http_err),
+                'error_type': type(http_err).__name__,
+                'error_message': error_message
+            }
         
         print(f"\n[10] ERRO HTTP ao chamar API Protheus (HTTPError):")
         print(f"[10.5] Detalhes: {json.dumps(error_details, indent=2, default=str)}")
