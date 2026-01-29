@@ -4,6 +4,7 @@ import boto3
 import requests
 import random
 import base64
+import html
 from datetime import datetime
 
 dynamodb = boto3.resource('dynamodb')
@@ -286,28 +287,63 @@ def lambda_handler(event, context):
         })
     
     # Preparar payload para API externa
-    # Construir texto explicativo dos erros para o campo detalhes
-    texto_erros = []
+    # Construir HTML simples com os detalhes dos erros
+    html_parts = []
+    html_parts.append('<div>')
     
+    # Título principal
+    if failed_rules:
+        html_parts.append('<h2>Falha na Validação de Regras</h2>')
+    else:
+        html_parts.append('<h2>Erro no Processamento OCR</h2>')
+    
+    # Resumo das regras falhadas (se houver)
     if failed_rules:
         rule_names = [r.get('rule', 'Desconhecida') for r in failed_rules]
-        texto_erros.append(f"Validação falhou: {len(failed_rules)} regra(s) com divergência ({', '.join(rule_names)})")
+        html_parts.append('<h3>Resumo da Falha</h3>')
+        html_parts.append(f'<p>Validação falhou: <strong>{len(failed_rules)} regra(s)</strong> com divergência</p>')
+        html_parts.append(f'<p>Regras: <code>{", ".join(rule_names)}</code></p>')
+    
+    # Lista de erros detalhados
+    if detalhes:
+        html_parts.append('<h3>Detalhes dos Erros</h3>')
+        html_parts.append('<ul>')
         
-        # Adicionar detalhes de cada erro
         for detalhe in detalhes:
             campo = detalhe.get('campo', 'Campo desconhecido')
             mensagem = detalhe.get('mensagemErro', 'Sem mensagem')
-            texto_erros.append(f"\n• {campo}: {mensagem}")
-    else:
-        texto_erros.append("Erro no processamento")
-        # Adicionar detalhes técnicos se houver
-        for detalhe in detalhes:
-            campo = detalhe.get('campo', 'Erro técnico')
-            mensagem = detalhe.get('mensagemErro', 'Sem mensagem')
-            texto_erros.append(f"\n• {campo}: {mensagem}")
+            pagina = detalhe.get('pagina', 1)
+            
+            html_parts.append('<li>')
+            html_parts.append(f'<strong>{html.escape(str(campo))}</strong>')
+            html_parts.append(f'<p>{html.escape(str(mensagem))}</p>')
+            if pagina > 1:
+                html_parts.append(f'<p><em>Página: {pagina}</em></p>')
+            html_parts.append('</li>')
+        
+        html_parts.append('</ul>')
     
-    # Juntar tudo em um texto único para o campo detalhes
-    texto_detalhes = ''.join(texto_erros) if texto_erros else "Erro no processamento"
+    # Informações técnicas (se houver erro técnico)
+    if not failed_rules and error_info:
+        html_parts.append('<h3>Informações Técnicas</h3>')
+        
+        error_type = error_info.get('Error', 'Erro desconhecido')
+        error_cause = error_info.get('Cause', 'Sem causa específica')
+        
+        html_parts.append('<ul>')
+        html_parts.append(f'<li><strong>Tipo de Erro:</strong> {html.escape(str(error_type))}</li>')
+        html_parts.append(f'<li><strong>Causa:</strong> {html.escape(str(error_cause))}</li>')
+        html_parts.append('</ul>')
+    
+    # Rodapé
+    html_parts.append('<hr>')
+    html_parts.append(f'<p><strong>Process ID:</strong> <code>{process_id}</code></p>')
+    html_parts.append(f'<p><strong>Timestamp:</strong> {datetime.utcnow().isoformat()}</p>')
+    
+    html_parts.append('</div>')
+    
+    # Juntar tudo em HTML simples
+    texto_detalhes = "".join(html_parts)
     
     # Manter descricaoFalha como resumo simples (formato original)
     if failed_rules:

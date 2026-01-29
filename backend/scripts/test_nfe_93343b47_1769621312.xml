@@ -1,0 +1,267 @@
+<?xml version="1.0" encoding="utf-8"?>
+<nfeProc xmlns="http://www.portalfiscal.inf.br/nfe" versao="4.00">
+  <protNFe>
+    <infProt>
+      <nProt>243250401092571</nProt>
+      <digVal>uDFG3AOUbDv+HpkHatR+kzsOcjo</digVal>
+      <dhRecbto>2025-12-21T19:13:28-03:00</dhRecbto>
+      <chNFe>43251202329713000200550040004742931458693440</chNFe>
+      <xMotivo>Autorizado o uso da NF-e</xMotivo>
+      <cStat>100</cStat>
+    </infProt>
+  </protNFe>
+  <NFe>
+    <infNFe Id="NFe43251202329713000200550040004742931458693440">
+      <ide>
+        <tpNF>1</tpNF>
+        <mod>55</mod>
+        <indPres>9</indPres>
+        <tpImp>1</tpImp>
+        <nNF>474293</nNF>
+        <cMunFG>4315602</cMunFG>
+        <procEmi>0</procEmi>
+        <finNFe>1</finNFe>
+        <dhEmi>2025-12-21T19:12:51-03:00</dhEmi>
+        <tpAmb>1</tpAmb>
+        <indFinal>0</indFinal>
+        <dhSaiEnt>2025-12-21T19:12:51-03:00</dhSaiEnt>
+        <idDest>2</idDest>
+        <tpEmis>1</tpEmis>
+        <cDV>0</cDV>
+        <cUF>43</cUF>
+        <serie>4</serie>
+        <natOp>VENDA PROD ESTABELECIMENTO</natOp>
+        <cNF>45869344</cNF>
+        <verProc>12.1.2410 | 3.0</verProc>
+        <indIntermed>0</indIntermed>
+      </ide>
+      <emit>
+        <xNome>TIMAC AGRO INDUSTRIA E COMERCIO DE FERTILIZANTES LTDA</xNome>
+        <IM>432060</IM>
+        <CRT>3</CRT>
+        <xFant>RIO GRANDE</xFant>
+        <CNPJ>02329713000200</CNPJ>
+        <enderEmit>
+          <xCpl>KM 002 CONJ.B</xCpl>
+          <fone>5321258100</fone>
+          <UF>RS</UF>
+          <xPais>BRASIL</xPais>
+          <cPais>1058</cPais>
+          <xLgr>ALMT. MAXIMIANO FONSECA</xLgr>
+          <xMun>RIO GRANDE</xMun>
+          <nro>1550</nro>
+          <cMun>4315602</cMun>
+          <xBairro>Zona Portuaria</xBairro>
+          <CEP>96204040</CEP>
+        </enderEmit>
+        <IE>1000194164</IE>
+      </emit>
+      <dest>
+        <xNome>AGRO AMAZONIA PRODUTOS AGROPECUARIOS S.A.</xNome>
+        <IM>1</IM>
+        <CNPJ>13563680000365</CNPJ>
+        <enderDest>
+          <fone>55669938866</fone>
+          <UF>MT</UF>
+          <xPais>BRASIL</xPais>
+          <cPais>1058</cPais>
+          <xLgr>AV ITRIO CORREA DA COST</xLgr>
+          <xMun>RONDONOPOLIS</xMun>
+          <nro>1647</nro>
+          <cMun>5107602</cMun>
+          <xBairro>VILA SALMEM</xBairro>
+          <CEP>78745160</CEP>
+        </enderDest>
+        <IE>130614270</IE>
+        <indIEDest>1</indIEDest>
+      </dest>
+      <det>
+        <nItem>1</nItem>
+        <prod>
+          <cEAN>SEM GTIN</cEAN>
+          <cProd>26480</cProd>
+          <qCom>40.0000</qCom>
+          <cEANTrib>SEM GTIN</cEANTrib>
+          <vUnTrib>4228.0000000000</vUnTrib>
+          <qTrib>40.0000</qTrib>
+          <vProd>169120.00</vProd>
+          <nFCI>ED5E9C4B-8507-4990-B51A-306C1209C47A</nFCI>
+          <xProd>FERTILIZANTE TOP PHOS 280 HP B1</xProd>
+          <vUnCom>4228.0000000000</vUnCom>
+          <indTot>1</indTot>
+          <uTrib>TON</uTrib>
+          <NCM>31055900</NCM>
+          <uCom>TON</uCom>
+          <CFOP>6101</CFOP>
+        </prod>
+        <imposto>
+          <IBSCBS>
+            <CST>515</CST>
+            <cClassTrib>515001</cClassTrib>
+            <gIBSCBS>
+              <vIBS>0.00</vIBS>
+              <gCBS>
+                <gDif>
+                  <pDif>100.0000</pDif>
+                  <vDif>584.48</vDif>
+                </gDif>
+                <pCBS>0.9000</pCBS>
+                <vCBS>0.00</vCBS>
+                <gRed>
+                  <pAliqEfet>0.3600</pAliqEfet>
+                  <pRedAliq>60.0000</pRedAliq>
+                </gRed>
+              </gCBS>
+              <gIBSUF>
+                <gDif>
+                  <pDif>100.0000</pDif>
+                  <vDif>64.94</vDif>
+                </gDif>
+                <pIBSUF>0.1000</pIBSUF>
+                <gRed>
+                  <pAliqEfet>0.0400</pAliqEfet>
+                  <pRedAliq>60.0000</pRedAliq>
+                </gRed>
+                <vIBSUF>0.00</vIBSUF>
+              </gIBSUF>
+              <vBC>162355.54</vBC>
+              <gIBSMun>
+                <gDif>
+                  <pDif>100.0000</pDif>
+                  <vDif>0.00</vDif>
+                </gDif>
+                <pIBSMun>0.0000</pIBSMun>
+                <vIBSMun>0.00</vIBSMun>
+                <gRed>
+                  <pAliqEfet>0.0000</pAliqEfet>
+                  <pRedAliq>60.0000</pRedAliq>
+                </gRed>
+              </gIBSMun>
+            </gIBSCBS>
+          </IBSCBS>
+          <ICMS>
+            <ICMS20>
+              <modBC>3</modBC>
+              <pRedBC>42.8600</pRedBC>
+              <orig>5</orig>
+              <CST>20</CST>
+              <vBC>96635.17</vBC>
+              <vICMS>6764.46</vICMS>
+              <pICMS>7.0000</pICMS>
+            </ICMS20>
+          </ICMS>
+          <IPI>
+            <IPINT>
+              <CST>53</CST>
+            </IPINT>
+            <cEnq>999</cEnq>
+          </IPI>
+          <COFINS>
+            <COFINSNT>
+              <CST>06</CST>
+            </COFINSNT>
+          </COFINS>
+          <PIS>
+            <PISNT>
+              <CST>06</CST>
+            </PISNT>
+          </PIS>
+        </imposto>
+        <vItem>169120.00</vItem>
+        <infAdProd>RS 000155-0.000048 FERTILIZANTE MINERAL COMPLEXO.7% S-SO4 %N: 3,000 %P2O5 Total: 28,000 %P2O5 SOL CNA + H2O: 22,000 %P2O5 SOL H2O: 18,000%CA: 17,000%S: 7,000 Nat. Fisica: GRANULADO RESOLUCAO DO SENADO FEDERAL 13/2012. NUMERO DA FCI ED5E9C4B-8507-4990-B51A-306C1209C47A, CONTEUDO DA IMPORTACAO: 0,00</infAdProd>
+      </det>
+      <total>
+        <vNFTot>169120.00</vNFTot>
+        <ICMSTot>
+          <vCOFINS>0.00</vCOFINS>
+          <vBCST>0.00</vBCST>
+          <vICMSDeson>0.00</vICMSDeson>
+          <vProd>169120.00</vProd>
+          <vSeg>0.00</vSeg>
+          <vFCP>0.00</vFCP>
+          <vFCPST>0.00</vFCPST>
+          <vNF>169120.00</vNF>
+          <vPIS>0.00</vPIS>
+          <vIPIDevol>0.00</vIPIDevol>
+          <vBC>96635.17</vBC>
+          <vST>0.00</vST>
+          <vICMS>6764.46</vICMS>
+          <vII>0.00</vII>
+          <vFCPSTRet>0.00</vFCPSTRet>
+          <vDesc>0.00</vDesc>
+          <vOutro>0.00</vOutro>
+          <vIPI>0.00</vIPI>
+          <vFrete>0.00</vFrete>
+        </ICMSTot>
+        <IBSCBSTot>
+          <gCBS>
+            <vDevTrib>0.00</vDevTrib>
+            <vCredPres>0.00</vCredPres>
+            <vCredPresCondSus>0.00</vCredPresCondSus>
+            <vCBS>0.00</vCBS>
+            <vDif>584.48</vDif>
+          </gCBS>
+          <vBCIBSCBS>162355.54</vBCIBSCBS>
+          <gIBS>
+            <vIBS>0.00</vIBS>
+            <gIBSUF>
+              <vDevTrib>0.00</vDevTrib>
+              <vIBSUF>0.00</vIBSUF>
+              <vDif>64.94</vDif>
+            </gIBSUF>
+            <vCredPres>0.00</vCredPres>
+            <vCredPresCondSus>0.00</vCredPresCondSus>
+            <gIBSMun>
+              <vDevTrib>0.00</vDevTrib>
+              <vIBSMun>0.00</vIBSMun>
+              <vDif>0.00</vDif>
+            </gIBSMun>
+          </gIBS>
+        </IBSCBSTot>
+      </total>
+      <transp>
+        <modFrete>0</modFrete>
+        <vol>
+          <marca>TOP-PHOS</marca>
+          <pesoL>40000.000</pesoL>
+          <esp>BIG-BAG 1000KG</esp>
+          <qVol>40</qVol>
+          <nVol>1/40</nVol>
+          <pesoB>40088.000</pesoB>
+        </vol>
+        <transporta>
+          <xNome>COOCATRANS S.A</xNome>
+          <UF>RS</UF>
+          <xEnder>RUA ANTONIO ARAUJO,1046</xEnder>
+          <xMun>PASSO FUNDO</xMun>
+          <CNPJ>06308626000570</CNPJ>
+          <IE>0910381526</IE>
+        </transporta>
+      </transp>
+      <cobr>
+        <fat>
+          <vOrig>169120.00</vOrig>
+          <nFat>02474293401</nFat>
+          <vDesc>0.00</vDesc>
+          <vLiq>169120.00</vLiq>
+        </fat>
+        <dup>
+          <dVenc>2026-07-20</dVenc>
+          <nDup>001</nDup>
+          <vDup>169120.00</vDup>
+        </dup>
+      </cobr>
+      <pag>
+        <detPag>
+          <vPag>169120.00</vPag>
+          <tPag>15</tPag>
+          <indPag>1</indPag>
+        </detPag>
+      </pag>
+      <infAdic>
+        <infCpl>LOTE:331/25 FABRIC:06/12/2025 VALID:18 MESES COD INTERNO:JDJ4I94 LACRES:656641 ATE 656648 BASE DE CALCULO REDUZIDA CFE RICMS RS LIVRO I, ART 23, INC LXXXIX , ALINEA B. PIS/PASEP E COFINS TRIBUTADOS A ALIQUOTA ZERO PARA USO EXCLUSIVO COMO FER TILIZANTE CFE ART 1 DA LEI 10.925/04. IPI NAO TRIBUTADO CFE CAPITULO 31 DA TIPI END. COBR.: AVENIDA ITRIO CORREA DA COST, 1647 BAIRRO: VILA SALMEM CEP: 78745-160 CIDADE: RONDONOPOLIS UF: MT END. ENTREGA - RAZAO SOCIAL: AGRO AMAZONIA PRODUTOS AGROPECUARIOS ENDERECO: AV ITRIO CORREA DA COST,1647 BAIRRO: VILA SALMEM CEP: 78745-160 CIDADE: RONDONOPOLIS UF: MT CNPJ: 013.563.680/0003-65 INS. ESTADUAL: 130614270 PEDIDO: 582992 NR. ORDEM DE CARREGAMENTO: 653603 DETALHES CALCULO ICMS: PCT ICMS 7,00% PCT RED BASE ICMS 42,86% VALOR BASE ICMS 96635,17 VALOR ICMS 6764,46</infCpl>
+      </infAdic>
+    </infNFe>
+  </NFe>
+  <versao>4.00</versao>
+</nfeProc>

@@ -27,6 +27,7 @@ export class AgroAmazoniaStack extends cdk.Stack {
     // Aplicar tags padrão em todos os recursos da stack
     cdk.Tags.of(this).add('Application', 'Agroamazonia-Prenota');
     cdk.Tags.of(this).add('Name', 'Agroamazonia');
+    cdk.Tags.of(this).add('ENV', this.envName);
 
     // Helper function para padronizar nomes
     const name = (resourceType: string, resourceName: string): string => {
@@ -333,62 +334,106 @@ export class AgroAmazoniaStack extends cdk.Stack {
     );
 
     // Step Functions State Machine
-    // Nota: start_time é salvo no DynamoDB pelo notifyTask, não precisa passar entre estados
+    // Cada Lambda recebe apenas o necessário e retorna apenas o necessário para o próximo passo
+    
     const notifyTask = new tasks.LambdaInvoke(this, 'NotifyReceipt', {
       lambdaFunction: notifyReceiptLambda,
-      resultPath: '$.notify_result'
+      payload: sfn.TaskInput.fromObject({
+        'process_id.$': '$.process_id',
+        'process_type.$': '$.process_type',
+        'files.$': '$.files'
+      }),
+      outputPath: '$.Payload',
+      resultPath: '$'  // Substituir contexto pelo resultado (apenas process_id)
     });
 
     const parseXmlTask = new tasks.LambdaInvoke(this, 'ParseXml', {
       lambdaFunction: parseXmlLambda,
-      resultPath: '$.xml_result'
+      payload: sfn.TaskInput.fromObject({
+        'process_id.$': '$.process_id'
+      }),
+      outputPath: '$.Payload',
+      resultPath: '$'
     });
 
     const validateTask = new tasks.LambdaInvoke(this, 'ValidateRules', {
       lambdaFunction: validateRulesLambda,
+      payload: sfn.TaskInput.fromObject({
+        'process_id.$': '$.process_id'
+      }),
       resultPath: '$.validation_result'
     });
 
     const reportFailureTask = new tasks.LambdaInvoke(this, 'ReportOcrFailure', {
       lambdaFunction: reportOcrFailureLambda,
+      payload: sfn.TaskInput.fromObject({
+        'process_id.$': '$.process_id'
+      }),
       resultPath: '$.failure_result'
     });
 
     const sendToProtheusTask = new tasks.LambdaInvoke(this, 'SendToProtheus', {
       lambdaFunction: sendToProtheusLambda,
+      payload: sfn.TaskInput.fromObject({
+        'process_id.$': '$.process_id'
+      }),
       resultPath: '$.protheus_result'
     });
 
     // Preparar dados para UpdateMetrics quando há sucesso (protheus_result)
-    // start_time será buscado do DynamoDB pelo Lambda, não precisa passar
     const prepareMetricsDataSuccess = new sfn.Pass(this, 'PrepareMetricsDataSuccess', {
       parameters: {
         'process_id.$': '$.process_id',
         'status': 'COMPLETED',
-        'protheus_response.$': '$.protheus_result.Payload',
+        'protheus_response': {
+          'codigoStatus.$': '$.protheus_result.Payload.codigoStatus'
+        },
         'failure_result': {}
       },
       resultPath: '$.metrics_input'
     });
 
     // Preparar dados para UpdateMetrics quando há falha (failure_result)
-    // start_time será buscado do DynamoDB pelo Lambda, não precisa passar
     const prepareMetricsDataFailure = new sfn.Pass(this, 'PrepareMetricsDataFailure', {
       parameters: {
         'process_id.$': '$.process_id',
         'status': 'FAILED',
         'protheus_response': {},
-        'failure_result.$': '$.failure_result.Payload'
+        'failure_result': {
+          'status.$': '$.failure_result.Payload.status',
+          'message.$': '$.failure_result.Payload.message'
+        }
       },
       resultPath: '$.metrics_input'
     });
 
-    // Usar fromJsonPathAt para passar todo o objeto metrics_input diretamente
-    // Isso evita ter que acessar campos individuais que podem não existir
-    const updateMetricsTask = new tasks.LambdaInvoke(this, 'UpdateMetrics', {
+    // Preparar dados para UpdateMetrics quando há erro de etapa (LAMBDA_ERROR)
+    const prepareMetricsDataForError = new sfn.Pass(this, 'PrepareMetricsDataForError', {
+      parameters: {
+        'process_id.$': '$.process_id',
+        'status': 'FAILED',
+        'protheus_response': {},
+        'failure_result': {},
+        'error': {
+          'Error.$': '$.error.Error',
+          'Cause.$': '$.error.Cause'
+        }
+      },
+      resultPath: '$.metrics_input'
+    });
+
+    const updateMetricsTaskSuccess = new tasks.LambdaInvoke(this, 'UpdateMetricsSuccess', {
       lambdaFunction: updateMetricsLambda,
       payload: sfn.TaskInput.fromJsonPathAt('$.metrics_input'),
       outputPath: '$.Payload'
+    });
+    
+    // IMPORTANTE: no fluxo de erro, não podemos perder $.error (usado no NotifyError).
+    // Então descartamos o output da Lambda e mantemos o input original.
+    const updateMetricsTaskError = new tasks.LambdaInvoke(this, 'UpdateMetricsError', {
+      lambdaFunction: updateMetricsLambda,
+      payload: sfn.TaskInput.fromJsonPathAt('$.metrics_input'),
+      resultPath: sfn.JsonPath.DISCARD
     });
 
     // Lambda task para atualizar status para FAILED antes de notificar erro
@@ -396,12 +441,15 @@ export class AgroAmazoniaStack extends cdk.Stack {
       lambdaFunction: updateProcessStatusLambda,
       payload: sfn.TaskInput.fromObject({
         'process_id.$': '$.process_id',
-        'error': sfn.TaskInput.fromJsonPathAt('$.error'),
+        'error': {
+          'Error.$': '$.error.Error',
+          'Cause.$': '$.error.Cause'
+        },
         'error_type': 'LAMBDA_ERROR',
-        'lambda_name.$': '$$.State.Name',
-        'state_name.$': '$$.State.Name'
+        'lambda_name.$': '$$.State.Name'
       }),
-      resultPath: '$.status_update'
+      // Não sobrescrever o input do fluxo (precisamos manter $.error para os próximos passos)
+      resultPath: sfn.JsonPath.DISCARD
     });
 
     const notifyErrorTask = new tasks.SnsPublish(this, 'NotifyError', {
@@ -427,24 +475,29 @@ export class AgroAmazoniaStack extends cdk.Stack {
       .when(sfn.Condition.stringEquals('$.validation_result.Payload.validation_status', 'FAILED'), reportFailureTask)
       .otherwise(sendToProtheusTask);
 
+    // Conectar fluxos: executar task → preparar métricas → atualizar métricas → sucesso
     sendToProtheusTask.next(prepareMetricsDataSuccess);
     reportFailureTask.next(prepareMetricsDataFailure);
-    prepareMetricsDataSuccess.next(updateMetricsTask);
-    prepareMetricsDataFailure.next(updateMetricsTask);
-    updateMetricsTask.next(successState);
+    prepareMetricsDataSuccess.next(updateMetricsTaskSuccess);
+    prepareMetricsDataFailure.next(updateMetricsTaskSuccess);
+    updateMetricsTaskSuccess.next(successState);
     
-    // Conectar atualização de status antes de notificar erro (global para todos os erros)
-    updateStatusBeforeErrorTask.next(notifyErrorTask);
+    // Fluxo de erro: atualizar status → preparar métricas → atualizar métricas → notificar → falhar
+    updateStatusBeforeErrorTask.next(prepareMetricsDataForError);
+    prepareMetricsDataForError.next(updateMetricsTaskError);
+    updateMetricsTaskError.next(notifyErrorTask);
     notifyErrorTask.next(failureState);
     
-    // Catch para capturar falhas: primeiro atualiza status, depois envia SNS (global)
-    updateMetricsTask.addCatch(updateStatusBeforeErrorTask, { resultPath: '$.error' });
+    // Catch para capturar falhas: atualizar status → preparar métricas → atualizar métricas → notificar
+    updateMetricsTaskSuccess.addCatch(updateStatusBeforeErrorTask, { resultPath: '$.error' });
+    updateMetricsTaskError.addCatch(updateStatusBeforeErrorTask, { resultPath: '$.error' });
     notifyTask.addCatch(updateStatusBeforeErrorTask, { resultPath: '$.error' });
     parseXmlTask.addCatch(updateStatusBeforeErrorTask, { resultPath: '$.error' });
     validateTask.addCatch(updateStatusBeforeErrorTask, { resultPath: '$.error' });
     sendToProtheusTask.addCatch(updateStatusBeforeErrorTask, { resultPath: '$.error' });
     reportFailureTask.addCatch(updateStatusBeforeErrorTask, { resultPath: '$.error' });
 
+    // Conectar fluxo principal
     const definition = notifyTask
       .next(parseXmlTask)
       .next(validateTask)

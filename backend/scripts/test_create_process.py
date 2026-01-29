@@ -332,7 +332,7 @@ def get_metadata_json():
     """Retorna o JSON de metadados do pedido de compra 582992"""
     return {
         "header": {
-            "tenantId": "1"
+            "tenantId": "00,010101"
         },
         "requestBody": {
             "cnpjEmitente": "02329713000200",
@@ -627,7 +627,7 @@ def main():
     args = parser.parse_args()
     
     # Valores padrão (dev environment)
-    default_api_url = 'https://kv8riifhmh.execute-api.us-east-1.amazonaws.com/v1'
+    default_api_url = 'https://gx3eyeb4i1.execute-api.us-east-1.amazonaws.com/v1'
     default_api_key = 'agroamazonia_key_UPXsb8Hb8sjbxWBQqouzYnTL5w-V_dJx'
     
     # Tentar carregar do arquivo .env se existir

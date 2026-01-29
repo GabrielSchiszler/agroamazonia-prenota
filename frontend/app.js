@@ -955,6 +955,9 @@ async function selectProcess(processId, silent = false) {
             console.log('SCTASK não encontrado no processo');
         }
         
+        // Exibir informações de erro se o processo falhou
+        displayErrorInfo(selectedProcess);
+        
         document.getElementById('processDetails').style.display = 'block';
         document.getElementById('processesList').style.display = 'none';
         document.getElementById('textractResults').innerHTML = '';
@@ -978,6 +981,116 @@ function deselectProcess() {
     selectedProcess = null;
     document.getElementById('processDetails').style.display = 'none';
     document.getElementById('processesList').style.display = 'grid';
+}
+
+function displayErrorInfo(process) {
+    // Remover qualquer exibição de erro anterior
+    const existingErrorDiv = document.getElementById('errorInfoDiv');
+    if (existingErrorDiv) {
+        existingErrorDiv.remove();
+    }
+    
+    // Se o processo falhou e tem error_info, exibir
+    if (process.status === 'FAILED' && process.error_info) {
+        const errorInfo = process.error_info;
+        const errorDiv = document.createElement('div');
+        errorDiv.id = 'errorInfoDiv';
+        errorDiv.className = 'details-card full-width';
+        errorDiv.style.background = '#fff3cd';
+        errorDiv.style.border = '2px solid #ffc107';
+        errorDiv.style.marginTop = '20px';
+        
+        let errorMessage = errorInfo.message || 'Erro desconhecido';
+        let errorType = errorInfo.type || 'UNKNOWN_ERROR';
+        let lambdaName = errorInfo.lambda || 'N/A';
+        let protheusCause = errorInfo.protheus_cause || null;
+        let timestamp = errorInfo.timestamp || null;
+        
+        // Formatar mensagem de erro
+        let formattedMessage = errorMessage;
+        try {
+            // Tentar parsear se for JSON string
+            const parsed = JSON.parse(errorMessage);
+            if (parsed.errorMessage) {
+                formattedMessage = parsed.errorMessage;
+            } else if (parsed.error) {
+                formattedMessage = parsed.error;
+            }
+        } catch (e) {
+            // Não é JSON, usar como está
+        }
+        
+        // Escapar HTML para segurança
+        const escapeHtml = (text) => {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        };
+        
+        let errorHtml = `
+            <h4 style="color: #856404; margin-bottom: 15px; display: flex; align-items: center; gap: 10px;">
+                ❌ Informações do Erro
+            </h4>
+            <div style="background: white; padding: 15px; border-radius: 8px; border: 1px solid #ffc107;">
+                <div style="margin-bottom: 12px;">
+                    <strong style="color: #856404; display: block; margin-bottom: 5px;">Tipo de Erro:</strong>
+                    <span style="color: #333; font-family: monospace; background: #f8f9fa; padding: 4px 8px; border-radius: 4px; display: inline-block;">${escapeHtml(errorType)}</span>
+                </div>
+                <div style="margin-bottom: 12px;">
+                    <strong style="color: #856404; display: block; margin-bottom: 5px;">Mensagem:</strong>
+                    <div style="color: #333; background: #f8f9fa; padding: 12px; border-radius: 4px; font-family: monospace; white-space: pre-wrap; word-wrap: break-word; max-height: 300px; overflow-y: auto;">${escapeHtml(formattedMessage)}</div>
+                </div>
+                <div style="margin-bottom: 12px;">
+                    <strong style="color: #856404; display: block; margin-bottom: 5px;">Lambda/Etapa:</strong>
+                    <span style="color: #333;">${escapeHtml(lambdaName)}</span>
+                </div>
+        `;
+        
+        // Adicionar causa do Protheus se existir
+        if (protheusCause) {
+            errorHtml += `
+                <div style="margin-bottom: 12px;">
+                    <strong style="color: #856404; display: block; margin-bottom: 5px;">Causa (Protheus):</strong>
+                    <div style="color: #333; background: #f8f9fa; padding: 12px; border-radius: 4px; font-family: monospace; white-space: pre-wrap; word-wrap: break-word; max-height: 200px; overflow-y: auto;">${escapeHtml(protheusCause)}</div>
+                </div>
+            `;
+        }
+        
+        // Adicionar timestamp se existir
+        if (timestamp) {
+            try {
+                const errorDate = new Date(timestamp);
+                errorHtml += `
+                    <div style="margin-bottom: 12px;">
+                        <strong style="color: #856404; display: block; margin-bottom: 5px;">Data/Hora do Erro:</strong>
+                        <span style="color: #333;">${errorDate.toLocaleString('pt-BR')}</span>
+                    </div>
+                `;
+            } catch (e) {
+                // Ignorar se não conseguir parsear data
+            }
+        }
+        
+        errorHtml += `
+            </div>
+        `;
+        
+        errorDiv.innerHTML = errorHtml;
+        
+        // Inserir após o card de informações do processo
+        const detailsGrid = document.querySelector('.details-grid');
+        if (detailsGrid) {
+            // Buscar o primeiro card (informações do processo)
+            const infoCard = detailsGrid.querySelector('.details-card');
+            if (infoCard) {
+                // Inserir logo após o primeiro card (informações do processo)
+                infoCard.insertAdjacentElement('afterend', errorDiv);
+            } else {
+                // Se não encontrar o card, inserir no início do grid
+                detailsGrid.insertBefore(errorDiv, detailsGrid.firstChild);
+            }
+        }
+    }
 }
 
 async function loadProcessFiles() {

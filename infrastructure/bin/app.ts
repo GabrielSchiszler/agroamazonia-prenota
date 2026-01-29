@@ -10,7 +10,7 @@ const app = new cdk.App();
 const environment = process.env.ENV || 'dev';
 
 // Validar ambiente
-if (!['dev', 'stg', 'prd'].includes(environment)) {
+if (!['dev', 'stg', 'prd', 'test'].includes(environment)) {
   throw new Error(`Invalid environment: ${environment}. Must be one of: dev, stg, prd`);
 }
 
