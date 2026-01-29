@@ -27,7 +27,6 @@ def handler(event, context):
     logger.info(f"Received event: {json.dumps(event)}")
     
     process_id = event['process_id']
-    process_type = event['process_type']
     
     # Buscar dados parseados
     pk = f"PROCESS#{process_id}"
@@ -41,16 +40,16 @@ def handler(event, context):
     file_metadata = {}  # Mapear file_name -> metadados JSON
     input_json = None  # Novo formato com header e requestBody
     
-    # Buscar INPUT_JSON dos metadados do processo (novo formato)
+    # Buscar METADATA (fonte única)
     metadata_item = next((item for item in items if item['SK'] == 'METADATA'), None)
+    
+    # Buscar process_type do METADATA (fonte única)
     if metadata_item:
-        input_json_str = metadata_item.get('INPUT_JSON') or metadata_item.get('REQUEST_BODY')
+        process_type = metadata_item.get('PROCESS_TYPE', 'AGROQUIMICOS')
+        input_json_str = metadata_item.get('INPUT_JSON')
         if input_json_str:
             try:
-                if isinstance(input_json_str, str):
-                    input_json = json.loads(input_json_str)
-                else:
-                    input_json = input_json_str
+                input_json = json.loads(input_json_str) if isinstance(input_json_str, str) else input_json_str
                 logger.info(f"Found INPUT_JSON with requestBody.itens: {len(input_json.get('requestBody', {}).get('itens', []))} produtos")
             except Exception as e:
                 logger.warning(f"Failed to parse INPUT_JSON: {str(e)}")
@@ -121,9 +120,7 @@ def handler(event, context):
         logger.warning("DANFE XML not found, skipping validation")
         return {
             'process_id': process_id,
-            'validation_results': [],
-            'status': 'SKIPPED',
-            'message': 'DANFE XML not found'
+            'validation_status': 'SKIPPED'
         }
     
     # Buscar regras configuradas para o process_type
@@ -310,9 +307,7 @@ def handler(event, context):
     
     return {
         'process_id': process_id,
-        'validation_results': results,
-        'validation_status': validation_status,
-        'status': 'VALIDATED'
+        'validation_status': validation_status
     }
 
 def apply_corrections(process_id, corrections):

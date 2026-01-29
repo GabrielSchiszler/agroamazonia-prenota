@@ -320,7 +320,27 @@ class ProcessService:
             'created_at': str(int(metadata.get('TIMESTAMP', 0)))
         }
         
+        # Adicionar error_info se existir (quando status é FAILED)
+        # Verificar diferentes possíveis nomes de campo (DynamoDB pode retornar em diferentes formatos)
+        error_info = metadata.get('error_info') or metadata.get('ERROR_INFO')
+        if error_info:
+            # Se error_info é uma string JSON, fazer parse
+            if isinstance(error_info, str):
+                try:
+                    error_info = json.loads(error_info)
+                except Exception as e:
+                    logger.warning(f"Erro ao parsear error_info como JSON: {e}")
+                    # Se não conseguir parsear, usar como string
+                    error_info = {'message': error_info}
+            
+            result['error_info'] = error_info
+            logger.info(f"Adicionado error_info ao resultado: {error_info}")
+        else:
+            logger.info(f"error_info não encontrado no metadata. Campos disponíveis: {list(metadata.keys())}")
+            logger.info(f"Status do processo: {metadata.get('STATUS')}")
+        
         logger.info(f"Returning result with {len(result.get('parsing_results', []))} parsing_results")
+        logger.info(f"Result keys: {list(result.keys())}")
         return result
     
     def list_processes(self) -> list:

@@ -22,6 +22,7 @@ export class FrontendStack extends cdk.Stack {
     // Aplicar tags padrão em todos os recursos da stack
     cdk.Tags.of(this).add('Application', 'Agroamazonia-Prenota');
     cdk.Tags.of(this).add('Name', 'Agroamazonia');
+    cdk.Tags.of(this).add('ENV', this.envName);
 
     // Helper function para padronizar nomes
     const name = (resourceType: string, resourceName: string): string => {

@@ -4,6 +4,7 @@ import boto3
 import requests
 import base64
 import random
+import html
 from datetime import datetime
 
 dynamodb = boto3.resource('dynamodb')
@@ -40,17 +41,13 @@ def get_ocr_failure_oauth2_token():
             'password': password
         }
         
-        response = requests.post(auth_url, data=data, headers=headers, timeout=30)
+        response = requests.post(auth_url, data=data, headers=headers, timeout=60)
         response.raise_for_status()
         
         token_response = response.json()
-        access_token = token_response.get('access_token') or token_response.get('accessToken') or token_response.get('token')
+        access_token = token_response.get('access_token')
         
-        if access_token:
-            return access_token
-        else:
-            print("WARNING: No access_token in OCR_FAILURE OAuth2 response")
-            return None
+        return access_token
     except Exception as e:
         print(f"WARNING: Failed to obtain OCR_FAILURE OAuth2 token: {str(e)}")
         return None
@@ -79,29 +76,70 @@ def report_protheus_failure_to_sctask(process_id, error_details):
         elif not isinstance(protheus_cause, list):
             protheus_cause = []
         
-        # Construir texto explicativo do erro
-        texto_erros = []
-        texto_erros.append(f"Falha ao enviar para Protheus (HTTP {error_details.get('status_code', 'N/A')})")
-        
+        # Construir HTML simples com os detalhes do erro
+        error_type = error_details.get('error_type', 'UNKNOWN')
+        status_code = error_details.get('status_code', 'N/A')
         error_code = error_details.get('error_code', 'N/A')
-        error_msg = error_details.get('error_message', 'Sem mensagem')
-        texto_erros.append(f"\nCódigo de erro: {error_code}")
-        texto_erros.append(f"\nMensagem: {error_msg}")
+        error_msg = error_details.get('error_message', error_details.get('error', 'Sem mensagem'))
+        timeout_seconds = error_details.get('timeout_seconds')
         
-        # Adicionar causa do Protheus se disponível
+        # Construir HTML simples
+        html_parts = []
+        html_parts.append('<div>')
+        html_parts.append('<h2>Falha no Envio para Protheus</h2>')
+        
+        # Informações gerais
+        html_parts.append('<h3>Informações Gerais</h3>')
+        html_parts.append('<ul>')
+        
+        if status_code != 'N/A':
+            html_parts.append(f'<li><strong>Status HTTP:</strong> {status_code}</li>')
+        
+        html_parts.append(f'<li><strong>Tipo de Erro:</strong> {html.escape(str(error_type))}</li>')
+        
+        if error_code != 'N/A':
+            html_parts.append(f'<li><strong>Código de Erro:</strong> {html.escape(str(error_code))}</li>')
+        
+        if timeout_seconds:
+            html_parts.append(f'<li><strong>Timeout:</strong> {timeout_seconds} segundos</li>')
+        
+        html_parts.append('</ul>')
+        
+        # Mensagem de erro
+        html_parts.append('<h3>Mensagem de Erro</h3>')
+        html_parts.append(f'<p>{html.escape(str(error_msg))}</p>')
+        
+        # Causa do Protheus (se disponível)
         if protheus_cause:
-            texto_erros.append(f"\n\nCausa do erro (Protheus):")
-            for idx, causa_item in enumerate(protheus_cause, 1):
-                if isinstance(causa_item, str):
-                    texto_erros.append(f"\n{idx}. {causa_item}")
-                else:
-                    texto_erros.append(f"\n{idx}. {str(causa_item)}")
+            html_parts.append('<h3>Causa do Erro (Protheus)</h3>')
+            html_parts.append('<ol>')
+            for causa_item in protheus_cause:
+                causa_text = str(causa_item) if isinstance(causa_item, str) else str(causa_item)
+                html_parts.append(f'<li>{html.escape(causa_text)}</li>')
+            html_parts.append('</ol>')
+        
+        # Detalhes técnicos (se disponíveis)
+        if 'response_body' in error_details:
+            html_parts.append('<h3>Detalhes Técnicos</h3>')
+            response_body = error_details.get('response_body')
+            if isinstance(response_body, dict):
+                response_body_str = json.dumps(response_body, indent=2, ensure_ascii=False)
+            else:
+                response_body_str = str(response_body)
+            html_parts.append(f'<pre>{html.escape(response_body_str[:2000])}</pre>')
+        
+        # Rodapé
+        html_parts.append('<hr>')
+        html_parts.append(f'<p><strong>Process ID:</strong> <code>{process_id}</code></p>')
+        html_parts.append(f'<p><strong>Timestamp:</strong> {datetime.utcnow().isoformat()}</p>')
+        
+        html_parts.append('</div>')
         
         # descricaoFalha: resumo simples
         descricao_falha = f"Falha no envio para Protheus"
         
-        # detalhes: texto completo explicativo
-        detalhes_texto = "\n".join(texto_erros)
+        # detalhes: HTML simples
+        detalhes_texto = "".join(html_parts)
         
         payload = {
             "idUnico": id_unico,
@@ -126,7 +164,7 @@ def report_protheus_failure_to_sctask(process_id, error_details):
         print(f"Has Authorization token: {bool(access_token)}")
         
         try:
-            response = requests.post(api_url, json=payload, headers=headers, timeout=30)
+            response = requests.post(api_url, json=payload, headers=headers, timeout=60)
             
             # Log detalhado da resposta
             print(f"[SCTASK] Response Status Code: {response.status_code}")
@@ -447,18 +485,26 @@ def extract_lotes_with_ai(info_adicional_text):
     print(f"[EXTRACT_LOTES] Extraindo lotes do texto (tamanho: {len(info_adicional_text)} chars)")
     print(f"[EXTRACT_LOTES] Preview do texto: {info_adicional_text[:200]}...")
     
-    prompt = f'''Você é um sistema de extração de informações de lotes de produtos.
+    prompt = f'''Você é um sistema de extração de informações de lotes de produtos a partir de texto livre.
 
 TEXTO COM INFORMAÇÕES ADICIONAIS:
 {info_adicional_text}
 
 INSTRUÇÕES:
-1. Extraia TODAS as informações de lotes presentes no texto.
-2. Um lote pode ter as seguintes informações:
-   - Número do lote (obrigatório) - pode aparecer como "LOTE:", "LOTE ", "Lote:", "nLote:", "LT", etc.
-   - Quantidade por lote (obrigatório se houver múltiplos lotes)
-   - Data de validade (formato: YYYY-MM-DD) - pode aparecer como "VALID:", "VAL:", "Validade:", "VALIDADE:", ou "VALID: X MESES" (calcular a data)
-   - Data de fabricação (formato: YYYY-MM-DD) - pode aparecer como "FABRIC:", "FAB:", "Fabricação:", "FABRICAÇÃO:", "FAB:", etc.
+1. Extraia informações de lote SOMENTE quando houver evidência no texto de que um identificador é um lote/partida/batch E ele estiver associado às datas.
+2. Um lote aceito DEVE conter obrigatoriamente:
+   - numero (identificador do lote)
+   - dataFabricacao
+   - dataValidade
+   A quantidade é opcional.
+3. NÃO invente. NÃO chute. NÃO trate códigos/identificadores genéricos como lote se o texto não indicar isso.
+   Exemplos do que NÃO é lote: número de pedido, série/nota, códigos internos, registros, FCI, CNPJ/IE, endereços, referências fiscais, etc.
+4. Datas:
+   - Retorne datas em YYYY-MM-DD.
+   - Se o texto trouxer DD/MM/YYYY, converta.
+   - Se a validade estiver em meses (ex: "18 MESES"), só retorne dataValidade se existir dataFabricacao para calcular; caso contrário, NÃO inclua o lote.
+5. Se houver múltiplos lotes, retorne TODOS os lotes válidos.
+6. Se não houver lote válido com (numero + dataFabricacao + dataValidade), retorne lista vazia.
 
 3. FORMATOS COMUNS DE LOTE:
    - "LOTE:331/25" → numero: "331/25"
@@ -489,10 +535,9 @@ REGRAS IMPORTANTES:
 - Retorne APENAS JSON válido, sem explicações ou comentários.
 - Se não encontrar lotes, retorne: {{"lotes": []}}
 - Quantidade deve ser um número (float).
-- Datas devem estar no formato YYYY-MM-DD ou null se não encontradas.
-- Número do lote é obrigatório. Se não encontrar, não inclua na lista.
-- Se encontrar "VALID: X MESES" sem data de fabricação, use null para dataValidade.
-- Se encontrar "VALID: X MESES" com data de fabricação, calcule: dataFabricacao + X meses = dataValidade.
+- Datas devem estar no formato YYYY-MM-DD.
+- Se não conseguir determinar dataFabricacao OU dataValidade de um lote, NÃO inclua o lote na lista.
+- Não inclua itens com numero vazio.
 
 EXEMPLOS DE EXTRAÇÃO:
 - "LOTE:331/25 FABRIC:06/12/2025 VALID:18 MESES" → {{"numero": "331/25", "dataFabricacao": "2025-12-06", "dataValidade": "2027-06-06", "quantidade": null}}
@@ -540,7 +585,7 @@ Retorne APENAS o JSON.
         lotes = parsed.get('lotes', [])
         print(f"[EXTRACT_LOTES] {len(lotes)} lote(s) extraído(s)")
         
-        # Validar e normalizar lotes
+        # Validar e normalizar lotes (aceitar somente com numero + dataFabricacao + dataValidade)
         lotes_validos = []
         for lote in lotes:
             if not lote.get('numero'):
@@ -614,11 +659,17 @@ Retorne APENAS o JSON.
             lote_valido = {
                 'numero': str(lote.get('numero', '')).strip(),
                 'quantidade': float(lote.get('quantidade', 0)) if lote.get('quantidade') else None,
-                'dataValidade': data_validade if data_validade and (not isinstance(data_validade, str) or 'MESES' not in data_validade.upper()) else None,
+                'dataValidade': data_validade if data_validade else None,
                 'dataFabricacao': data_fabricacao if data_fabricacao else None
             }
+
+            # Regra: só considerar lote se tiver numero + dataFabricacao + dataValidade
+            if not lote_valido['numero'] or not lote_valido['dataFabricacao'] or not lote_valido['dataValidade']:
+                print(f"[EXTRACT_LOTES] Ignorando (faltam campos obrigatórios numero+fab+valid): {lote_valido}")
+                continue
+
             lotes_validos.append(lote_valido)
-            print(f"[EXTRACT_LOTES] Lote válido: {lote_valido['numero']}, qtd={lote_valido['quantidade']}, fab={lote_valido['dataFabricacao']}, valid={lote_valido['dataValidade']}")
+            print(f"[EXTRACT_LOTES] Lote aceito: {lote_valido['numero']}, qtd={lote_valido['quantidade']}, fab={lote_valido['dataFabricacao']}, valid={lote_valido['dataValidade']}")
         
         return lotes_validos
         
@@ -925,7 +976,7 @@ def get_oauth2_token():
                     auth_url, 
                     data=approach['data'], 
                     headers=approach['headers'], 
-                    timeout=30
+                    timeout=60
                 )
                 
                 print(f"Response status: {response.status_code}")
@@ -1835,7 +1886,7 @@ def lambda_handler(event, context):
         
         api_url_doc = api_url + '/documento-entrada'
         print(f"\n[9.7] Fazendo requisição POST para: {api_url_doc}")
-        response = requests.post(api_url_doc, json=payload, headers=headers, timeout=30)
+        response = requests.post(api_url_doc, json=payload, headers=headers, timeout=60)
         
         print(f"\n{'='*80}")
         print(f"[10] RESPOSTA DA API PROTHEUS")
@@ -1987,6 +2038,100 @@ def lambda_handler(event, context):
         error_with_details = Exception(error_message)
         error_with_details.error_details = error_details
         raise error_with_details
+    except (requests.exceptions.ReadTimeout, requests.exceptions.Timeout) as timeout_err:
+        # Erro de timeout - capturar e reportar
+        error_type = type(timeout_err).__name__
+        error_message = f"Falha ao enviar para Protheus: Timeout na requisição ({error_type})"
+        error_details = {
+            'error': str(timeout_err),
+            'error_type': error_type,
+            'error_message': f'Read timeout após 60 segundos. A conexão com a API do Protheus excedeu o tempo limite.',
+            'timeout_seconds': 60
+        }
+        
+        print(f"\n[10] ERRO DE TIMEOUT ao chamar API Protheus:")
+        print(f"[10.5] Tipo: {error_type}")
+        print(f"[10.6] Detalhes: {json.dumps(error_details, indent=2, default=str)}")
+        import traceback
+        traceback.print_exc()
+        
+        # Reportar falha para API do SCTASK
+        print(f"\n[10.7] Reportando falha de timeout do Protheus para API do SCTASK...")
+        try:
+            sctask_id = report_protheus_failure_to_sctask(process_id, error_details)
+            if sctask_id:
+                print(f"[10.8] Falha reportada com sucesso. SCTASK ID: {sctask_id}")
+            else:
+                print(f"[10.8] Falha ao reportar para SCTASK (mas continuando com o erro)")
+        except Exception as sctask_err:
+            print(f"[10.8] Erro ao reportar para SCTASK: {str(sctask_err)}")
+            # Não bloquear o fluxo de erro principal
+        
+        error_with_details = Exception(error_message)
+        error_with_details.error_details = error_details
+        raise error_with_details
+    except (requests.exceptions.ConnectionError, requests.exceptions.ConnectTimeout) as conn_err:
+        # Erro de conexão - capturar e reportar
+        error_type = type(conn_err).__name__
+        error_message = f"Falha ao enviar para Protheus: Erro de conexão ({error_type})"
+        error_details = {
+            'error': str(conn_err),
+            'error_type': error_type,
+            'error_message': f'Erro ao conectar com a API do Protheus. Verifique a conectividade de rede e se a API está disponível.'
+        }
+        
+        print(f"\n[10] ERRO DE CONEXÃO ao chamar API Protheus:")
+        print(f"[10.5] Tipo: {error_type}")
+        print(f"[10.6] Detalhes: {json.dumps(error_details, indent=2, default=str)}")
+        import traceback
+        traceback.print_exc()
+        
+        # Reportar falha para API do SCTASK
+        print(f"\n[10.7] Reportando falha de conexão do Protheus para API do SCTASK...")
+        try:
+            sctask_id = report_protheus_failure_to_sctask(process_id, error_details)
+            if sctask_id:
+                print(f"[10.8] Falha reportada com sucesso. SCTASK ID: {sctask_id}")
+            else:
+                print(f"[10.8] Falha ao reportar para SCTASK (mas continuando com o erro)")
+        except Exception as sctask_err:
+            print(f"[10.8] Erro ao reportar para SCTASK: {str(sctask_err)}")
+            # Não bloquear o fluxo de erro principal
+        
+        error_with_details = Exception(error_message)
+        error_with_details.error_details = error_details
+        raise error_with_details
+    except requests.exceptions.RequestException as req_err:
+        # Outros erros de requisição (SSLError, ProxyError, etc.) - capturar e reportar
+        error_type = type(req_err).__name__
+        error_message = f"Falha ao enviar para Protheus: Erro na requisição ({error_type})"
+        error_details = {
+            'error': str(req_err),
+            'error_type': error_type,
+            'error_message': f'Erro ao realizar requisição para a API do Protheus: {str(req_err)}'
+        }
+        
+        print(f"\n[10] ERRO DE REQUISIÇÃO ao chamar API Protheus:")
+        print(f"[10.5] Tipo: {error_type}")
+        print(f"[10.6] Detalhes: {json.dumps(error_details, indent=2, default=str)}")
+        import traceback
+        traceback.print_exc()
+        
+        # Reportar falha para API do SCTASK
+        print(f"\n[10.7] Reportando falha de requisição do Protheus para API do SCTASK...")
+        try:
+            sctask_id = report_protheus_failure_to_sctask(process_id, error_details)
+            if sctask_id:
+                print(f"[10.8] Falha reportada com sucesso. SCTASK ID: {sctask_id}")
+            else:
+                print(f"[10.8] Falha ao reportar para SCTASK (mas continuando com o erro)")
+        except Exception as sctask_err:
+            print(f"[10.8] Erro ao reportar para SCTASK: {str(sctask_err)}")
+            # Não bloquear o fluxo de erro principal
+        
+        error_with_details = Exception(error_message)
+        error_with_details.error_details = error_details
+        raise error_with_details
     except Exception as e:
         print(f"\n[10] ERRO ao chamar API Protheus: {e}")
         import traceback
@@ -1996,9 +2141,29 @@ def lambda_handler(event, context):
         if hasattr(e, 'error_details') and isinstance(e.error_details, dict):
             raise e
         
-        # Caso contrário, criar exceção simples sem cause
-        error_with_details = Exception(f"Falha ao enviar para Protheus: {str(e)}")
-        error_with_details.error_details = {'error': str(e), 'error_type': type(e).__name__}
+        # Caso contrário, criar exceção e reportar para API
+        error_type = type(e).__name__
+        error_message = f"Falha ao enviar para Protheus: {str(e)}"
+        error_details = {
+            'error': str(e),
+            'error_type': error_type,
+            'error_message': f'Erro inesperado ao enviar para Protheus: {str(e)}'
+        }
+        
+        # Reportar falha para API do SCTASK
+        print(f"\n[10.7] Reportando falha inesperada do Protheus para API do SCTASK...")
+        try:
+            sctask_id = report_protheus_failure_to_sctask(process_id, error_details)
+            if sctask_id:
+                print(f"[10.8] Falha reportada com sucesso. SCTASK ID: {sctask_id}")
+            else:
+                print(f"[10.8] Falha ao reportar para SCTASK (mas continuando com o erro)")
+        except Exception as sctask_err:
+            print(f"[10.8] Erro ao reportar para SCTASK: {str(sctask_err)}")
+            # Não bloquear o fluxo de erro principal
+        
+        error_with_details = Exception(error_message)
+        error_with_details.error_details = error_details
         raise error_with_details
     
     # Se chegou aqui, API foi chamada com sucesso

@@ -33,33 +33,37 @@ def lambda_handler(event, context):
     # Buscar start_time do DynamoDB
     start_time_str = None
     process_type = 'UNKNOWN'
+    metadata_response = None
     try:
         pk = f"PROCESS#{process_id}"
-        response = table.get_item(
+        metadata_response = table.get_item(
             Key={'PK': pk, 'SK': 'METADATA'}
         )
         
-        if 'Item' in response:
-            start_time_str = response['Item'].get('START_TIME')
-            process_type = response['Item'].get('PROCESS_TYPE', 'UNKNOWN')
+        if 'Item' in metadata_response:
+            start_time_str = metadata_response['Item'].get('START_TIME')
+            process_type = metadata_response['Item'].get('PROCESS_TYPE', 'UNKNOWN')
             print(f"Found start_time in DynamoDB: {start_time_str}")
             print(f"Found process_type: {process_type}")
         else:
-            print(f"WARNING: Process {process_id} not found in DynamoDB")
+            print(f"WARNING: Process {process_id} METADATA not found in DynamoDB")
             process_type = 'UNKNOWN'
     except Exception as e:
         print(f"ERROR: Failed to get start_time from DynamoDB: {e}")
+        import traceback
+        print(f"Traceback: {traceback.format_exc()}")
         process_type = 'UNKNOWN'
     
-    # Se process_type ainda não foi definido, tentar buscar do evento
-    if not process_type or process_type == 'UNKNOWN':
-        process_type = event.get('process_type', 'UNKNOWN')
-        print(f"Using process_type from event: {process_type}")
+    # process_type vem apenas do DynamoDB (fonte única)
     
     # Determinar status baseado no evento
     event_status = event.get('status', '')
     error_info = event.get('error', {})
     failure_result = event.get('failure_result', {})
+    
+    # Verificar se error_info não é vazio (pode ser {} quando não há erro)
+    # Step Functions passa erro no formato: {Error: "...", Cause: "..."}
+    has_error_info = error_info and isinstance(error_info, dict) and (error_info.get('Error') or error_info.get('Cause') or len(error_info) > 0)
     
     # Verificar se failure_result não é vazio (pode ser {} quando não há falha)
     has_failure_result = failure_result and isinstance(failure_result, dict) and len(failure_result) > 0
@@ -121,29 +125,9 @@ def lambda_handler(event, context):
         import traceback
         traceback.print_exc()
     
-    # Lógica corrigida para determinar status
-    if error_info:
-        status = 'FAILED'
-    elif has_failure_result:
-        # Se há failure_result não vazio, significa que a validação falhou
-        status = 'FAILED'
-    elif event_status in ['COMPLETED', 'SUCCESS']:
-        status = 'SUCCESS'
-    elif event_status == 'FAILED':
-        status = 'FAILED'
-    elif event.get('validation_status') == 'FAILED':
-        status = 'FAILED'
-    elif 'protheus_response' in event:
-        protheus_response = event.get('protheus_response', {})
-        # Verificar se protheus_response não é vazio
-        if protheus_response and isinstance(protheus_response, dict) and len(protheus_response) > 0:
-            protheus_status = protheus_response.get('codigoStatus', '00')
-            status = 'SUCCESS' if protheus_status == '00' else 'FAILED'
-        else:
-            # Se protheus_response está vazio, considerar como sucesso (processo completou)
-            status = 'SUCCESS'
-    else:
-        status = 'SUCCESS'  # Default para sucesso se não há indicação de erro
+    # Determinar status (fonte única: campo 'status' do evento)
+    status = event_status if event_status else 'SUCCESS'
+    print(f"Status determinado: {status}")
     
     # Calcular tempo de processamento
     end_time = datetime.now(timezone.utc)
@@ -152,33 +136,77 @@ def lambda_handler(event, context):
     if start_time_str:
         try:
             # Tentar diferentes formatos de data
-            if 'T' in start_time_str:
-                start_time = datetime.fromisoformat(start_time_str.replace('Z', '+00:00'))
-            else:
+            print(f"Tentando parsear start_time: '{start_time_str}' (tipo: {type(start_time_str)})")
+            
+            # Formato ISO com 'Z' no final (ex: 2025-01-26T20:37:40.071Z)
+            if isinstance(start_time_str, str) and 'T' in start_time_str:
+                # Remover 'Z' e adicionar '+00:00' para timezone UTC
+                if start_time_str.endswith('Z'):
+                    start_time_str_parsed = start_time_str[:-1] + '+00:00'
+                elif '+' in start_time_str or start_time_str.count('-') >= 3:
+                    # Já tem timezone ou é formato ISO completo
+                    start_time_str_parsed = start_time_str
+                else:
+                    # Formato ISO sem timezone, assumir UTC
+                    start_time_str_parsed = start_time_str + '+00:00'
+                
+                start_time = datetime.fromisoformat(start_time_str_parsed)
+                print(f"Parseado como ISO: {start_time_str_parsed} -> {start_time}")
+            elif isinstance(start_time_str, (int, float)) or (isinstance(start_time_str, str) and start_time_str.replace('.', '').isdigit()):
                 # Formato timestamp Unix
                 start_time = datetime.fromtimestamp(float(start_time_str), tz=timezone.utc)
+                print(f"Parseado como timestamp Unix: {start_time_str} -> {start_time}")
+            else:
+                raise ValueError(f"Formato de data não reconhecido: {start_time_str}")
+            
+            # Garantir que start_time tem timezone UTC
+            if start_time.tzinfo is None:
+                start_time = start_time.replace(tzinfo=timezone.utc)
+                print(f"Adicionado timezone UTC ao start_time: {start_time}")
+            
             processing_time = (end_time - start_time).total_seconds()
-            print(f"Tempo calculado: {processing_time}s (start: {start_time}, end: {end_time})")
+            
+            # Validar que o tempo não é negativo ou muito grande (indicando erro de parse)
+            if processing_time < 0:
+                print(f"WARNING: Tempo negativo calculado ({processing_time}s), pode indicar problema de timezone")
+                # Se negativo mas pequeno (< 1 hora), pode ser apenas diferença de timezone, usar valor absoluto
+                if abs(processing_time) < 3600:
+                    processing_time = abs(processing_time)
+                    print(f"Ajustado para valor absoluto: {processing_time}s")
+                else:
+                    raise ValueError(f"Tempo negativo muito grande: {processing_time}s")
+            elif processing_time > 86400:  # Mais de 24 horas
+                print(f"WARNING: Tempo muito grande ({processing_time}s), pode indicar erro de parse")
+                raise ValueError(f"Tempo muito grande: {processing_time}s")
+            
+            print(f"✓ Tempo calculado com sucesso: {processing_time}s (start: {start_time}, end: {end_time})")
         except Exception as e:
-            print(f"Erro ao parsear start_time '{start_time_str}': {e}")
+            print(f"ERROR: Erro ao parsear start_time '{start_time_str}': {e}")
+            import traceback
+            print(f"Traceback completo:\n{traceback.format_exc()}")
             # Usar tempo padrão de 30 segundos se não conseguir calcular
             processing_time = 30
+            print(f"Usando tempo padrão de 30s devido ao erro")
     else:
-        print("start_time não encontrado no DynamoDB, usando tempo padrão de 30s")
+        print("WARNING: start_time não encontrado no DynamoDB, usando tempo padrão de 30s")
+        if metadata_response:
+            print(f"Response do DynamoDB: Item existe = {'Item' in metadata_response}")
+            if 'Item' in metadata_response:
+                print(f"Campos disponíveis no Item: {list(metadata_response['Item'].keys())}")
+        else:
+            print("Nenhuma resposta do DynamoDB disponível")
         processing_time = 30
     
-    # Determinar tipo de erro
+    # Determinar tipo de erro (fonte única: campo 'error' do evento)
     error_type = None
     if status == 'FAILED':
-        if error_info:
-            error_type = error_info.get('Error', 'UNKNOWN_ERROR')
+        if has_error_info:
+            error_type = 'LAMBDA_ERROR'
         elif has_failure_result:
-            # Se há failure_result não vazio, significa que foi uma falha de validação reportada
-            error_type = 'VALIDATION_FAILED'
-        elif event.get('validation_status') == 'FAILED':
             error_type = 'VALIDATION_FAILED'
         else:
             error_type = 'PROCESSING_ERROR'
+        print(f"Error type: {error_type}")
     
     # Data para agregação
     date_key = end_time.strftime('%Y-%m-%d')

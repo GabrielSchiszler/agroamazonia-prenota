@@ -17,54 +17,27 @@ def handler(event, context):
     """
     logger.info(f"Received event: {json.dumps(event)}")
     
-    # Extrair informações do evento
-    # Quando vem do Step Functions Catch, o process_id está no nível raiz do evento
-    process_id = event.get('process_id') or event.get('processId')
-    error_message = event.get('error_message') or event.get('errorMessage') or 'Erro desconhecido'
-    error_type = event.get('error_type') or event.get('errorType') or 'UNKNOWN_ERROR'
-    lambda_name = event.get('lambda_name') or event.get('lambdaName') or 'unknown'
+    # Extrair informações do evento (fonte única)
+    process_id = event.get('process_id')
+    error_type = event.get('error_type', 'LAMBDA_ERROR')
+    lambda_name = event.get('lambda_name', 'unknown')
     
-    # Se o evento vem do Step Functions Catch, extrair informações do erro
+    # Extrair error do Step Functions Catch (formato: {Error: "...", Cause: "..."})
+    error_info = event.get('error', {})
+    error_message = error_info.get('Error', 'Erro desconhecido') if isinstance(error_info, dict) else str(error_info)
+    cause_str = error_info.get('Cause', '') if isinstance(error_info, dict) else ''
+    
+    # Extrair protheus_cause do Cause se for JSON
     protheus_cause = None
-    if 'error' in event:
-        error_info = event.get('error', {})
-        if isinstance(error_info, dict):
-            # Step Functions Catch coloca Error e Cause no objeto error
-            error_message = error_info.get('Error', error_info.get('Cause', error_message))
-            cause_str = error_info.get('Cause', '')
-            
-            # Tentar extrair do JSON string se Error ou Cause for uma string JSON
-            if isinstance(error_message, str):
-                try:
-                    error_json = json.loads(error_message)
-                    if isinstance(error_json, dict):
-                        error_message = error_json.get('errorMessage', error_json.get('error', error_message))
-                        # Extrair campo "cause" do Protheus se existir no error_details
-                        if 'error_details' in error_json:
-                            error_details = error_json.get('error_details', {})
-                            if isinstance(error_details, dict) and 'cause' in error_details:
-                                protheus_cause = error_details.get('cause')
-                except:
-                    pass
-            
-            # Tentar extrair cause diretamente do Cause do Step Functions (pode ser JSON string)
-            if not protheus_cause and cause_str:
-                try:
-                    cause_json = json.loads(cause_str)
-                    if isinstance(cause_json, dict):
-                        # Se cause_json tem error_details com cause
-                        if 'error_details' in cause_json:
-                            error_details = cause_json.get('error_details', {})
-                            if isinstance(error_details, dict) and 'cause' in error_details:
-                                protheus_cause = error_details.get('cause')
-                except:
-                    # Se não for JSON, pode ser que cause_str já seja o cause
-                    pass
-            
-            # O process_id deve estar no nível raiz do evento (Step Functions mantém variáveis do contexto)
-            # Se não encontrou, tentar extrair do error_info (pode estar em alguns casos)
-            if not process_id:
-                process_id = error_info.get('process_id')
+    if cause_str:
+        try:
+            cause_json = json.loads(cause_str)
+            if isinstance(cause_json, dict) and 'error_details' in cause_json:
+                error_details = cause_json.get('error_details', {})
+                if isinstance(error_details, dict):
+                    protheus_cause = error_details.get('cause')
+        except:
+            pass
     
     if not process_id:
         logger.error("process_id não encontrado no evento")

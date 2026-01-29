@@ -63,11 +63,9 @@ def handler(event, context):
         
         logger.info(f"XML parsed and saved to DynamoDB successfully")
         
+        # Retornar apenas process_id para próximo step
         return {
-            'process_id': process_id,
-            'process_type': event.get('process_type'),
-            'parsed_data': parsed_data,
-            'source': 'XML'
+            'process_id': process_id
         }
     
     except Exception as e:

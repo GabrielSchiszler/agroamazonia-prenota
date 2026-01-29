@@ -33,6 +33,7 @@ infrastructure/*.d.ts
 .env.homolog
 .env.prod
 .env.development
+.env.test
 .env.*.local
 
 # Logs
