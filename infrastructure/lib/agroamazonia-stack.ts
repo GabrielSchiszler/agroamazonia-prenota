@@ -25,9 +25,10 @@ export class AgroAmazoniaStack extends cdk.Stack {
     this.envName = props.environment || 'dev';
 
     // Aplicar tags padrão em todos os recursos da stack
+    // Stage é o padrão AWS para rastreamento de custos
     cdk.Tags.of(this).add('Application', 'Agroamazonia-Prenota');
     cdk.Tags.of(this).add('Name', 'Agroamazonia');
-    cdk.Tags.of(this).add('ENV', this.envName);
+    cdk.Tags.of(this).add('Stage', this.envName);
 
     // Helper function para padronizar nomes
     const name = (resourceType: string, resourceName: string): string => {
