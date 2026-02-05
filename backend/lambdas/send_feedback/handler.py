@@ -110,6 +110,185 @@ def lambda_handler(event, context):
                 except json.JSONDecodeError:
                     print(f"[FEEDBACK] Cause não é JSON válido, mantendo como string")
             
+            # Se for falha de validação, buscar detalhes das regras que falharam
+            if details.get('status') == 'VALIDATION_FAILURE':
+                # Prioridade 1: Usar failed_rules que vêm do Step Functions (do report_ocr_failure)
+                failed_rules_from_event = details.get('failed_rules', [])
+                failed_rules_details_from_event = details.get('failed_rules_details', [])
+                
+                # Se failure_result contém failed_rules, usar também
+                failure_result = details.get('failure_result', {})
+                if isinstance(failure_result, dict):
+                    if 'failed_rules' in failure_result and not failed_rules_from_event:
+                        failed_rules_from_event = failure_result.get('failed_rules', [])
+                    if 'failed_rules_details' in failure_result and not failed_rules_details_from_event:
+                        failed_rules_details_from_event = failure_result.get('failed_rules_details', [])
+                
+                if failed_rules_from_event:
+                    print(f"[FEEDBACK] Usando {len(failed_rules_from_event)} regras que falharam do evento (Step Functions)")
+                    
+                    # Sempre criar estrutura detalhada para o SNS (mesmo se vier formatado do evento)
+                    # Criar estrutura similar ao que é enviado para SCTASK, mas em formato JSON estruturado
+                    failed_rules_summary = []
+                    for idx, rule in enumerate(failed_rules_from_event, 1):
+                        rule_name = rule.get('rule', 'Desconhecida')
+                        message = rule.get('message', 'Sem mensagem')
+                        danfe_value = rule.get('danfe_value', 'N/A')
+                        comparisons = rule.get('comparisons', [])
+                        
+                        rule_summary = {
+                            'regra_numero': idx,
+                            'nome_regra': rule_name,
+                            'mensagem': message,
+                            'valor_danfe': danfe_value,
+                            'total_comparacoes': len(comparisons)
+                        }
+                        
+                        # Detalhar cada comparação/documento que falhou
+                        comparacoes_detalhadas = []
+                        for comp in comparisons:
+                            doc_file = comp.get('doc_file', 'Documento desconhecido')
+                            doc_value = comp.get('doc_value', 'N/A')
+                            comp_status = comp.get('status', 'MISMATCH')
+                            
+                            comp_detalhada = {
+                                'documento': doc_file,
+                                'valor_documento': doc_value,
+                                'status': comp_status
+                            }
+                            
+                            # Se for validação de produtos, detalhar campos que falharam
+                            if 'items' in comp:
+                                items = comp.get('items', [])
+                                itens_com_falha = []
+                                for item in items:
+                                    if item.get('status') == 'MISMATCH':
+                                        fields = item.get('fields', {})
+                                        campos_falhados = {}
+                                        for field_name, field_data in fields.items():
+                                            if field_data.get('status') == 'MISMATCH':
+                                                campos_falhados[field_name] = {
+                                                    'valor_danfe': field_data.get('danfe', 'N/A'),
+                                                    'valor_documento': field_data.get('doc', 'N/A')
+                                                }
+                                        if campos_falhados:
+                                            itens_com_falha.append({
+                                                'item': item.get('item', 'N/A'),
+                                                'campos_com_divergencia': campos_falhados
+                                            })
+                                
+                                if itens_com_falha:
+                                    comp_detalhada['itens_com_falha'] = itens_com_falha
+                            
+                            comparacoes_detalhadas.append(comp_detalhada)
+                        
+                        if comparacoes_detalhadas:
+                            rule_summary['comparacoes'] = comparacoes_detalhadas
+                        
+                        failed_rules_summary.append(rule_summary)
+                    
+                    # Adicionar resumo formatado para o SNS
+                    details['failed_rules'] = failed_rules_from_event
+                    details['failed_rules_summary'] = failed_rules_summary
+                    
+                    # Se vierem detalhes formatados do evento (formato SCTASK), incluir também
+                    if failed_rules_details_from_event:
+                        details['failed_rules_details'] = failed_rules_details_from_event
+                        print(f"[FEEDBACK] Detalhes formatados do evento incluídos")
+                    
+                    print(f"[FEEDBACK] Resumo detalhado das regras criado para SNS ({len(failed_rules_summary)} regras)")
+                else:
+                    # Fallback: Buscar do DynamoDB se não vier do evento
+                    try:
+                        pk = f"PROCESS#{process_id}"
+                        # Buscar resultados de validação do DynamoDB
+                        validation_response = table.query(
+                            KeyConditionExpression='PK = :pk AND begins_with(SK, :sk)',
+                            ExpressionAttributeValues={
+                                ':pk': pk,
+                                ':sk': 'VALIDATION#'
+                            }
+                        )
+                        
+                        validation_items = validation_response.get('Items', [])
+                        if validation_items:
+                            # Ordenar por timestamp e pegar o mais recente
+                            latest_validation = max(validation_items, key=lambda x: x.get('TIMESTAMP', 0))
+                            validation_results_str = latest_validation.get('VALIDATION_RESULTS', '[]')
+                            try:
+                                validation_results = json.loads(validation_results_str) if isinstance(validation_results_str, str) else validation_results_str
+                                # Filtrar apenas as regras que falharam
+                                failed_rules_from_db = [r for r in validation_results if r.get('status') == 'FAILED']
+                                if failed_rules_from_db:
+                                    details['failed_rules'] = failed_rules_from_db
+                                    print(f"[FEEDBACK] Encontradas {len(failed_rules_from_db)} regras que falharam no DynamoDB")
+                                    
+                                    # Criar estrutura detalhada para o SNS (similar ao formato do evento)
+                                    failed_rules_summary = []
+                                    for idx, rule in enumerate(failed_rules_from_db, 1):
+                                        rule_name = rule.get('rule', 'Desconhecida')
+                                        message = rule.get('message', 'Sem mensagem')
+                                        danfe_value = rule.get('danfe_value', 'N/A')
+                                        comparisons = rule.get('comparisons', [])
+                                        
+                                        rule_summary = {
+                                            'regra_numero': idx,
+                                            'nome_regra': rule_name,
+                                            'mensagem': message,
+                                            'valor_danfe': danfe_value,
+                                            'total_comparacoes': len(comparisons)
+                                        }
+                                        
+                                        # Detalhar cada comparação/documento que falhou
+                                        comparacoes_detalhadas = []
+                                        for comp in comparisons:
+                                            doc_file = comp.get('doc_file', 'Documento desconhecido')
+                                            doc_value = comp.get('doc_value', 'N/A')
+                                            comp_status = comp.get('status', 'MISMATCH')
+                                            
+                                            comp_detalhada = {
+                                                'documento': doc_file,
+                                                'valor_documento': doc_value,
+                                                'status': comp_status
+                                            }
+                                            
+                                            # Se for validação de produtos, detalhar campos que falharam
+                                            if 'items' in comp:
+                                                items = comp.get('items', [])
+                                                itens_com_falha = []
+                                                for item in items:
+                                                    if item.get('status') == 'MISMATCH':
+                                                        fields = item.get('fields', {})
+                                                        campos_falhados = {}
+                                                        for field_name, field_data in fields.items():
+                                                            if field_data.get('status') == 'MISMATCH':
+                                                                campos_falhados[field_name] = {
+                                                                    'valor_danfe': field_data.get('danfe', 'N/A'),
+                                                                    'valor_documento': field_data.get('doc', 'N/A')
+                                                                }
+                                                        if campos_falhados:
+                                                            itens_com_falha.append({
+                                                                'item': item.get('item', 'N/A'),
+                                                                'campos_com_divergencia': campos_falhados
+                                                            })
+                                                
+                                                if itens_com_falha:
+                                                    comp_detalhada['itens_com_falha'] = itens_com_falha
+                                            
+                                            comparacoes_detalhadas.append(comp_detalhada)
+                                        
+                                        if comparacoes_detalhadas:
+                                            rule_summary['comparacoes'] = comparacoes_detalhadas
+                                        
+                                        failed_rules_summary.append(rule_summary)
+                                    
+                                    details['failed_rules_summary'] = failed_rules_summary
+                                    print(f"[FEEDBACK] Resumo detalhado das regras criado para SNS ({len(failed_rules_summary)} regras)")
+                            except Exception as parse_err:
+                                print(f"[FEEDBACK] WARNING: Erro ao parsear VALIDATION_RESULTS: {str(parse_err)}")
+                    except Exception as validation_err:
+                        print(f"[FEEDBACK] WARNING: Erro ao buscar validações do DynamoDB: {str(validation_err)}")
+            
             # Tentar buscar informações completas da requisição Protheus do DynamoDB
             try:
                 pk = f"PROCESS#{process_id}"
@@ -239,7 +418,9 @@ def lambda_handler(event, context):
         
         important_fields = ['process_id', 'process_type', 'status', 'start_time', 'end_time', 
                            'timestamp', 'errorMessage', 'errorType', 'errorCode', 'message', 
-                           'cause', 'stackTrace', 'requestId', 'request_url', 'Error', 'state_name']
+                           'cause', 'stackTrace', 'requestId', 'request_url', 'Error', 'state_name',
+                           'failed_rules', 'failed_rules_details', 'failed_rules_summary', 
+                           'validation_status', 'failure_result']
         
         for field in important_fields:
             if field in details:

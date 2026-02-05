@@ -221,7 +221,7 @@ def lambda_handler(event, context):
         
         # Enviar feedback para API
         logger.info("Enviando feedback de sucesso para API do ServiceNow...")
-        send_feedback_to_api(process_id, True, details)
+        send_feedback_to_api(process_id, True, organized_details)
         
         # Enviar o mesmo payload para SNS
         topic_arn = os.environ.get('SNS_TOPIC_ARN')

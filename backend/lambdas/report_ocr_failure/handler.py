@@ -481,7 +481,9 @@ def lambda_handler(event, context):
         'statusCode': 200,
         'process_id': process_id,
         'status': 'FAILED',
-        'api_response': api_response
+        'api_response': api_response,
+        'failed_rules': failed_rules,  # Incluir detalhes das regras que falharam
+        'failed_rules_details': detalhes  # Incluir detalhes formatados
     }
-    print(f"Returning: {json.dumps(result)}")
+    print(f"Returning: {json.dumps(result, default=str)}")
     return result

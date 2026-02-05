@@ -406,9 +406,7 @@ export class AgroAmazoniaStack extends cdk.Stack {
       parameters: {
         'process_id.$': '$.process_id',
         'status': 'SUCCESS',
-        'protheus_response': {
-          'codigoStatus.$': '$.protheus_result.Payload.codigoStatus'
-        },
+        'protheus_response.$': '$.protheus_result.Payload.protheus_response',
         'protheus_result.$': '$.protheus_result',
         'failure_result': {}
       },
@@ -509,10 +507,10 @@ export class AgroAmazoniaStack extends cdk.Stack {
         'success': false,
         'details': {
           'status': 'VALIDATION_FAILURE',
-          'error_details': {
-            'validation_status': 'FAILED',
-            'failure_result.$': '$.failure_result.Payload'
-          },
+          'validation_status': 'FAILED',
+          'failed_rules.$': '$.failure_result.Payload.failed_rules',
+          'failed_rules_details.$': '$.failure_result.Payload.failed_rules_details',
+          'failure_result.$': '$.failure_result.Payload',
           'timestamp.$': '$$.State.EnteredTime'
         }
       },

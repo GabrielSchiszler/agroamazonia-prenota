@@ -9,7 +9,7 @@ As regras são armazenadas com:
 
 Uso:
     python copy_rules.py --source-table SOURCE_TABLE --target-table TARGET_TABLE [--region us-east-1] [--dry-run]
-    python copy_rules.py --source-table agroamazonia-documents-stg --target-table agroamazonia-documents-prd --region us-east-1
+    python3 copy_rules.py --source-table tabela-document-processor-test --target-table tabela-document-processor-dev --region us-east-1
 """
 
 import boto3
