@@ -25,7 +25,7 @@ document.addEventListener('DOMContentLoaded', function() {
     document.getElementById('apiKey').value = API_KEY;
     // Carregar regras disponíveis do backend primeiro
     loadAvailableRules().then(() => {
-    showRules('SEMENTES');
+    showRules('AGROQUIMICOS');
     });
     loadProcesses();
     loadDashboardMetrics();
@@ -472,11 +472,10 @@ function createTypeChart(data) {
     
     if (typeChart) typeChart.destroy();
     
-    const labels = ['Sementes', 'Agroquímicos', 'Fertilizantes'];
+    const labels = ['Agroquímicos', 'Barter (Commodities)'];
     const values = [
-        types.SEMENTES || 0,
         types.AGROQUIMICOS || 0,
-        types.FERTILIZANTES || 0
+        types.BARTER || 0
     ];
     
     typeChart = new Chart(ctx, {
@@ -486,12 +485,10 @@ function createTypeChart(data) {
             datasets: [{
                 data: values,
                 backgroundColor: [
-                    'rgba(16, 185, 129, 0.9)',
                     'rgba(59, 130, 246, 0.9)',
                     'rgba(245, 158, 11, 0.9)'
                 ],
                 borderColor: [
-                    '#10b981',
                     '#3b82f6',
                     '#f59e0b'
                 ],
@@ -895,33 +892,132 @@ function createNewProcess() {
 
 async function loadProcesses(silent = false) {
     try {
+        const list = document.getElementById('processesList');
+        
+        // Mostrar loading
+        if (!silent) {
+            list.innerHTML = `
+                <div style="grid-column: 1 / -1; text-align: center; padding: 60px 20px;">
+                    <div style="font-size: 3em; margin-bottom: 20px;">⏳</div>
+                    <p style="color: var(--gray);">Carregando processos...</p>
+                </div>
+            `;
+        }
+        
         const response = await fetch(`${API_URL}/api/process/`, {
             headers: { 'x-api-key': API_KEY }
         });
-        if (!response.ok) return;
+        if (!response.ok) {
+            if (!silent) {
+                list.innerHTML = `
+                    <div style="grid-column: 1 / -1; text-align: center; padding: 60px 20px;">
+                        <div style="font-size: 3em; margin-bottom: 20px;">❌</div>
+                        <p style="color: var(--danger);">Erro ao carregar processos</p>
+                    </div>
+                `;
+            }
+            return;
+        }
 
         const data = await response.json();
-        const list = document.getElementById('processesList');
 
         if (data.processes.length === 0) {
             list.innerHTML = `
-                <div class="empty-state">
-                    <div style="font-size: 4em;">📋</div>
-                    <h3>Nenhum processo encontrado</h3>
-                    <p>Clique em "Novo Processo" para começar</p>
+                <div class="empty-state" style="grid-column: 1 / -1; text-align: center; padding: 60px 20px;">
+                    <div style="font-size: 5em; margin-bottom: 20px; opacity: 0.5;">📋</div>
+                    <h3 style="color: var(--dark); margin-bottom: 10px; font-size: 1.5em;">Nenhum processo encontrado</h3>
+                    <p style="color: var(--gray); margin-bottom: 30px; font-size: 1.1em;">Clique em "Novo Processo" para começar</p>
+                    <button class="btn-primary" onclick="createNewProcess()" style="padding: 12px 24px; font-size: 1em;">
+                        + Criar Novo Processo
+                    </button>
                 </div>
             `;
             return;
         }
 
-        list.innerHTML = data.processes.map(p => `
-            <div class="process-item ${p.status === 'FAILED' ? 'failed' : ''}" onclick="selectProcess('${p.process_id}')">
-                <h3>${p.status === 'FAILED' ? '❌' : '📄'} ${p.process_id.substring(0, 13)}...</h3>
-                <p><strong>Tipo:</strong> ${p.process_type || 'N/A'}</p>
-                <p><strong>Criado:</strong> ${new Date(parseInt(p.created_at) * 1000).toLocaleString('pt-BR')}</p>
-                <span class="status-badge ${p.status.toLowerCase()}">${p.status}</span>
-            </div>
-        `).join('');
+        list.innerHTML = data.processes.map(p => {
+            const createdDate = new Date(parseInt(p.created_at) * 1000);
+            const now = new Date();
+            const diffMs = now - createdDate;
+            const diffMins = Math.floor(diffMs / 60000);
+            const diffHours = Math.floor(diffMs / 3600000);
+            const diffDays = Math.floor(diffMs / 86400000);
+            
+            let timeAgo = '';
+            if (diffMins < 1) {
+                timeAgo = 'Agora mesmo';
+            } else if (diffMins < 60) {
+                timeAgo = `${diffMins} min${diffMins > 1 ? 's' : ''} atrás`;
+            } else if (diffHours < 24) {
+                timeAgo = `${diffHours} hora${diffHours > 1 ? 's' : ''} atrás`;
+            } else if (diffDays < 7) {
+                timeAgo = `${diffDays} dia${diffDays > 1 ? 's' : ''} atrás`;
+            } else {
+                timeAgo = createdDate.toLocaleDateString('pt-BR');
+            }
+            
+            const statusIcon = {
+                'CREATED': '📝',
+                'PROCESSING': '⏳',
+                'COMPLETED': '✅',
+                'SUCCESS': '✅',
+                'VALIDATED': '✅',
+                'FAILED': '❌',
+                'VALIDATION_FAILURE': '⚠️'
+            }[p.status] || '📄';
+            
+            const processTypeLabel = {
+                'AGROQUIMICOS': '🧪 Agroquímicos',
+                'BARTER': '🌾 Barter (Commodities)',
+                'SEMENTES': '🌱 Sementes',
+                'FERTILIZANTES': '💊 Fertilizantes'
+            }[p.process_type] || `📦 ${p.process_type || 'N/A'}`;
+            
+            const statusColor = {
+                'CREATED': '#6b7280',
+                'PROCESSING': '#f59e0b',
+                'COMPLETED': '#10b981',
+                'SUCCESS': '#10b981',
+                'VALIDATED': '#10b981',
+                'FAILED': '#ef4444',
+                'VALIDATION_FAILURE': '#f59e0b'
+            }[p.status] || '#6b7280';
+            
+            return `
+                <div class="process-item ${p.status === 'FAILED' || p.status === 'VALIDATION_FAILURE' ? 'failed' : ''}" onclick="selectProcess('${p.process_id}')">
+                    <div class="process-item-header">
+                        <div class="process-item-icon" style="background: ${statusColor}20; color: ${statusColor};">
+                            ${statusIcon}
+                        </div>
+                        <div class="process-item-title">
+                            <h3>${processTypeLabel}</h3>
+                            <p class="process-id">${p.process_id}</p>
+                        </div>
+                    </div>
+                    <div class="process-item-body">
+                        <div class="process-info-row">
+                            <span class="info-label">📅 Criado:</span>
+                            <span class="info-value">${createdDate.toLocaleString('pt-BR', { 
+                                day: '2-digit', 
+                                month: '2-digit', 
+                                year: 'numeric',
+                                hour: '2-digit',
+                                minute: '2-digit'
+                            })}</span>
+                        </div>
+                        <div class="process-info-row">
+                            <span class="info-label">⏱️ Há:</span>
+                            <span class="info-value">${timeAgo}</span>
+                        </div>
+                    </div>
+                    <div class="process-item-footer">
+                        <span class="status-badge ${p.status.toLowerCase().replace(/_/g, '-')}" style="background: ${statusColor}20; color: ${statusColor}; border-color: ${statusColor};">
+                            ${p.status.replace(/_/g, ' ')}
+                        </span>
+                    </div>
+                </div>
+            `;
+        }).join('');
 
     } catch (error) {
         console.error('Erro ao carregar processos:', error);
@@ -1506,7 +1602,7 @@ async function refreshProcess() {
     }
 }
 
-let currentProcessType = 'SEMENTES';
+let currentProcessType = 'AGROQUIMICOS';
 let availableRules = []; // Cache de regras disponíveis do backend
 
 // Carregar regras disponíveis do backend

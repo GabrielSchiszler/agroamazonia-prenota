@@ -243,31 +243,37 @@ def handler(event, context):
         ocr_docs.append(doc_prepared)
     
     for rule in rules:
-        logger.info(f"Executing rule: {rule['rule_name']}")
+        rule_name = rule['rule_name']
+        logger.info(f"Executing rule: {rule_name}")
         
         try:
-            module = __import__(f"rules.{rule['rule_name']}", fromlist=['validate'])
+            module = __import__(f"rules.{rule_name}", fromlist=['validate'])
             if not hasattr(module, 'validate'):
+                logger.warning(f"Rule {rule_name} não possui função validate - pulando")
                 results.append({
-                    'rule': rule['rule_name'],
+                    'rule': rule_name,
                     'status': 'ERROR',
                     'danfe_value': 'null',
-                    'message': 'Regra não encontrada'
+                    'message': 'Regra não encontrada (função validate ausente)'
                 })
                 continue
             
             result = module.validate(danfe_parsed, ocr_docs)
-            logger.info(f"Rule {rule['rule_name']} result: {json.dumps(result, default=str)}")
+            logger.info(f"Rule {rule_name} result: {json.dumps(result, default=str)}")
             results.append(result)
             
             # Aplicar correções se houver
             if result.get('corrections'):
                 apply_corrections(process_id, result['corrections'])
             
+        except ModuleNotFoundError as e:
+            logger.warning(f"Rule {rule_name} não encontrada (módulo não existe) - pulando: {str(e)}")
+            # Não adicionar ao results para não poluir - apenas logar o aviso
+            continue
         except Exception as e:
             logger.error(f"Rule execution failed: {str(e)}")
             results.append({
-                'rule': rule['rule_name'],
+                'rule': rule_name,
                 'status': 'ERROR',
                 'danfe_value': 'null',
                 'message': str(e)

@@ -144,6 +144,9 @@ export OCR_FAILURE_CLIENT_ID='seu_client_id'
 export OCR_FAILURE_CLIENT_SECRET='seu_client_secret'
 export OCR_FAILURE_USERNAME='fast.ocr'
 export OCR_FAILURE_PASSWORD='sua_password'
+
+# ServiceNow Feedback API (para feedback de sucesso/falha do processo)
+export SERVICENOW_FEEDBACK_API_URL='https://agroamazoniad.service-now.com/api/x_aapas_fast_ocr/ocr/feedback'
 ```
 
 Ou via CDK context:

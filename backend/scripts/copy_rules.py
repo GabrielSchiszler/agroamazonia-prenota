@@ -58,8 +58,8 @@ def copy_rules(source_table_name, target_table_name, region_name, dry_run, proce
     
     print("✓ Ambas as tabelas existem.\n")
     
-    # Tipos de processo possíveis
-    process_types = [process_type] if process_type else ["AGROQUIMICOS", "SEMENTES", "FERTILIZANTES"]
+    # Tipos de processo possíveis (apenas AGROQUIMICOS e BARTER)
+    process_types = [process_type] if process_type else ["AGROQUIMICOS", "BARTER"]
     
     all_items = []
     
@@ -197,7 +197,7 @@ Exemplos:
     
     parser.add_argument(
         '--process-type',
-        choices=['AGROQUIMICOS', 'SEMENTES', 'FERTILIZANTES'],
+        choices=['AGROQUIMICOS', 'BARTER'],
         help='Copiar apenas regras de um tipo específico (opcional)'
     )
     

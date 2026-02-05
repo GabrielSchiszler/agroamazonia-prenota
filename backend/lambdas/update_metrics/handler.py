@@ -8,7 +8,14 @@ dynamodb = boto3.resource('dynamodb')
 table = dynamodb.Table(os.environ['TABLE_NAME'])
 
 def lambda_handler(event, context):
-    """Atualiza métricas de processamento no DynamoDB"""
+    """
+    Atualiza métricas de processamento no DynamoDB.
+    
+    Suporta deduplicação para reprocessamento:
+    - Se o processo já teve métricas registradas (METRICS_STATUS existe no metadata),
+      primeiro remove a contagem anterior antes de adicionar a nova.
+    - Isso evita métricas duplicadas quando um processo é reprocessado.
+    """
     
     print("="*80)
     print("UPDATE_METRICS - INÍCIO")
@@ -30,10 +37,14 @@ def lambda_handler(event, context):
         print("ERROR: process_id não fornecido")
         raise ValueError("process_id é obrigatório")
     
-    # Buscar start_time do DynamoDB
+    # Buscar start_time e informações de métricas anteriores do DynamoDB
     start_time_str = None
     process_type = 'UNKNOWN'
     metadata_response = None
+    previous_metrics_status = None  # Status da métrica anterior (para deduplicação)
+    previous_metrics_date = None    # Data em que métricas foram registradas
+    previous_failed_rules = []      # Regras que falharam anteriormente
+    
     try:
         pk = f"PROCESS#{process_id}"
         metadata_response = table.get_item(
@@ -43,8 +54,22 @@ def lambda_handler(event, context):
         if 'Item' in metadata_response:
             start_time_str = metadata_response['Item'].get('START_TIME')
             process_type = metadata_response['Item'].get('PROCESS_TYPE', 'UNKNOWN')
+            
+            # Verificar se já teve métricas registradas (para deduplicação)
+            previous_metrics_status = metadata_response['Item'].get('METRICS_STATUS')
+            previous_metrics_date = metadata_response['Item'].get('METRICS_DATE')
+            previous_failed_rules_str = metadata_response['Item'].get('METRICS_FAILED_RULES', '[]')
+            
+            try:
+                previous_failed_rules = json.loads(previous_failed_rules_str) if isinstance(previous_failed_rules_str, str) else previous_failed_rules_str
+            except:
+                previous_failed_rules = []
+            
             print(f"Found start_time in DynamoDB: {start_time_str}")
             print(f"Found process_type: {process_type}")
+            print(f"Previous metrics_status: {previous_metrics_status}")
+            print(f"Previous metrics_date: {previous_metrics_date}")
+            print(f"Previous failed_rules: {previous_failed_rules}")
         else:
             print(f"WARNING: Process {process_id} METADATA not found in DynamoDB")
             process_type = 'UNKNOWN'
@@ -220,6 +245,30 @@ def lambda_handler(event, context):
     print(f"Hour: {hour}")
     
     try:
+        # ============================================
+        # DEDUPLICAÇÃO: Remover métricas anteriores se for reprocessamento
+        # ============================================
+        if previous_metrics_status and previous_metrics_date:
+            print(f"\n[DEDUPLICAÇÃO] Processo já teve métricas registradas anteriormente")
+            print(f"[DEDUPLICAÇÃO] Status anterior: {previous_metrics_status}, Data: {previous_metrics_date}")
+            
+            # Extrair date_key e month_key anteriores
+            prev_date_key = previous_metrics_date[:10] if len(previous_metrics_date) >= 10 else previous_metrics_date
+            prev_month_key = previous_metrics_date[:7] if len(previous_metrics_date) >= 7 else previous_metrics_date
+            
+            print(f"[DEDUPLICAÇÃO] Removendo métricas do dia {prev_date_key} e mês {prev_month_key}...")
+            
+            # Decrementar métricas diárias anteriores
+            decrement_daily_metrics(prev_date_key, previous_metrics_status, process_type, previous_failed_rules)
+            print(f"✓ Métricas diárias anteriores decrementadas")
+            
+            # Decrementar métricas mensais anteriores
+            decrement_monthly_metrics(prev_month_key, previous_metrics_status, process_type)
+            print(f"✓ Métricas mensais anteriores decrementadas")
+        
+        # ============================================
+        # Atualizar métricas com novo status
+        # ============================================
         print("Chamando update_daily_metrics...")
         # Atualizar métricas diárias
         update_daily_metrics(date_key, status, processing_time, error_type, hour, process_type, failed_rules)
@@ -229,6 +278,13 @@ def lambda_handler(event, context):
         # Atualizar métricas mensais
         update_monthly_metrics(month_key, status, processing_time, process_type)
         print("✓ update_monthly_metrics concluído")
+        
+        # ============================================
+        # Salvar informações de métricas no processo (para deduplicação futura)
+        # ============================================
+        print("Salvando informações de métricas no processo...")
+        save_metrics_status(process_id, status, date_key, failed_rules)
+        print("✓ Informações de métricas salvas no processo")
         
         print("="*80)
         print("UPDATE_METRICS - SUCESSO")
@@ -247,8 +303,191 @@ def lambda_handler(event, context):
     return {
         'statusCode': 200,
         'process_id': process_id,
-        'metrics_updated': True
+        'metrics_updated': True,
+        'deduplicated': bool(previous_metrics_status),
+        'previous_status': previous_metrics_status
     }
+
+def save_metrics_status(process_id, status, date_key, failed_rules):
+    """Salva informações de métricas no processo para suportar deduplicação em reprocessamento"""
+    
+    pk = f"PROCESS#{process_id}"
+    timestamp = datetime.now(timezone.utc).isoformat()
+    
+    try:
+        table.update_item(
+            Key={'PK': pk, 'SK': 'METADATA'},
+            UpdateExpression='SET METRICS_STATUS = :status, METRICS_DATE = :date, METRICS_FAILED_RULES = :rules, METRICS_UPDATED_AT = :timestamp',
+            ExpressionAttributeValues={
+                ':status': status,
+                ':date': date_key,
+                ':rules': json.dumps(failed_rules if failed_rules else []),
+                ':timestamp': timestamp
+            }
+        )
+        print(f"[save_metrics_status] Métricas salvas: status={status}, date={date_key}, rules={failed_rules}")
+    except Exception as e:
+        print(f"[save_metrics_status] Erro ao salvar: {e}")
+        # Não falhar o processo por causa disso
+        import traceback
+        traceback.print_exc()
+
+
+def decrement_daily_metrics(date_key, status, process_type, failed_rules=None):
+    """Decrementa métricas diárias (usado em reprocessamento para evitar duplicação)"""
+    
+    print(f"\n[decrement_daily_metrics] Decrementando métricas para {date_key}")
+    print(f"[decrement_daily_metrics] Status: {status}, Process type: {process_type}, Failed rules: {failed_rules}")
+    
+    if failed_rules is None:
+        failed_rules = []
+    
+    try:
+        # Verificar se o item existe
+        response = table.get_item(
+            Key={'PK': f'METRICS#{date_key}', 'SK': 'SUMMARY'}
+        )
+        
+        if 'Item' not in response:
+            print(f"[decrement_daily_metrics] Item não existe para {date_key}, nada a decrementar")
+            return
+        
+        existing_item = response['Item']
+        
+        # Construir expressão de atualização
+        add_parts = []
+        set_parts = []
+        expr_names = {}
+        expr_values = {
+            ':dec': -1,
+            ':zero': 0
+        }
+        
+        # Decrementar total_count
+        add_parts.append('total_count :dec')
+        
+        # Decrementar contador de status
+        if status == 'SUCCESS':
+            add_parts.append('success_count :dec')
+        elif status == 'FAILED':
+            add_parts.append('failed_count :dec')
+        
+        # Decrementar por tipo de processo (se existir no mapa)
+        if process_type and existing_item.get('processes_by_type', {}).get(process_type):
+            type_key = f'#t0'
+            type_path = f'processes_by_type.{type_key}'
+            # Usar SET com máximo para não ficar negativo
+            current_val = existing_item.get('processes_by_type', {}).get(process_type, 0)
+            if current_val > 0:
+                set_parts.append(f'{type_path} = {type_path} - :one')
+                expr_names[type_key] = process_type
+                expr_values[':one'] = 1
+        
+        # Decrementar contadores de regras que falharam
+        for idx, rule_name in enumerate(failed_rules):
+            if existing_item.get('failed_rules', {}).get(rule_name):
+                rule_key = f'#r{idx}'
+                rule_path = f'failed_rules.{rule_key}'
+                rule_dec_key = f':rule_dec_{idx}'
+                
+                current_val = existing_item.get('failed_rules', {}).get(rule_name, 0)
+                if current_val > 0:
+                    set_parts.append(f'{rule_path} = {rule_path} - {rule_dec_key}')
+                    expr_names[rule_key] = rule_name
+                    expr_values[rule_dec_key] = 1
+                    print(f"[decrement_daily_metrics] Decrementando regra: {rule_name}")
+        
+        # Construir UpdateExpression
+        update_expr_parts = []
+        if add_parts:
+            update_expr_parts.append('ADD ' + ', '.join(add_parts))
+        if set_parts:
+            update_expr_parts.append('SET ' + ', '.join(set_parts))
+        
+        if not update_expr_parts:
+            print(f"[decrement_daily_metrics] Nada a atualizar")
+            return
+        
+        update_expr = ' '.join(update_expr_parts)
+        
+        print(f"[decrement_daily_metrics] UpdateExpression: {update_expr}")
+        print(f"[decrement_daily_metrics] ExpressionAttributeNames: {expr_names}")
+        
+        table.update_item(
+            Key={'PK': f'METRICS#{date_key}', 'SK': 'SUMMARY'},
+            UpdateExpression=update_expr,
+            ExpressionAttributeNames=expr_names if expr_names else None,
+            ExpressionAttributeValues=expr_values
+        )
+        
+        print(f"[decrement_daily_metrics] ✓ Métricas diárias decrementadas para {date_key}")
+        
+    except Exception as e:
+        print(f"[decrement_daily_metrics] Erro: {e}")
+        import traceback
+        traceback.print_exc()
+        # Não falhar - apenas log
+
+
+def decrement_monthly_metrics(month_key, status, process_type):
+    """Decrementa métricas mensais (usado em reprocessamento para evitar duplicação)"""
+    
+    print(f"\n[decrement_monthly_metrics] Decrementando métricas para {month_key}")
+    print(f"[decrement_monthly_metrics] Status: {status}, Process type: {process_type}")
+    
+    try:
+        # Verificar se o item existe
+        response = table.get_item(
+            Key={'PK': f'METRICS#{month_key}', 'SK': 'MONTHLY_SUMMARY'}
+        )
+        
+        if 'Item' not in response:
+            print(f"[decrement_monthly_metrics] Item não existe para {month_key}, nada a decrementar")
+            return
+        
+        existing_item = response['Item']
+        
+        # Construir expressão de atualização
+        add_parts = []
+        expr_names = {}
+        expr_values = {
+            ':dec': -1
+        }
+        
+        # Decrementar total_count
+        add_parts.append('total_count :dec')
+        
+        # Decrementar contador de status
+        if status == 'SUCCESS':
+            add_parts.append('success_count :dec')
+        elif status == 'FAILED':
+            add_parts.append('failed_count :dec')
+        
+        # Decrementar por tipo de processo
+        if process_type and existing_item.get('processes_by_type', {}).get(process_type):
+            type_key = '#t0'
+            add_parts.append(f'processes_by_type.{type_key} :dec')
+            expr_names[type_key] = process_type
+        
+        update_expr = 'ADD ' + ', '.join(add_parts)
+        
+        print(f"[decrement_monthly_metrics] UpdateExpression: {update_expr}")
+        
+        table.update_item(
+            Key={'PK': f'METRICS#{month_key}', 'SK': 'MONTHLY_SUMMARY'},
+            UpdateExpression=update_expr,
+            ExpressionAttributeNames=expr_names if expr_names else None,
+            ExpressionAttributeValues=expr_values
+        )
+        
+        print(f"[decrement_monthly_metrics] ✓ Métricas mensais decrementadas para {month_key}")
+        
+    except Exception as e:
+        print(f"[decrement_monthly_metrics] Erro: {e}")
+        import traceback
+        traceback.print_exc()
+        # Não falhar - apenas log
+
 
 def update_daily_metrics(date_key, status, processing_time, error_type, hour, process_type='UNKNOWN', failed_rules=None):
     """Atualiza métricas diárias"""

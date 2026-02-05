@@ -44,9 +44,8 @@
             <div class="content-area">
                 <div class="rules-header">
                     <div class="rules-tabs">
-                        <button class="rule-tab active" onclick="showRules('SEMENTES')">🌱 Sementes</button>
-                        <button class="rule-tab" onclick="showRules('AGROQUIMICOS')">🧪 Agroquímicos</button>
-                        <button class="rule-tab" onclick="showRules('FERTILIZANTES')">🌾 Fertilizantes</button>
+                        <button class="rule-tab active" onclick="showRules('AGROQUIMICOS')">🧪 Agroquímicos</button>
+                        <button class="rule-tab" onclick="showRules('BARTER')">🌾 Barter (Commodities)</button>
                     </div>
                 </div>
                 <div id="rulesDisplay" class="rules-content"></div>
@@ -97,7 +96,7 @@
     <script>
         // Carregar regras ao iniciar
         document.addEventListener('DOMContentLoaded', function() {
-            showRules('SEMENTES');
+            showRules('AGROQUIMICOS');
         });
     </script>
 </body>

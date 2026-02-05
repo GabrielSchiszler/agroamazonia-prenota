@@ -264,6 +264,7 @@ def parse_nfe_xml(xml_content):
         } if inf_resp_tec is not None else None,
         'emitente': {
             'cnpj': get_text(emit, 'nfe:CNPJ', ns),
+            'cpf': get_text(emit, 'nfe:CPF', ns),  # CPF para pessoa física
             'nome': get_text(emit, 'nfe:xNome', ns),
             'fantasia': get_text(emit, 'nfe:xFant', ns),
             'ie': get_text(emit, 'nfe:IE', ns),

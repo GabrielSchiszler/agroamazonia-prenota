@@ -39,12 +39,16 @@ class ProcessService:
     def generate_presigned_url(self, process_id: str, file_name: str, file_type: str, doc_type: str = 'ADDITIONAL', metadados: Dict[str, Any] = None) -> Dict[str, Any]:
         import re
         
+        # Log do process_id recebido
+        logger.info(f"[generate_presigned_url] process_id recebido: {process_id} (tipo: {type(process_id)}, length: {len(process_id)})")
+        
         # Criar processo se não existir
         pk = f'PROCESS#{process_id}'
         items = self.repository.query_by_pk_and_sk_prefix(pk, 'METADATA')
         
         if not items:
             timestamp = int(datetime.now().timestamp())
+            logger.info(f"[generate_presigned_url] Criando novo processo com process_id: {process_id}")
             self.repository.put_item('PROCESS', f'PROCESS#{process_id}', {
                 'PROCESS_ID': process_id,
                 'TIMESTAMP': timestamp
@@ -53,6 +57,7 @@ class ProcessService:
                 'STATUS': 'CREATED',
                 'TIMESTAMP': timestamp
             })
+            logger.info(f"[generate_presigned_url] Processo criado com process_id salvo: {process_id}")
         
         safe_name = re.sub(r'[^a-zA-Z0-9._-]', '_', file_name)
         file_key = f"processes/{process_id}/{'danfe' if doc_type == 'DANFE' else 'docs'}/{safe_name}"
@@ -88,6 +93,9 @@ class ProcessService:
         lê esses metadados durante o processamento.
         """
         try:
+            # Log do process_id recebido
+            logger.info(f"[link_pedido_compra_metadata] process_id recebido: {process_id} (tipo: {type(process_id)}, length: {len(process_id)})")
+            
             # Validar metadados
             if not metadados:
                 raise ValueError("Metadados não podem ser vazios")
@@ -101,6 +109,7 @@ class ProcessService:
             
             if not items:
                 timestamp = int(datetime.now().timestamp())
+                logger.info(f"[link_pedido_compra_metadata] Criando novo processo com process_id: {process_id}")
                 self.repository.put_item('PROCESS', f'PROCESS#{process_id}', {
                     'PROCESS_ID': process_id,
                     'TIMESTAMP': timestamp
@@ -109,6 +118,7 @@ class ProcessService:
                     'STATUS': 'CREATED',
                     'TIMESTAMP': timestamp
                 })
+                logger.info(f"[link_pedido_compra_metadata] Processo criado com process_id salvo: {process_id}")
             
             # Usar SK específica para metadados de pedido de compra (não FILE#)
             # Isso evita que apareça na listagem de arquivos
@@ -161,22 +171,40 @@ class ProcessService:
         if not metadata:
             raise ValueError("Metadados do processo não encontrados")
         
-        # HARDCODED: AGROQUIMICOS
-        process_type = 'AGROQUIMICOS'
-        self.repository.update_item(pk, 'METADATA', {'PROCESS_TYPE': process_type})
-        
         files = [item for item in items if item['SK'].startswith('FILE#')]
         danfe_files = [f for f in files if f.get('DOC_TYPE') == 'DANFE']
         
         # Verificar se há metadados de pedido de compra (obrigatório)
-        has_pedido_compra_metadata = any(item.get('SK') == 'PEDIDO_COMPRA_METADATA' for item in items)
+        pedido_compra_item = next((item for item in items if item.get('SK') == 'PEDIDO_COMPRA_METADATA'), None)
         
         if not danfe_files:
             raise ValueError("DANFE obrigatório não encontrado")
         
-        # Metadados do pedido de compra são obrigatórios (não precisa mais de arquivos adicionais)
-        if not has_pedido_compra_metadata:
+        # Metadados do pedido de compra são obrigatórios
+        if not pedido_compra_item:
             raise ValueError("Metadados do pedido de compra são obrigatórios")
+        
+        # Determinar process_type baseado nos metadados do pedido de compra
+        # Se isCommodities == true, é BARTER; caso contrário, é AGROQUIMICOS
+        process_type = 'AGROQUIMICOS'  # Default
+        
+        try:
+            metadados_str = pedido_compra_item.get('METADADOS', '{}')
+            pedido_compra = json.loads(metadados_str) if isinstance(metadados_str, str) else metadados_str
+            
+            # Verificar isCommodities no requestBody
+            request_body = pedido_compra.get('requestBody', {})
+            is_commodities = request_body.get('isCommodities', False)
+            
+            if is_commodities is True or str(is_commodities).lower() == 'true':
+                process_type = 'BARTER'
+                logger.info(f"Processo {process_id}: isCommodities=true, definindo process_type=BARTER")
+            else:
+                logger.info(f"Processo {process_id}: isCommodities={is_commodities}, mantendo process_type=AGROQUIMICOS")
+        except Exception as e:
+            logger.warning(f"Erro ao verificar isCommodities: {e}. Usando process_type=AGROQUIMICOS")
+        
+        self.repository.update_item(pk, 'METADATA', {'PROCESS_TYPE': process_type})
         
         # Não precisa mais passar arquivos para o Step Functions - apenas metadados JSON
         input_data = {
@@ -192,7 +220,7 @@ class ProcessService:
         
         self.repository.update_item(pk, 'METADATA', {'STATUS': 'PROCESSING'})
         
-        return {'execution_arn': response['executionArn'], 'process_id': process_id, 'status': 'PROCESSING'}
+        return {'execution_arn': response['executionArn'], 'process_id': process_id, 'process_type': process_type, 'status': 'PROCESSING'}
     
     def get_process(self, process_id: str) -> Dict[str, Any]:
         pk = f'PROCESS#{process_id}'

@@ -66,7 +66,7 @@ export class AgroAmazoniaStack extends cdk.Stack {
       }]
     });
 
-    // SNS Topic para erros de Lambda
+    // SNS Topic para erros de Lambda (unificado para sucesso e falha)
     const errorTopic = new sns.Topic(this, 'LambdaErrorTopic', {
       topicName: name('topic', 'agroamazonia-lambda-errors'),
       displayName: `AgroAmazonia Lambda Errors - ${this.envName}`
@@ -144,6 +144,9 @@ export class AgroAmazoniaStack extends cdk.Stack {
     const ocrFailureClientSecret = this.node.tryGetContext('ocrFailureClientSecret') || process.env.OCR_FAILURE_CLIENT_SECRET || '';
     const ocrFailureUsername = this.node.tryGetContext('ocrFailureUsername') || process.env.OCR_FAILURE_USERNAME || '';
     const ocrFailurePassword = this.node.tryGetContext('ocrFailurePassword') || process.env.OCR_FAILURE_PASSWORD || '';
+    
+    // ServiceNow Feedback API URL
+    const servicenowFeedbackApiUrl = this.node.tryGetContext('servicenowFeedbackApiUrl') || process.env.SERVICENOW_FEEDBACK_API_URL || '';
 
     const reportOcrFailureLambda = new lambda.Function(this, 'ReportOcrFailureFunction', {
       functionName: name('lambda', 'report-ocr-failure'),
@@ -232,34 +235,69 @@ export class AgroAmazoniaStack extends cdk.Stack {
 
     documentTable.grantReadWriteData(updateMetricsLambda);
 
-    // Lambda: Check Textract
-    const checkTextractLambda = new lambda.Function(this, 'CheckTextractFunction', {
-      functionName: name('lambda', 'check-textract'),
+    // Lambda: Notify Success - Busca dados, envia feedback para API e SNS
+    const notifySuccessLambda = new lambda.Function(this, 'NotifySuccessFunction', {
+      functionName: name('lambda', 'notify-success'),
       runtime: lambda.Runtime.PYTHON_3_11,
-      handler: 'handler.handler',
-      code: lambda.Code.fromAsset('../backend/lambdas/check_textract'),
+      handler: 'handler.lambda_handler',
+      code: lambda.Code.fromAsset('../backend/lambdas/notify_success', {
+        bundling: {
+          image: lambda.Runtime.PYTHON_3_11.bundlingImage,
+          command: [
+            'bash', '-c',
+            'pip install -r requirements.txt -t /asset-output && cp -au . /asset-output'
+          ]
+        }
+      }),
       environment: {
-        TABLE_NAME: documentTable.tableName
+        TABLE_NAME: documentTable.tableName,
+        SNS_TOPIC_ARN: errorTopic.topicArn,
+        ENVIRONMENT: this.envName,
+        SERVICENOW_FEEDBACK_API_URL: servicenowFeedbackApiUrl,
+        OCR_FAILURE_AUTH_URL: ocrFailureAuthUrl,
+        OCR_FAILURE_CLIENT_ID: ocrFailureClientId,
+        OCR_FAILURE_CLIENT_SECRET: ocrFailureClientSecret,
+        OCR_FAILURE_USERNAME: ocrFailureUsername,
+        OCR_FAILURE_PASSWORD: ocrFailurePassword
       },
-      timeout: cdk.Duration.seconds(30)
+      timeout: cdk.Duration.seconds(30),
+      memorySize: 256
     });
 
-    documentTable.grantReadData(checkTextractLambda);
+    documentTable.grantReadData(notifySuccessLambda);
+    errorTopic.grantPublish(notifySuccessLambda);
 
-    // Lambda: Get Textract Results
-    const getTextractLambda = new lambda.Function(this, 'GetTextractFunction', {
-      functionName: name('lambda', 'get-textract'),
+    // Lambda: Send Feedback to ServiceNow e SNS
+    const sendFeedbackLambda = new lambda.Function(this, 'SendFeedbackFunction', {
+      functionName: name('lambda', 'send-feedback'),
       runtime: lambda.Runtime.PYTHON_3_11,
-      handler: 'handler.handler',
-      code: lambda.Code.fromAsset('../backend/lambdas/get_textract'),
-      timeout: cdk.Duration.minutes(5),
-      memorySize: 512
+      handler: 'handler.lambda_handler',
+      code: lambda.Code.fromAsset('../backend/lambdas/send_feedback', {
+        bundling: {
+          image: lambda.Runtime.PYTHON_3_11.bundlingImage,
+          command: [
+            'bash', '-c',
+            'pip install -r requirements.txt -t /asset-output && cp -au . /asset-output'
+          ]
+        }
+      }),
+      environment: {
+        TABLE_NAME: documentTable.tableName,
+        SERVICENOW_FEEDBACK_API_URL: servicenowFeedbackApiUrl,
+        OCR_FAILURE_AUTH_URL: ocrFailureAuthUrl,
+        OCR_FAILURE_CLIENT_ID: ocrFailureClientId,
+        OCR_FAILURE_CLIENT_SECRET: ocrFailureClientSecret,
+        OCR_FAILURE_USERNAME: ocrFailureUsername,
+        OCR_FAILURE_PASSWORD: ocrFailurePassword,
+        SNS_TOPIC_ARN: errorTopic.topicArn,
+        ENVIRONMENT: this.envName
+      },
+      timeout: cdk.Duration.seconds(30),
+      memorySize: 256
     });
 
-    getTextractLambda.addToRolePolicy(new iam.PolicyStatement({
-      actions: ['textract:GetDocumentAnalysis'],
-      resources: ['*']
-    }));
+    documentTable.grantReadData(sendFeedbackLambda);
+    errorTopic.grantPublish(sendFeedbackLambda);
 
     // Lambda: Parse XML
     const parseXmlLambda = new lambda.Function(this, 'ParseXmlFunction', {
@@ -292,25 +330,6 @@ export class AgroAmazoniaStack extends cdk.Stack {
     });
 
     documentTable.grantReadWriteData(updateProcessStatusLambda);
-
-    // Lambda: Parse OCR
-    const parseOcrLambda = new lambda.Function(this, 'ParseOcrFunction', {
-      functionName: name('lambda', 'parse-ocr'),
-      runtime: lambda.Runtime.PYTHON_3_11,
-      handler: 'handler.handler',
-      code: lambda.Code.fromAsset('../backend/lambdas/parse_ocr'),
-      environment: {
-        TABLE_NAME: documentTable.tableName
-      },
-      timeout: cdk.Duration.minutes(5),
-      memorySize: 512
-    });
-
-    documentTable.grantReadWriteData(parseOcrLambda);
-    parseOcrLambda.addToRolePolicy(new iam.PolicyStatement({
-      actions: ['bedrock:InvokeModel'],
-      resources: ['*']
-    }));
 
     // Lambda: S3 Upload Handler
     const s3UploadHandler = new lambda.Function(this, 'S3UploadHandler', {
@@ -386,10 +405,11 @@ export class AgroAmazoniaStack extends cdk.Stack {
     const prepareMetricsDataSuccess = new sfn.Pass(this, 'PrepareMetricsDataSuccess', {
       parameters: {
         'process_id.$': '$.process_id',
-        'status': 'COMPLETED',
+        'status': 'SUCCESS',
         'protheus_response': {
           'codigoStatus.$': '$.protheus_result.Payload.codigoStatus'
         },
+        'protheus_result.$': '$.protheus_result',
         'failure_result': {}
       },
       resultPath: '$.metrics_input'
@@ -423,13 +443,21 @@ export class AgroAmazoniaStack extends cdk.Stack {
       resultPath: '$.metrics_input'
     });
 
+    // Task para atualizar métricas no fluxo de SUCESSO (quando tudo deu certo)
     const updateMetricsTaskSuccess = new tasks.LambdaInvoke(this, 'UpdateMetricsSuccess', {
       lambdaFunction: updateMetricsLambda,
       payload: sfn.TaskInput.fromJsonPathAt('$.metrics_input'),
       outputPath: '$.Payload'
     });
     
-    // IMPORTANTE: no fluxo de erro, não podemos perder $.error (usado no NotifyError).
+    // Task para atualizar métricas no fluxo de FALHA DE VALIDAÇÃO
+    const updateMetricsTaskValidationFailure = new tasks.LambdaInvoke(this, 'UpdateMetricsValidationFailure', {
+      lambdaFunction: updateMetricsLambda,
+      payload: sfn.TaskInput.fromJsonPathAt('$.metrics_input'),
+      resultPath: sfn.JsonPath.DISCARD
+    });
+    
+    // IMPORTANTE: no fluxo de erro de LAMBDA, não podemos perder $.error (usado no NotifyError).
     // Então descartamos o output da Lambda e mantemos o input original.
     const updateMetricsTaskError = new tasks.LambdaInvoke(this, 'UpdateMetricsError', {
       lambdaFunction: updateMetricsLambda,
@@ -453,50 +481,132 @@ export class AgroAmazoniaStack extends cdk.Stack {
       resultPath: sfn.JsonPath.DISCARD
     });
 
-    const notifyErrorTask = new tasks.SnsPublish(this, 'NotifyError', {
-      topic: errorTopic,
-      subject: sfn.JsonPath.format('Erro no Processamento - AgroAmazonia - {}', sfn.JsonPath.stringAt('$$.State.Name')),
-      message: sfn.TaskInput.fromObject({
-        'application': 'AgroAmazonia-Prenota',
-        'error': sfn.JsonPath.stringAt('$.error.Error'),
-        'cause': sfn.JsonPath.stringAt('$.error.Cause'),
-        'process_id': sfn.JsonPath.stringAt('$.process_id'),
-        'timestamp': sfn.JsonPath.stringAt('$$.State.EnteredTime'),
-        'state_name': sfn.JsonPath.stringAt('$$.State.Name'),
-        'error_type': 'LAMBDA_ERROR',
-        'environment': this.envName
-      })
+    // SNS removido do Step Functions - agora é enviado pelas Lambdas (notify_success e send_feedback)
+
+    // Estado de falha específico para falhas de validação
+    const validationFailureState = new sfn.Fail(this, 'ValidationFailed', {
+      error: 'ValidationFailed',
+      cause: 'O processo falhou na validação de regras. Verifique os detalhes no failure_result.'
+    });
+
+    // Task Lambda para notificar sucesso (busca dados completos e envia SNS)
+    const notifySuccessTask = new tasks.LambdaInvoke(this, 'NotifySuccessTask', {
+      lambdaFunction: notifySuccessLambda,
+      payload: sfn.TaskInput.fromObject({
+        'process_id.$': '$.process_id',
+        'protheus_result.$': '$.protheus_result'
+      }),
+      resultPath: '$.notification_result'
+    });
+
+    // Removido: prepareFeedbackSuccess e sendFeedbackSuccessTask
+    // notifySuccessTask agora envia para API e SNS diretamente
+
+    // Preparar dados para feedback de falha de validação
+    const prepareFeedbackValidationFailure = new sfn.Pass(this, 'PrepareFeedbackValidationFailure', {
+      parameters: {
+        'process_id.$': '$.process_id',
+        'success': false,
+        'details': {
+          'status': 'VALIDATION_FAILURE',
+          'error_details': {
+            'validation_status': 'FAILED',
+            'failure_result.$': '$.failure_result.Payload'
+          },
+          'timestamp.$': '$$.State.EnteredTime'
+        }
+      },
+      resultPath: '$.feedback_input'
+    });
+
+    // Task para enviar feedback de falha de validação para ServiceNow
+    const sendFeedbackValidationFailureTask = new tasks.LambdaInvoke(this, 'SendFeedbackValidationFailure', {
+      lambdaFunction: sendFeedbackLambda,
+      payload: sfn.TaskInput.fromJsonPathAt('$.feedback_input'),
+      resultPath: sfn.JsonPath.DISCARD
+    });
+
+    // Preparar dados para feedback de falha de Lambda
+    const prepareFeedbackLambdaFailure = new sfn.Pass(this, 'PrepareFeedbackLambdaFailure', {
+      parameters: {
+        'process_id.$': '$.process_id',
+        'success': false,
+        'details': {
+          'status': 'LAMBDA_ERROR',
+          'error_details': {
+            'Error.$': '$.error.Error',
+            'Cause.$': '$.error.Cause',
+            'state_name.$': '$$.State.Name'
+          },
+          'timestamp.$': '$$.State.EnteredTime'
+        }
+      },
+      resultPath: '$.feedback_input'
+    });
+
+    // Task para enviar feedback de falha de Lambda para ServiceNow
+    const sendFeedbackLambdaFailureTask = new tasks.LambdaInvoke(this, 'SendFeedbackLambdaFailure', {
+      lambdaFunction: sendFeedbackLambda,
+      payload: sfn.TaskInput.fromJsonPathAt('$.feedback_input'),
+      resultPath: sfn.JsonPath.DISCARD
     });
 
     const successState = new sfn.Succeed(this, 'ProcessSuccess');
-    const failureState = new sfn.Fail(this, 'ProcessFailed');
+    const failureState = new sfn.Fail(this, 'ProcessFailed', {
+      error: 'ProcessingFailed',
+      cause: 'O processo falhou durante a execução. Verifique os logs para mais detalhes.'
+    });
 
     // Choice após validação
     const validationChoice = new sfn.Choice(this, 'HasValidationFailures?')
       .when(sfn.Condition.stringEquals('$.validation_result.Payload.validation_status', 'FAILED'), reportFailureTask)
       .otherwise(sendToProtheusTask);
 
-    // Conectar fluxos: executar task → preparar métricas → atualizar métricas → sucesso
+    // =============================================
+    // FLUXO DE SUCESSO: Protheus → Métricas → Notificar Sucesso (envia API + SNS) → Success
+    // notifySuccessTask já envia feedback para API e SNS
+    // =============================================
     sendToProtheusTask.next(prepareMetricsDataSuccess);
-    reportFailureTask.next(prepareMetricsDataFailure);
     prepareMetricsDataSuccess.next(updateMetricsTaskSuccess);
-    prepareMetricsDataFailure.next(updateMetricsTaskSuccess);
-    updateMetricsTaskSuccess.next(successState);
+    updateMetricsTaskSuccess.next(notifySuccessTask);
+    notifySuccessTask.next(successState);
     
-    // Fluxo de erro: atualizar status → preparar métricas → atualizar métricas → notificar → falhar
+    // =============================================
+    // FLUXO DE FALHA DE VALIDAÇÃO: Report → Métricas → Feedback (envia API + SNS) → Fail
+    // =============================================
+    reportFailureTask.next(prepareMetricsDataFailure);
+    prepareMetricsDataFailure.next(updateMetricsTaskValidationFailure);
+    updateMetricsTaskValidationFailure.next(prepareFeedbackValidationFailure);
+    prepareFeedbackValidationFailure.next(sendFeedbackValidationFailureTask);
+    sendFeedbackValidationFailureTask.next(validationFailureState);
+    
+    // =============================================
+    // FLUXO DE ERRO DE LAMBDA: Update Status → Métricas → Feedback (envia API + SNS) → Fail
+    // =============================================
     updateStatusBeforeErrorTask.next(prepareMetricsDataForError);
     prepareMetricsDataForError.next(updateMetricsTaskError);
-    updateMetricsTaskError.next(notifyErrorTask);
-    notifyErrorTask.next(failureState);
+    updateMetricsTaskError.next(prepareFeedbackLambdaFailure);
+    prepareFeedbackLambdaFailure.next(sendFeedbackLambdaFailureTask);
+    sendFeedbackLambdaFailureTask.next(failureState);
     
-    // Catch para capturar falhas: atualizar status → preparar métricas → atualizar métricas → notificar
+    // =============================================
+    // CATCH: Capturar erros de Lambda e redirecionar para fluxo de erro
+    // =============================================
     updateMetricsTaskSuccess.addCatch(updateStatusBeforeErrorTask, { resultPath: '$.error' });
+    updateMetricsTaskValidationFailure.addCatch(updateStatusBeforeErrorTask, { resultPath: '$.error' });
     updateMetricsTaskError.addCatch(updateStatusBeforeErrorTask, { resultPath: '$.error' });
     notifyTask.addCatch(updateStatusBeforeErrorTask, { resultPath: '$.error' });
     parseXmlTask.addCatch(updateStatusBeforeErrorTask, { resultPath: '$.error' });
     validateTask.addCatch(updateStatusBeforeErrorTask, { resultPath: '$.error' });
     sendToProtheusTask.addCatch(updateStatusBeforeErrorTask, { resultPath: '$.error' });
     reportFailureTask.addCatch(updateStatusBeforeErrorTask, { resultPath: '$.error' });
+    // Se notifySuccessTask falhar, não deve falhar o processo inteiro (é apenas notificação)
+    // Então ele vai direto para successState em caso de erro
+    notifySuccessTask.addCatch(successState, { resultPath: '$.notification_error' });
+    // Se sendFeedbackValidationFailureTask falhar, ainda assim deve terminar como falha
+    sendFeedbackValidationFailureTask.addCatch(validationFailureState, { resultPath: '$.feedback_error' });
+    // Se sendFeedbackLambdaFailureTask falhar, ainda assim deve terminar como falha
+    sendFeedbackLambdaFailureTask.addCatch(failureState, { resultPath: '$.feedback_error' });
 
     // Conectar fluxo principal
     const definition = notifyTask
@@ -698,5 +808,6 @@ def handler(event, context):
       value: errorTopic.topicArn,
       description: 'SNS Topic ARN for Lambda Errors'
     });
+
   }
 }

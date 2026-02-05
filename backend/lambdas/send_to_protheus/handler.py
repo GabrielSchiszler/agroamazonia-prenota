@@ -852,6 +852,14 @@ def process_produtos_with_lotes(produtos_filtrados, xml_data, request_body_data)
     
     for original_idx, produto_xml, pedido_de_compra, codigo_produto_rb in produtos_filtrados:
         print(f"\n[PROCESS_LOTES] Produto {original_idx + 1}: {produto_xml.get('descricao', 'N/A')[:50]}...")
+        print(f"[PROCESS_LOTES.DEBUG] Dados recebidos:")
+        print(f"  - original_idx: {original_idx}")
+        print(f"  - codigo_produto_rb: {codigo_produto_rb}")
+        print(f"  - pedido_de_compra (tipo): {type(pedido_de_compra)}")
+        print(f"  - pedido_de_compra (valor): {pedido_de_compra}")
+        if pedido_de_compra and isinstance(pedido_de_compra, dict):
+            print(f"    - pedidoErp: {pedido_de_compra.get('pedidoErp', 'N/A')}")
+            print(f"    - itemPedidoErp: {pedido_de_compra.get('itemPedidoErp', 'N/A')}")
         
         lotes = []
         
@@ -882,6 +890,9 @@ def process_produtos_with_lotes(produtos_filtrados, xml_data, request_body_data)
         # Se não encontrou lotes, adicionar produto sem lote
         if not lotes:
             print(f"[PROCESS_LOTES] Nenhum lote encontrado, adicionando produto sem lote")
+            print(f"[PROCESS_LOTES.DEBUG] Adicionando produto processado:")
+            print(f"  - pedido_de_compra (tipo): {type(pedido_de_compra)}")
+            print(f"  - pedido_de_compra (valor): {pedido_de_compra}")
             produtos_processados.append({
                 'produto_xml': produto_xml,
                 'pedido_de_compra': pedido_de_compra,
@@ -1425,73 +1436,76 @@ def lambda_handler(event, context):
  
    
     
-    # Extrair CNPJ emitente - APENAS do XML
-    print(f"\n[7.3] Extraindo CNPJ do emitente (APENAS do XML)...")
+    # Extrair CNPJ ou CPF do emitente - APENAS do XML
+    print(f"\n[7.3] Extraindo CNPJ/CPF do emitente (APENAS do XML)...")
     cnpj_emitente = None
+    cpf_emitente = None
+    ie_emitente = None
     
-    # OBRIGATÓRIO: Pegar APENAS do XML emitente.cnpj
+    # Buscar CNPJ primeiro, depois CPF
     if emitente and emitente.get('cnpj'):
         cnpj_emitente = emitente.get('cnpj')
-        print(f"  [7.3.1] CNPJ encontrado no XML emitente.cnpj: {cnpj_emitente}")
-    else:
-        print(f"  [7.3.2] ERRO: CNPJ do emitente NÃO encontrado no XML!")
-        print(f"    - emitente disponível: {bool(emitente)}")
-        print(f"    - emitente.cnpj: {emitente.get('cnpj') if emitente else 'N/A'}")
-        print(f"    - XML data keys: {list(xml_data.keys()) if xml_data else 'N/A'}")
-        raise Exception(f"CNPJ do emitente é obrigatório e deve estar no XML (emitente.cnpj). CNPJ não encontrado no XML parseado.")
-    
-    # Normalizar CNPJ emitente (apenas dígitos)
-    cnpj_emitente = ''.join(filter(str.isdigit, str(cnpj_emitente)))
-    print(f"  [7.3.3] CNPJ emitente normalizado (apenas dígitos): {cnpj_emitente}")
-    print(f"  [7.3.4] CNPJ emitente length: {len(cnpj_emitente)} dígitos")
-    
-    # Validar se tem 14 dígitos (CNPJ válido)
-    if len(cnpj_emitente) != 14:
-        print(f"  [7.3.5] ERRO: CNPJ emitente não tem 14 dígitos! Valor: '{cnpj_emitente}' (length: {len(cnpj_emitente)})")
-        raise Exception(f"CNPJ do emitente deve ter 14 dígitos. Valor encontrado: '{cnpj_emitente}' ({len(cnpj_emitente)} dígitos)")
-    
-    # Extrair CNPJ destinatário - tentar múltiplas fontes
-    print(f"\n[7.4] Extraindo CNPJ do destinatário...")
-    cnpj_destinatario = None
-    
-    # Prioridade 1: requestBody.cnpjDestinatario
-    if request_body_data and request_body_data.get('cnpjDestinatario'):
-        cnpj_destinatario = request_body_data.get('cnpjDestinatario')
-        print(f"  [7.4.1] CNPJ encontrado no requestBody.cnpjDestinatario: {cnpj_destinatario}")
-    
-    # Prioridade 2: XML destinatario.cnpj
-    if not cnpj_destinatario and destinatario and destinatario.get('cnpj'):
-        cnpj_destinatario = destinatario.get('cnpj')
-        print(f"  [7.4.2] CNPJ encontrado no XML destinatario.cnpj: {cnpj_destinatario}")
-    
-    # Prioridade 3: OCR cnpjDestinatario
-    if not cnpj_destinatario and ocr_data and ocr_data.get('cnpjDestinatario'):
-        cnpj_destinatario = ocr_data.get('cnpjDestinatario')
-        print(f"  [7.4.3] CNPJ encontrado no OCR cnpjDestinatario: {cnpj_destinatario}")
-    
-    # Normalizar CNPJ destinatário (apenas dígitos)
-    if cnpj_destinatario:
-        cnpj_destinatario = ''.join(filter(str.isdigit, str(cnpj_destinatario)))
-        print(f"  [7.4.4] CNPJ destinatário normalizado (apenas dígitos): {cnpj_destinatario}")
-        print(f"  [7.4.5] CNPJ destinatário length: {len(cnpj_destinatario)} dígitos")
+        # Normalizar CNPJ (apenas dígitos)
+        cnpj_emitente = ''.join(filter(str.isdigit, str(cnpj_emitente)))
+        print(f"  [7.3.1] CNPJ encontrado no XML emitente.cnpj: {cnpj_emitente} ({len(cnpj_emitente)} dígitos)")
+    elif emitente and emitente.get('cpf'):
+        cpf_emitente = emitente.get('cpf')
+        # Normalizar CPF (apenas dígitos)
+        cpf_emitente = ''.join(filter(str.isdigit, str(cpf_emitente)))
+        print(f"  [7.3.1] CPF encontrado no XML emitente.cpf: {cpf_emitente} ({len(cpf_emitente)} dígitos)")
         
-        # Validar se tem 14 dígitos (CNPJ válido)
-        if len(cnpj_destinatario) != 14:
-            print(f"  [7.4.6] WARNING: CNPJ destinatário não tem 14 dígitos! Pode estar incompleto.")
+        # Quando for CPF, também buscar IE (Inscrição Estadual)
+        ie_emitente_raw = emitente.get('ie') if emitente else None
+        if ie_emitente_raw:
+            ie_emitente = str(ie_emitente_raw).strip()
+            if ie_emitente:
+                print(f"  [7.3.2] IE encontrado no XML emitente.ie: {ie_emitente}")
+            else:
+                ie_emitente = None
+                print(f"  [7.3.2] IE encontrado mas está vazio no XML emitente")
+        else:
+            ie_emitente = None
+            print(f"  [7.3.2] IE não disponível no emitente")
     else:
-        print(f"  [7.4.7] WARNING: CNPJ do destinatário NÃO encontrado em nenhuma fonte!")
-        print(f"    - requestBody.cnpjDestinatario: {request_body_data.get('cnpjDestinatario') if request_body_data else 'N/A'}")
-        print(f"    - XML destinatario.cnpj: {destinatario.get('cnpj') if destinatario else 'N/A'}")
-        print(f"    - OCR cnpjDestinatario: {ocr_data.get('cnpjDestinatario') if ocr_data else 'N/A'}")
-        cnpj_destinatario = ""  # Manter como string vazia (destinatário pode ser opcional)
+        print(f"  [7.3.2] CNPJ/CPF do emitente não encontrado no XML - campo não será incluído no payload")
+        if emitente:
+            print(f"    - emitente.cnpj: {emitente.get('cnpj')}")
+            print(f"    - emitente.cpf: {emitente.get('cpf')}")
+
+    # # Extrair CNPJ destinatário - tentar múltiplas fontes
+    # print(f"\n[7.4] Extraindo CNPJ do destinatário...")
+    # cnpj_destinatario = None
+
+    # # OBRIGATÓRIO: Pegar APENAS do XML destinatário.cnpj
+    # if destinatario and destinatario.get('cnpj'):
+    #     cnpj_destinatario = destinatario.get('cnpj')
+    #     print(f"  [7.3.1] CNPJ encontrado no XML destinatario.cnpj: {cnpj_destinatario}")
+    # else:
+    #     print(f"  [7.3.2] ERRO: CNPJ do destinatário NÃO encontrado no XML!")
+    #     print(f"    - destinatário disponível: {bool(destinatário)}")
+    #     print(f"    - destinatário.cnpj: {destinatário.get('cnpj') if destinatário else 'N/A'}")
+    #     print(f"    - XML data keys: {list(xml_data.keys()) if xml_data else 'N/A'}")
+    #     # raise Exception(f"CNPJ do destinatário é obrigatório e deve estar no XML (destinatário.cnpj). CNPJ não encontrado no XML parseado.")
+    
+    # # Normalizar CNPJ destinatário (apenas dígitos)
+    # if cnpj_destinatario:
+    #     cnpj_destinatario = ''.join(filter(str.isdigit, str(cnpj_destinatario)))
+    #     print(f"  [7.4.4] CNPJ destinatário normalizado (apenas dígitos): {cnpj_destinatario}")
+    #     print(f"  [7.4.5] CNPJ destinatário length: {len(cnpj_destinatario)} dígitos")
+        
+    #     # Validar se tem 14 dígitos (CNPJ válido)
+    #     if len(cnpj_destinatario) != 14:
+    #         print(f"  [7.4.6] WARNING: CNPJ destinatário não tem 14 dígitos! Pode estar incompleto.")
+    # else:
+    #     print(f"  [7.4.7] WARNING: CNPJ do destinatário NÃO encontrado em nenhuma fonte!")
+    #     print(f"    - XML destinatario.cnpj: {destinatario.get('cnpj') if destinatario else 'N/A'}")
+    #     cnpj_destinatario = ""  # Manter como string vazia (destinatário pode ser opcional)
     
     payload = {
         "tipoDeDocumento": tipo_documento,
         "documento": numero_documento,
         "serie": serie,
         "dataEmissao": data_emissao,
-        "cnpjEmitente": cnpj_emitente,
-        # "cnpjDestinatario": cnpj_destinatario,  # Não enviar mais cnpjDestinatario no payload
         "especie": especie,
         "chaveAcesso": chave_acesso,
         "tipoFrete": tipo_frete,
@@ -1500,22 +1514,68 @@ def lambda_handler(event, context):
         "itens": []
     }
     
-    # Validar se CNPJ emitente foi encontrado antes de montar payload
-    if not cnpj_emitente or len(cnpj_emitente) < 14:
-        print(f"\n[7.5] ERRO CRÍTICO: CNPJ do emitente inválido ou não encontrado!")
-        print(f"  - CNPJ atual: '{cnpj_emitente}' (length: {len(cnpj_emitente) if cnpj_emitente else 0})")
-        print(f"  - O campo cnpjEmitente é OBRIGATÓRIO para a API Protheus")
-        raise Exception(f"CNPJ do emitente não encontrado ou inválido. CNPJ: '{cnpj_emitente}'")
+    # Incluir cnpjEmitente ou cpfEmitente apenas se existir
+    if cnpj_emitente:
+        payload["cnpjEmitente"] = cnpj_emitente
+    elif cpf_emitente:
+        payload["cpfEmitente"] = cpf_emitente
+        # Quando for CPF, incluir IE se disponível
+        if ie_emitente:
+            payload["ieEmitente"] = ie_emitente
+            print(f"[7.1.1.1] IE do emitente incluído: {ie_emitente}")
     
     print(f"\n[7.1] Payload base montado")
-    print(f"[7.1.1] CNPJ do emitente incluído: {cnpj_emitente} ({len(cnpj_emitente)} dígitos)")
-    if cnpj_destinatario:
-        print(f"[7.1.2] CNPJ do destinatário incluído: {cnpj_destinatario} ({len(cnpj_destinatario)} dígitos)")
+    if cnpj_emitente:
+        print(f"[7.1.1] CNPJ do emitente incluído: {cnpj_emitente} ({len(cnpj_emitente)} dígitos)")
+    elif cpf_emitente:
+        print(f"[7.1.1] CPF do emitente incluído: {cpf_emitente} ({len(cpf_emitente)} dígitos)")
+        if ie_emitente:
+            print(f"[7.1.1.2] IE do emitente incluído: {ie_emitente}")
+        else:
+            print(f"[7.1.1.2] IE do emitente: não informado (campo não incluído no payload)")
     else:
-        print(f"[7.1.2] CNPJ do destinatário: não informado (opcional)")
+        print(f"[7.1.1] CNPJ/CPF do emitente: não informado (campo não incluído no payload)")
+    # if cnpj_destinatario:
+    #     print(f"[7.1.2] CNPJ do destinatário incluído: {cnpj_destinatario} ({len(cnpj_destinatario)} dígitos)")
+    # else:
+    #     print(f"[7.1.2] CNPJ do destinatário: não informado (opcional)")
     
     # Adicionar produtos (APENAS os que deram match na validação)
     print(f"\n[8] Processando produtos...")
+    
+    # LOG DETALHADO: Mostrar conteúdo completo do requestBody['itens']
+    if request_body_data and request_body_data.get('itens'):
+        print(f"[8.0] DEBUG: Conteúdo completo do requestBody['itens']:")
+        for idx, item_rb in enumerate(request_body_data['itens'], 1):
+            print(f"[8.0.{idx}] Item {idx} completo:")
+            print(f"  - codigoProduto: {item_rb.get('codigoProduto', 'N/A')}")
+            print(f"  - produto: {item_rb.get('produto', 'N/A')}")
+            print(f"  - pedidoDeCompra (tipo): {type(item_rb.get('pedidoDeCompra'))}")
+            print(f"  - pedidoDeCompra (valor): {item_rb.get('pedidoDeCompra')}")
+            if item_rb.get('pedidoDeCompra'):
+                pedido = item_rb.get('pedidoDeCompra')
+                if isinstance(pedido, dict):
+                    print(f"    - pedidoErp: {pedido.get('pedidoErp', 'N/A')}")
+                    print(f"    - itemPedidoErp: {pedido.get('itemPedidoErp', 'N/A')}")
+                else:
+                    print(f"    - pedidoDeCompra não é dict: {pedido}")
+            print(f"  - Todas as chaves do item: {list(item_rb.keys())}")
+    
+    # LOG DETALHADO: Mostrar produtos XML disponíveis
+    if produtos_xml:
+        print(f"[8.0.XML] DEBUG: Produtos XML disponíveis ({len(produtos_xml)} produtos):")
+        for idx, produto_xml in enumerate(produtos_xml, 1):
+            print(f"[8.0.XML.{idx}] Produto XML {idx}:")
+            print(f"  - descricao: {produto_xml.get('descricao', 'N/A')[:50]}")
+            print(f"  - codigo: {produto_xml.get('codigo', 'N/A')}")
+            print(f"  - quantidade: {produto_xml.get('quantidade', 'N/A')}")
+    
+    # LOG DETALHADO: Mostrar product_matches e matched_danfe_positions
+    print(f"[8.0.MATCHES] DEBUG: Matches da validação:")
+    print(f"  - product_matches (tipo): {type(product_matches)}")
+    print(f"  - product_matches (valor): {product_matches}")
+    print(f"  - matched_danfe_positions (tipo): {type(matched_danfe_positions)}")
+    print(f"  - matched_danfe_positions (valor): {matched_danfe_positions}")
     
     # Se tiver requestBody com itens, usar eles; senão usar XML
     produtos_para_processar = []
@@ -1554,13 +1614,44 @@ def lambda_handler(event, context):
             codigo_produto_rb = None
             if request_body_data and request_body_data.get('itens'):
                 idx_doc = doc_pos - 1  # Converter para 0-based
+                print(f"[8.2.3.DEBUG] Buscando item no requestBody:")
+                print(f"  - doc_pos (1-based): {doc_pos}")
+                print(f"  - idx_doc (0-based): {idx_doc}")
+                print(f"  - Total de itens no requestBody: {len(request_body_data['itens'])}")
                 if 0 <= idx_doc < len(request_body_data['itens']):
                     item_request_body = request_body_data['itens'][idx_doc]
-                    pedido_de_compra = item_request_body.get('pedidoDeCompra', {})
+                    print(f"[8.2.3.DEBUG] Item encontrado no índice {idx_doc}:")
+                    print(f"  - Todas as chaves: {list(item_request_body.keys())}")
+                    print(f"  - Item completo: {json.dumps(item_request_body, default=str, indent=2)}")
+                    
+                    pedido_de_compra_raw = item_request_body.get('pedidoDeCompra')
+                    print(f"[8.2.3.DEBUG] pedidoDeCompra_raw (tipo): {type(pedido_de_compra_raw)}")
+                    print(f"[8.2.3.DEBUG] pedidoDeCompra_raw (valor): {pedido_de_compra_raw}")
+                    
+                    if pedido_de_compra_raw:
+                        if isinstance(pedido_de_compra_raw, dict):
+                            pedido_de_compra = pedido_de_compra_raw
+                        elif isinstance(pedido_de_compra_raw, str):
+                            try:
+                                pedido_de_compra = json.loads(pedido_de_compra_raw)
+                                print(f"[8.2.3.DEBUG] pedidoDeCompra parseado de JSON string")
+                            except:
+                                pedido_de_compra = {}
+                                print(f"[8.2.3.DEBUG] ERRO ao parsear pedidoDeCompra como JSON string")
+                        else:
+                            pedido_de_compra = {}
+                            print(f"[8.2.3.DEBUG] pedidoDeCompra_raw não é dict nem string, usando dict vazio")
+                    else:
+                        pedido_de_compra = {}
+                        print(f"[8.2.3.DEBUG] pedidoDeCompra_raw é None/False/vazio, usando dict vazio")
+                    
                     codigo_produto_rb = item_request_body.get('codigoProduto', '').strip()
                     print(f"[8.2.3] Item do requestBody encontrado na posição DOC {doc_pos}:")
                     print(f"[8.2.3.1] Código do produto: {codigo_produto_rb}")
-                    print(f"[8.2.3.2] pedidoDeCompra: {pedido_de_compra}")
+                    print(f"[8.2.3.2] pedidoDeCompra (final): {pedido_de_compra}")
+                    if pedido_de_compra and isinstance(pedido_de_compra, dict):
+                        print(f"[8.2.3.2.1] pedidoDeCompra.pedidoErp: {pedido_de_compra.get('pedidoErp', 'N/A')}")
+                        print(f"[8.2.3.2.2] pedidoDeCompra.itemPedidoErp: {pedido_de_compra.get('itemPedidoErp', 'N/A')}")
                 else:
                     print(f"[8.2.3] ERRO: Posição DOC {doc_pos} (índice {idx_doc}) fora do range dos itens do requestBody ({len(request_body_data['itens'])} itens)")
             
@@ -1614,9 +1705,35 @@ def lambda_handler(event, context):
         print(f"[8.2] AVISO: Nenhum produto deu match na validação, mas continuando com todos os produtos")
         produtos_filtrados = [(i, p, None, None) for i, p in enumerate(produtos_para_processar)]
     
+    # LOG DETALHADO: Mostrar produtos_filtrados antes de processar lotes
+    print(f"\n[8.2.6] DEBUG: produtos_filtrados antes de processar lotes ({len(produtos_filtrados)} produtos):")
+    for idx, (idx_xml, produto_xml, pedido_de_compra, codigo_produto_rb) in enumerate(produtos_filtrados, 1):
+        print(f"[8.2.6.{idx}] Produto filtrado {idx}:")
+        print(f"  - idx_xml: {idx_xml}")
+        print(f"  - produto_xml.descricao: {produto_xml.get('descricao', 'N/A')[:50]}")
+        print(f"  - codigo_produto_rb: {codigo_produto_rb}")
+        print(f"  - pedido_de_compra (tipo): {type(pedido_de_compra)}")
+        print(f"  - pedido_de_compra (valor): {pedido_de_compra}")
+        if pedido_de_compra and isinstance(pedido_de_compra, dict):
+            print(f"    - pedidoErp: {pedido_de_compra.get('pedidoErp', 'N/A')}")
+            print(f"    - itemPedidoErp: {pedido_de_compra.get('itemPedidoErp', 'N/A')}")
+    
     # Processar produtos com lotes (fazer split se necessário)
     print(f"\n[8.3] Processando produtos com extração de lotes...")
     produtos_processados = process_produtos_with_lotes(produtos_filtrados, xml_data, request_body_data)
+    
+    # LOG DETALHADO: Mostrar produtos_processados após processar lotes
+    print(f"[8.3.1] DEBUG: produtos_processados após processar lotes ({len(produtos_processados)} produtos):")
+    for idx, produto_info in enumerate(produtos_processados, 1):
+        print(f"[8.3.1.{idx}] Produto processado {idx}:")
+        print(f"  - codigo_produto: {produto_info.get('codigo_produto', 'N/A')}")
+        print(f"  - produto_xml.descricao: {produto_info.get('produto_xml', {}).get('descricao', 'N/A')[:50]}")
+        print(f"  - pedido_de_compra (tipo): {type(produto_info.get('pedido_de_compra'))}")
+        print(f"  - pedido_de_compra (valor): {produto_info.get('pedido_de_compra')}")
+        if produto_info.get('pedido_de_compra') and isinstance(produto_info.get('pedido_de_compra'), dict):
+            pedido = produto_info.get('pedido_de_compra')
+            print(f"    - pedidoErp: {pedido.get('pedidoErp', 'N/A')}")
+            print(f"    - itemPedidoErp: {pedido.get('itemPedidoErp', 'N/A')}")
     
     # Processar produtos processados (já com split de lotes se necessário)
     for produto_info in produtos_processados:
@@ -1666,12 +1783,27 @@ def lambda_handler(event, context):
             # Se não encontrou pedidoDeCompra, tentar buscar novamente
             if not pedido_de_compra or not pedido_de_compra.get('pedidoErp'):
                 print(f"[8.{idx}.9] pedidoDeCompra não encontrado, buscando no requestBody...")
+                print(f"[8.{idx}.9.DEBUG] Estado atual:")
+                print(f"  - pedido_de_compra (tipo): {type(pedido_de_compra)}")
+                print(f"  - pedido_de_compra (valor): {pedido_de_compra}")
+                if pedido_de_compra:
+                    print(f"  - pedido_de_compra.get('pedidoErp'): {pedido_de_compra.get('pedidoErp')}")
+                
                 nome_xml = produto_xml.get('descricao', '').strip() or produto_xml.get('nome', '').strip()
+                print(f"[8.{idx}.9.DEBUG] Buscando por nome:")
+                print(f"  - nome_xml: {nome_xml}")
                 
                 if request_body_data and request_body_data.get('itens'):
+                    print(f"[8.{idx}.9.DEBUG] Itens disponíveis no requestBody para busca: {len(request_body_data['itens'])}")
                     # Tentar encontrar pelo nome
-                    for item_rb in request_body_data['itens']:
+                    for item_idx, item_rb in enumerate(request_body_data['itens'], 1):
                         nome_rb = item_rb.get('produto', '').strip()
+                        print(f"[8.{idx}.9.DEBUG.{item_idx}] Comparando com item {item_idx}:")
+                        print(f"  - nome_rb: {nome_rb}")
+                        print(f"  - codigoProduto: {item_rb.get('codigoProduto', 'N/A')}")
+                        print(f"  - pedidoDeCompra (tipo): {type(item_rb.get('pedidoDeCompra'))}")
+                        print(f"  - pedidoDeCompra (valor): {item_rb.get('pedidoDeCompra')}")
+                        
                         if nome_xml and nome_rb:
                             nome_xml_norm = ' '.join(nome_xml.upper().split())
                             nome_rb_norm = ' '.join(nome_rb.upper().split())
@@ -1679,26 +1811,80 @@ def lambda_handler(event, context):
                             palavras_rb = set(w for w in nome_rb_norm.split() if len(w) > 2)
                             palavras_comuns = palavras_xml.intersection(palavras_rb)
                             
+                            print(f"  - nome_xml_norm: {nome_xml_norm}")
+                            print(f"  - nome_rb_norm: {nome_rb_norm}")
+                            print(f"  - palavras_comuns: {palavras_comuns} (count: {len(palavras_comuns)})")
+                            print(f"  - nome_xml_norm in nome_rb_norm: {nome_xml_norm in nome_rb_norm}")
+                            print(f"  - nome_rb_norm in nome_xml_norm: {nome_rb_norm in nome_xml_norm}")
+                            
                             if len(palavras_comuns) >= 2 or nome_xml_norm in nome_rb_norm or nome_rb_norm in nome_xml_norm:
-                                pedido_de_compra = item_rb.get('pedidoDeCompra', {})
+                                pedido_de_compra_raw = item_rb.get('pedidoDeCompra')
+                                print(f"[8.{idx}.9.DEBUG.{item_idx}] ✅ Match por nome encontrado!")
+                                print(f"  - pedidoDeCompra_raw (tipo): {type(pedido_de_compra_raw)}")
+                                print(f"  - pedidoDeCompra_raw (valor): {pedido_de_compra_raw}")
+                                
+                                if pedido_de_compra_raw:
+                                    if isinstance(pedido_de_compra_raw, dict):
+                                        pedido_de_compra = pedido_de_compra_raw
+                                    elif isinstance(pedido_de_compra_raw, str):
+                                        try:
+                                            pedido_de_compra = json.loads(pedido_de_compra_raw)
+                                        except:
+                                            pedido_de_compra = {}
+                                    else:
+                                        pedido_de_compra = {}
+                                else:
+                                    pedido_de_compra = {}
+                                
                                 print(f"[8.{idx}.10] pedidoDeCompra encontrado por nome: {pedido_de_compra}")
                                 break
+                            else:
+                                print(f"[8.{idx}.9.DEBUG.{item_idx}] ❌ Não deu match por nome")
                     
                     # Fallback: tentar por código
                     if not pedido_de_compra or not pedido_de_compra.get('pedidoErp'):
-                        for item_rb in request_body_data['itens']:
+                        print(f"[8.{idx}.9.DEBUG] Buscando por código (fallback):")
+                        print(f"  - codigo_produto procurado: {codigo_produto}")
+                        for item_idx, item_rb in enumerate(request_body_data['itens'], 1):
                             codigo_rb = item_rb.get('codigoProduto', '').lstrip('0') or '0'
-                            if codigo_rb == codigo_produto:
-                                pedido_de_compra = item_rb.get('pedidoDeCompra', {})
+                            codigo_produto_normalized = codigo_produto.lstrip('0') or '0'
+                            print(f"[8.{idx}.9.DEBUG.{item_idx}] Comparando códigos:")
+                            print(f"  - codigo_rb: {codigo_rb}")
+                            print(f"  - codigo_produto_normalized: {codigo_produto_normalized}")
+                            print(f"  - São iguais? {codigo_rb == codigo_produto_normalized}")
+                            
+                            if codigo_rb == codigo_produto_normalized:
+                                pedido_de_compra_raw = item_rb.get('pedidoDeCompra')
+                                print(f"[8.{idx}.9.DEBUG.{item_idx}] ✅ Match por código encontrado!")
+                                print(f"  - pedidoDeCompra_raw (tipo): {type(pedido_de_compra_raw)}")
+                                print(f"  - pedidoDeCompra_raw (valor): {pedido_de_compra_raw}")
+                                
+                                if pedido_de_compra_raw:
+                                    if isinstance(pedido_de_compra_raw, dict):
+                                        pedido_de_compra = pedido_de_compra_raw
+                                    elif isinstance(pedido_de_compra_raw, str):
+                                        try:
+                                            pedido_de_compra = json.loads(pedido_de_compra_raw)
+                                        except:
+                                            pedido_de_compra = {}
+                                    else:
+                                        pedido_de_compra = {}
+                                else:
+                                    pedido_de_compra = {}
+                                
                                 print(f"[8.{idx}.11] pedidoDeCompra encontrado por código: {pedido_de_compra}")
                                 break
+                            else:
+                                print(f"[8.{idx}.9.DEBUG.{item_idx}] ❌ Não deu match por código")
+                else:
+                    print(f"[8.{idx}.9.DEBUG] requestBody ou requestBody['itens'] não disponível")
             
-            # Validar se pedidoDeCompra foi encontrado
+            # Verificar se pedidoDeCompra foi encontrado (não é mais obrigatório)
             if not pedido_de_compra or not pedido_de_compra.get('pedidoErp'):
-                print(f"[8.{idx}.12] ERRO: pedidoDeCompra não encontrado para produto {codigo_produto}!")
+                print(f"[8.{idx}.12] AVISO: pedidoDeCompra não encontrado para produto {codigo_produto} - campo não será incluído no payload")
                 print(f"  - Nome do produto XML: {produto_xml.get('descricao', 'N/A')}")
                 print(f"  - Código do produto XML: {codigo_produto}")
-                raise Exception(f"pedidoDeCompra não encontrado para produto {codigo_produto} (nome: {produto_xml.get('descricao', 'N/A')[:50]}). É obrigatório para a API Protheus.")
+                print(f"  - Continuando processamento sem pedidoDeCompra...")
             
             # Buscar codigoOperacao do CFOP mapping
             codigo_operacao = ''
@@ -1707,13 +1893,20 @@ def lambda_handler(event, context):
             elif cfop_mapping and cfop_mapping.get('operacao'):
                 codigo_operacao = cfop_mapping.get('operacao', '')
             
+            # Montar item do payload
             item = {
                 "codigoProduto": codigo_produto,
                 "quantidade": quantidade,
                 "valorUnitario": valor_unitario,
-                "codigoOperacao": codigo_operacao,
-                "pedidoDeCompra": pedido_de_compra
+                "codigoOperacao": codigo_operacao
             }
+            
+            # Adicionar pedidoDeCompra apenas se existir e tiver pedidoErp
+            if pedido_de_compra and pedido_de_compra.get('pedidoErp'):
+                item["pedidoDeCompra"] = pedido_de_compra
+                print(f"[8.{idx}.12.1] pedidoDeCompra incluído no payload: pedidoErp={pedido_de_compra.get('pedidoErp')}")
+            else:
+                print(f"[8.{idx}.12.1] pedidoDeCompra não incluído no payload (não encontrado ou vazio)")
             
             # Adicionar unidade_trib se disponível no XML
             if unidade_trib:
@@ -1730,7 +1923,8 @@ def lambda_handler(event, context):
             
             payload['itens'].append(item)
             lote_info = f", lote={lote['numero']}" if lote else ""
-            print(f"[8.{idx}.14] ✅ Produto {idx} adicionado ao payload: código={codigo_produto}, qtd={quantidade}, valor={valor_unitario}, op={codigo_operacao}, pedido={pedido_de_compra.get('pedidoErp')}{lote_info}")
+            pedido_info = f", pedido={pedido_de_compra.get('pedidoErp')}" if (pedido_de_compra and pedido_de_compra.get('pedidoErp')) else ", pedido=N/A"
+            print(f"[8.{idx}.14] ✅ Produto {idx} adicionado ao payload: código={codigo_produto}, qtd={quantidade}, valor={valor_unitario}, op={codigo_operacao}{pedido_info}{lote_info}")
             
         except Exception as e:
             print(f"[8.{idx}] ERRO ao processar produto: {str(e)}")
@@ -1866,21 +2060,20 @@ def lambda_handler(event, context):
     print(payload_str)
     print(f"{'-'*80}")
     
-    # Validação final dos CNPJs antes de enviar
-    if not payload.get('cnpjEmitente') or len(payload.get('cnpjEmitente', '')) < 14:
-        print(f"\n[9.2.1] ERRO CRÍTICO: cnpjEmitente inválido no payload final!")
-        print(f"  - Valor no payload: '{payload.get('cnpjEmitente')}'")
-        print(f"  - Length: {len(payload.get('cnpjEmitente', ''))}")
-        raise Exception(f"CNPJ do emitente inválido no payload final. Valor: '{payload.get('cnpjEmitente')}'")
-    else:
-        print(f"\n[9.2.1] Validação do payload:")
+    # Validação final do payload antes de enviar
+    print(f"\n[9.2.1] Validação do payload:")
+    if payload.get('cnpjEmitente'):
         print(f"  ✓ cnpjEmitente: {payload.get('cnpjEmitente')} ({len(payload.get('cnpjEmitente'))} dígitos)")
-        if payload.get('cnpjDestinatario'):
-            print(f"  ✓ cnpjDestinatario: {payload.get('cnpjDestinatario')} ({len(payload.get('cnpjDestinatario'))} dígitos)")
-        else:
-            print(f"  ⚠ cnpjDestinatario: não informado (opcional)")
-        print(f"  ✓ documento: {payload.get('documento')}")
-        print(f"  ✓ itens: {len(payload.get('itens', []))} produto(s)")
+    elif payload.get('cpfEmitente'):
+        print(f"  ✓ cpfEmitente: {payload.get('cpfEmitente')} ({len(payload.get('cpfEmitente'))} dígitos)")
+    else:
+        print(f"  - cnpjEmitente/cpfEmitente: não informado (campo não incluído)")
+    if payload.get('cnpjDestinatario'):
+        print(f"  ✓ cnpjDestinatario: {payload.get('cnpjDestinatario')} ({len(payload.get('cnpjDestinatario'))} dígitos)")
+    else:
+        print(f"  ⚠ cnpjDestinatario: não informado (opcional)")
+    print(f"  ✓ documento: {payload.get('documento')}")
+    print(f"  ✓ itens: {len(payload.get('itens', []))} produto(s)")
     
     try:
         # Obter token OAuth2
@@ -1930,6 +2123,22 @@ def lambda_handler(event, context):
         
         api_url_doc = api_url + '/documento-entrada'
         print(f"\n[9.7] Fazendo requisição POST para: {api_url_doc}")
+
+        # Salvar payload no DynamoDB antes de tentar enviar (para recuperar em caso de erro)
+        try:
+            payload_str = json.dumps(payload, default=str)
+            table.update_item(
+                Key={'PK': f'PROCESS#{process_id}', 'SK': 'METADATA'},
+                UpdateExpression='SET protheus_request_payload = :payload, updated_at = :timestamp',
+                ExpressionAttributeValues={
+                    ':payload': payload_str,
+                    ':timestamp': datetime.utcnow().isoformat()
+                }
+            )
+            print(f"[9.7.1] Payload salvo no DynamoDB antes de enviar")
+        except Exception as save_err:
+            print(f"[9.7.1] WARNING: Erro ao salvar payload no DynamoDB: {str(save_err)}")
+        
         response = requests.post(api_url_doc, json=payload, headers=headers, timeout=60)
         
         print(f"\n{'='*80}")
@@ -1988,16 +2197,49 @@ def lambda_handler(event, context):
                     'status_code': status_code,
                     'response_body': response_body,
                     'error_code': error_code,
-                    'error_message': error_message
+                    'error_message': error_message,
+                    'request_payload': payload,  # Payload que foi tentado enviar
+                    'request_url': api_url_doc,  # URL completa
+                    'request_headers': {k: v for k, v in headers.items() if k != 'Authorization'},  # Headers (sem token por segurança)
+                    'response_headers': dict(response.headers),  # Headers da resposta
+                    'response_text': response.text[:5000] if response.text else None  # Texto completo da resposta (limitado)
                 })
+                
+                # Salvar informações de erro no DynamoDB para usar no feedback
+                try:
+                    protheus_request_info = {
+                        'request_url': api_url_doc,
+                        'request_headers': {k: v for k, v in headers.items() if k != 'Authorization'},
+                        'request_payload': payload,
+                        'response_status_code': status_code,
+                        'response_headers': dict(response.headers),
+                        'response_body': response_body,
+                        'error_details': error_details
+                    }
+                    table.update_item(
+                        Key={'PK': f'PROCESS#{process_id}', 'SK': 'METADATA'},
+                        UpdateExpression='SET protheus_request_info = :info, updated_at = :timestamp',
+                        ExpressionAttributeValues={
+                            ':info': json.dumps(protheus_request_info, default=str),
+                            ':timestamp': datetime.utcnow().isoformat()
+                        }
+                    )
+                    print(f"[10.6.1] Informações de erro da requisição Protheus salvas no DynamoDB")
+                except Exception as save_err:
+                    print(f"[10.6.1] WARNING: Erro ao salvar informações de erro: {str(save_err)}")
             except:
                 # Se não for JSON, usar texto
-                response_text = response.text[:500] if response.text else 'Sem resposta'
+                response_text = response.text[:5000] if response.text else 'Sem resposta'
                 error_message = f"HTTP {status_code} - Resposta: {response_text[:200]}"
                 error_details = {
                     'status_code': status_code,
                     'response_body': response_text,
-                    'error_message': error_message
+                    'error_message': error_message,
+                    'request_payload': payload,  # Payload que foi tentado enviar
+                    'request_url': api_url_doc,  # URL completa
+                    'request_headers': {k: v for k, v in headers.items() if k != 'Authorization'},  # Headers (sem token por segurança)
+                    'response_headers': dict(response.headers) if hasattr(response, 'headers') else {},  # Headers da resposta
+                    'response_text': response_text  # Texto completo da resposta
                 }
             
             print(f"\n[10] ERRO HTTP ao chamar API Protheus:")
@@ -2028,6 +2270,28 @@ def lambda_handler(event, context):
         # Se chegou aqui, status code é 2xx - sucesso
         protheus_response = response.json()
         print(f"[10.4] JSON parseado com sucesso")
+        
+        # Salvar headers e response no DynamoDB para usar no feedback
+        try:
+            protheus_request_info = {
+                'request_url': api_url_doc,
+                'request_headers': {k: v for k, v in headers.items() if k != 'Authorization'},  # Sem token por segurança
+                'request_payload': payload,
+                'response_status_code': response.status_code,
+                'response_headers': dict(response.headers),
+                'response_body': protheus_response
+            }
+            table.update_item(
+                Key={'PK': f'PROCESS#{process_id}', 'SK': 'METADATA'},
+                UpdateExpression='SET protheus_request_info = :info, updated_at = :timestamp',
+                ExpressionAttributeValues={
+                    ':info': json.dumps(protheus_request_info, default=str),
+                    ':timestamp': datetime.utcnow().isoformat()
+                }
+            )
+            print(f"[10.4.1] Informações da requisição Protheus salvas no DynamoDB")
+        except Exception as save_err:
+            print(f"[10.4.1] WARNING: Erro ao salvar informações da requisição: {str(save_err)}")
     except requests.exceptions.HTTPError as http_err:
         # Fallback para capturar HTTPError se ainda ocorrer
         error_details = {}
@@ -2062,15 +2326,25 @@ def lambda_handler(event, context):
                     'status_code': status_code,
                     'response_body': response_body,
                     'error_code': error_code,
-                    'error_message': error_message
+                    'error_message': error_message,
+                    'request_payload': payload if 'payload' in locals() else None,
+                    'request_url': api_url_doc if 'api_url_doc' in locals() else api_url if 'api_url' in locals() else None,
+                    'request_headers': {k: v for k, v in headers.items() if k != 'Authorization'} if 'headers' in locals() else None,
+                    'response_headers': dict(http_err.response.headers) if http_err.response and hasattr(http_err.response, 'headers') else None,
+                    'response_text': http_err.response.text[:5000] if http_err.response and http_err.response.text else None
                 })
             except:
-                response_text = http_err.response.text[:500] if http_err.response and http_err.response.text else 'Sem resposta'
+                response_text = http_err.response.text[:5000] if http_err.response and http_err.response.text else 'Sem resposta'
                 error_message = f"HTTP {status_code} - Resposta: {response_text[:200]}"
                 error_details = {
                     'status_code': status_code,
                     'response_body': response_text,
-                    'error_message': error_message
+                    'error_message': error_message,
+                    'request_payload': payload if 'payload' in locals() else None,
+                    'request_url': api_url_doc if 'api_url_doc' in locals() else api_url if 'api_url' in locals() else None,
+                    'request_headers': {k: v for k, v in headers.items() if k != 'Authorization'} if 'headers' in locals() else None,
+                    'response_headers': dict(http_err.response.headers) if http_err.response and hasattr(http_err.response, 'headers') else None,
+                    'response_text': response_text
                 }
         else:
             # Sem response, usar mensagem da exceção
@@ -2078,7 +2352,10 @@ def lambda_handler(event, context):
             error_details = {
                 'error': str(http_err),
                 'error_type': type(http_err).__name__,
-                'error_message': error_message
+                'error_message': error_message,
+                'request_payload': payload if 'payload' in locals() else None,
+                'request_url': api_url_doc if 'api_url_doc' in locals() else api_url if 'api_url' in locals() else None,
+                'request_headers': {k: v for k, v in headers.items() if k != 'Authorization'} if 'headers' in locals() else None
             }
         
         print(f"\n[10] ERRO HTTP ao chamar API Protheus (HTTPError):")
@@ -2098,6 +2375,21 @@ def lambda_handler(event, context):
             print(f"[10.8] Erro ao reportar para SCTASK: {str(sctask_err)}")
             # Não bloquear o fluxo de erro principal
         
+        # Enviar feedback de falha para ServiceNow
+        print(f"\n[10.9] Enviando feedback de falha para ServiceNow...")
+        try:
+            feedback_details = {
+                'process_id': process_id,
+                'status': 'FAILURE',
+                'error_details': error_details,
+                'payload_sent': payload if 'payload' in locals() else None,
+                'protheus_api_url': api_url_doc if 'api_url_doc' in locals() else api_url if 'api_url' in locals() else None,
+                'timestamp': datetime.utcnow().isoformat() + 'Z'
+            }
+            send_feedback_to_servicenow(process_id, False, feedback_details)
+        except Exception as feedback_err:
+            print(f"[10.9] Erro ao enviar feedback de falha (não bloqueia o fluxo): {str(feedback_err)}")
+        
         # Criar exceção com detalhes completos, incluindo cause se for erro do Protheus
         # O cause já está em error_details, será serializado no Cause do Step Functions
         error_with_details = Exception(error_message)
@@ -2111,7 +2403,10 @@ def lambda_handler(event, context):
             'error': str(timeout_err),
             'error_type': error_type,
             'error_message': f'Read timeout após 60 segundos. A conexão com a API do Protheus excedeu o tempo limite.',
-            'timeout_seconds': 60
+            'timeout_seconds': 60,
+            'request_payload': payload if 'payload' in locals() else None,
+            'request_url': api_url_doc if 'api_url_doc' in locals() else api_url if 'api_url' in locals() else None,
+            'request_headers': {k: v for k, v in headers.items() if k != 'Authorization'} if 'headers' in locals() else None
         }
         
         print(f"\n[10] ERRO DE TIMEOUT ao chamar API Protheus:")
@@ -2132,6 +2427,21 @@ def lambda_handler(event, context):
             print(f"[10.8] Erro ao reportar para SCTASK: {str(sctask_err)}")
             # Não bloquear o fluxo de erro principal
         
+        # Enviar feedback de falha para ServiceNow
+        print(f"\n[10.9] Enviando feedback de falha para ServiceNow...")
+        try:
+            feedback_details = {
+                'process_id': process_id,
+                'status': 'FAILURE',
+                'error_details': error_details,
+                'payload_sent': payload if 'payload' in locals() else None,
+                'protheus_api_url': api_url_doc if 'api_url_doc' in locals() else api_url if 'api_url' in locals() else None,
+                'timestamp': datetime.utcnow().isoformat() + 'Z'
+            }
+            send_feedback_to_servicenow(process_id, False, feedback_details)
+        except Exception as feedback_err:
+            print(f"[10.9] Erro ao enviar feedback de falha (não bloqueia o fluxo): {str(feedback_err)}")
+        
         error_with_details = Exception(error_message)
         error_with_details.error_details = error_details
         raise error_with_details
@@ -2142,7 +2452,10 @@ def lambda_handler(event, context):
         error_details = {
             'error': str(conn_err),
             'error_type': error_type,
-            'error_message': f'Erro ao conectar com a API do Protheus. Verifique a conectividade de rede e se a API está disponível.'
+            'error_message': f'Erro ao conectar com a API do Protheus. Verifique a conectividade de rede e se a API está disponível.',
+            'request_payload': payload if 'payload' in locals() else None,
+            'request_url': api_url_doc if 'api_url_doc' in locals() else api_url if 'api_url' in locals() else None,
+            'request_headers': {k: v for k, v in headers.items() if k != 'Authorization'} if 'headers' in locals() else None
         }
         
         print(f"\n[10] ERRO DE CONEXÃO ao chamar API Protheus:")
@@ -2163,6 +2476,21 @@ def lambda_handler(event, context):
             print(f"[10.8] Erro ao reportar para SCTASK: {str(sctask_err)}")
             # Não bloquear o fluxo de erro principal
         
+        # Enviar feedback de falha para ServiceNow
+        print(f"\n[10.9] Enviando feedback de falha para ServiceNow...")
+        try:
+            feedback_details = {
+                'process_id': process_id,
+                'status': 'FAILURE',
+                'error_details': error_details,
+                'payload_sent': payload if 'payload' in locals() else None,
+                'protheus_api_url': api_url_doc if 'api_url_doc' in locals() else api_url if 'api_url' in locals() else None,
+                'timestamp': datetime.utcnow().isoformat() + 'Z'
+            }
+            send_feedback_to_servicenow(process_id, False, feedback_details)
+        except Exception as feedback_err:
+            print(f"[10.9] Erro ao enviar feedback de falha (não bloqueia o fluxo): {str(feedback_err)}")
+        
         error_with_details = Exception(error_message)
         error_with_details.error_details = error_details
         raise error_with_details
@@ -2173,7 +2501,10 @@ def lambda_handler(event, context):
         error_details = {
             'error': str(req_err),
             'error_type': error_type,
-            'error_message': f'Erro ao realizar requisição para a API do Protheus: {str(req_err)}'
+            'error_message': f'Erro ao realizar requisição para a API do Protheus: {str(req_err)}',
+            'request_payload': payload if 'payload' in locals() else None,
+            'request_url': api_url_doc if 'api_url_doc' in locals() else api_url if 'api_url' in locals() else None,
+            'request_headers': {k: v for k, v in headers.items() if k != 'Authorization'} if 'headers' in locals() else None
         }
         
         print(f"\n[10] ERRO DE REQUISIÇÃO ao chamar API Protheus:")
@@ -2194,6 +2525,21 @@ def lambda_handler(event, context):
             print(f"[10.8] Erro ao reportar para SCTASK: {str(sctask_err)}")
             # Não bloquear o fluxo de erro principal
         
+        # Enviar feedback de falha para ServiceNow
+        print(f"\n[10.9] Enviando feedback de falha para ServiceNow...")
+        try:
+            feedback_details = {
+                'process_id': process_id,
+                'status': 'FAILURE',
+                'error_details': error_details,
+                'payload_sent': payload if 'payload' in locals() else None,
+                'protheus_api_url': api_url_doc if 'api_url_doc' in locals() else api_url if 'api_url' in locals() else None,
+                'timestamp': datetime.utcnow().isoformat() + 'Z'
+            }
+            send_feedback_to_servicenow(process_id, False, feedback_details)
+        except Exception as feedback_err:
+            print(f"[10.9] Erro ao enviar feedback de falha (não bloqueia o fluxo): {str(feedback_err)}")
+        
         error_with_details = Exception(error_message)
         error_with_details.error_details = error_details
         raise error_with_details
@@ -2212,7 +2558,10 @@ def lambda_handler(event, context):
         error_details = {
             'error': str(e),
             'error_type': error_type,
-            'error_message': f'Erro inesperado ao enviar para Protheus: {str(e)}'
+            'error_message': f'Erro inesperado ao enviar para Protheus: {str(e)}',
+            'request_payload': payload if 'payload' in locals() else None,
+            'request_url': api_url_doc if 'api_url_doc' in locals() else api_url if 'api_url' in locals() else None,
+            'request_headers': {k: v for k, v in headers.items() if k != 'Authorization'} if 'headers' in locals() else None
         }
         
         # Reportar falha para API do SCTASK
@@ -2226,6 +2575,21 @@ def lambda_handler(event, context):
         except Exception as sctask_err:
             print(f"[10.8] Erro ao reportar para SCTASK: {str(sctask_err)}")
             # Não bloquear o fluxo de erro principal
+        
+        # Enviar feedback de falha para ServiceNow
+        print(f"\n[10.9] Enviando feedback de falha para ServiceNow...")
+        try:
+            feedback_details = {
+                'process_id': process_id,
+                'status': 'FAILURE',
+                'error_details': error_details,
+                'payload_sent': payload if 'payload' in locals() else None,
+                'protheus_api_url': api_url_doc if 'api_url_doc' in locals() else api_url if 'api_url' in locals() else None,
+                'timestamp': datetime.utcnow().isoformat() + 'Z'
+            }
+            send_feedback_to_servicenow(process_id, False, feedback_details)
+        except Exception as feedback_err:
+            print(f"[10.9] Erro ao enviar feedback de falha (não bloqueia o fluxo): {str(feedback_err)}")
         
         error_with_details = Exception(error_message)
         error_with_details.error_details = error_details
