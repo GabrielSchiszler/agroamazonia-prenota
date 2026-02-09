@@ -707,13 +707,22 @@ Retorne APENAS o JSON.
                 'dataFabricacao': data_fabricacao if data_fabricacao else None
             }
 
-            # Regra: só considerar lote se tiver numero + dataFabricacao + dataValidade
-            if not lote_valido['numero'] or not lote_valido['dataFabricacao'] or not lote_valido['dataValidade']:
-                print(f"[EXTRACT_LOTES] Ignorando (faltam campos obrigatórios numero+fab+valid): {lote_valido}")
+            # Regra: só precisa ter o número do lote para ser considerado válido
+            if not lote_valido['numero']:
+                print(f"[EXTRACT_LOTES] Ignorando (sem número do lote): {lote_valido}")
                 continue
 
-            lotes_validos.append(lote_valido)
-            print(f"[EXTRACT_LOTES] Lote aceito: {lote_valido['numero']}, qtd={lote_valido['quantidade']}, fab={lote_valido['dataFabricacao']}, valid={lote_valido['dataValidade']}")
+            # Remover campos nulos para não enviar chaves vazias no payload
+            lote_final = {'numero': lote_valido['numero']}
+            if lote_valido['quantidade'] is not None:
+                lote_final['quantidade'] = lote_valido['quantidade']
+            if lote_valido['dataValidade'] is not None:
+                lote_final['dataValidade'] = lote_valido['dataValidade']
+            if lote_valido['dataFabricacao'] is not None:
+                lote_final['dataFabricacao'] = lote_valido['dataFabricacao']
+
+            lotes_validos.append(lote_final)
+            print(f"[EXTRACT_LOTES] Lote aceito: numero={lote_final.get('numero')}, qtd={lote_final.get('quantidade', 'N/A')}, fab={lote_final.get('dataFabricacao', 'N/A')}, valid={lote_final.get('dataValidade', 'N/A')}")
         
         return lotes_validos
         

@@ -91,11 +91,21 @@
 
         function updateMetricCards(data) {
             const today = data.today || {};
-            document.getElementById('totalToday').textContent = today.total_count || 0;
-            document.getElementById('successToday').textContent = today.success_count || 0;
-            document.getElementById('failedToday').textContent = today.failed_count || 0;
-            document.getElementById('successRate').textContent = (today.success_rate || 0) + '%';
-            document.getElementById('avgTime').textContent = (today.avg_processing_time || 0) + 's';
+            document.getElementById('totalToday').textContent = today.total_count ?? 0;
+            document.getElementById('successToday').textContent = today.success_count ?? 0;
+            document.getElementById('failedToday').textContent = today.failed_count ?? 0;
+            document.getElementById('successRate').textContent = (today.success_rate ?? 0).toFixed(1) + '%';
+            
+            const avgTime = today.avg_processing_time ?? 0;
+            let timeDisplay;
+            if (avgTime >= 60) {
+                const minutes = Math.floor(avgTime / 60);
+                const seconds = Math.round(avgTime % 60);
+                timeDisplay = `${minutes}m ${seconds}s`;
+            } else {
+                timeDisplay = `${Math.round(avgTime)}s`;
+            }
+            document.getElementById('avgTime').textContent = timeDisplay;
         }
 
         function createWeeklyChart(data) {

@@ -44,6 +44,7 @@ def lambda_handler(event, context):
     previous_metrics_status = None  # Status da métrica anterior (para deduplicação)
     previous_metrics_date = None    # Data em que métricas foram registradas
     previous_failed_rules = []      # Regras que falharam anteriormente
+    previous_processing_time = 0    # Tempo de processamento anterior (para deduplicação de total_time)
     
     try:
         pk = f"PROCESS#{process_id}"
@@ -65,11 +66,19 @@ def lambda_handler(event, context):
             except:
                 previous_failed_rules = []
             
+            # Recuperar tempo de processamento anterior (para decrementar total_time na deduplicação)
+            prev_proc_time = metadata_response['Item'].get('METRICS_PROCESSING_TIME', 0)
+            try:
+                previous_processing_time = float(prev_proc_time) if prev_proc_time else 0
+            except (ValueError, TypeError):
+                previous_processing_time = 0
+            
             print(f"Found start_time in DynamoDB: {start_time_str}")
             print(f"Found process_type: {process_type}")
             print(f"Previous metrics_status: {previous_metrics_status}")
             print(f"Previous metrics_date: {previous_metrics_date}")
             print(f"Previous failed_rules: {previous_failed_rules}")
+            print(f"Previous processing_time: {previous_processing_time}s")
         else:
             print(f"WARNING: Process {process_id} METADATA not found in DynamoDB")
             process_type = 'UNKNOWN'
@@ -259,11 +268,11 @@ def lambda_handler(event, context):
             print(f"[DEDUPLICAÇÃO] Removendo métricas do dia {prev_date_key} e mês {prev_month_key}...")
             
             # Decrementar métricas diárias anteriores
-            decrement_daily_metrics(prev_date_key, previous_metrics_status, process_type, previous_failed_rules)
+            decrement_daily_metrics(prev_date_key, previous_metrics_status, process_type, previous_failed_rules, previous_processing_time)
             print(f"✓ Métricas diárias anteriores decrementadas")
             
             # Decrementar métricas mensais anteriores
-            decrement_monthly_metrics(prev_month_key, previous_metrics_status, process_type)
+            decrement_monthly_metrics(prev_month_key, previous_metrics_status, process_type, previous_processing_time)
             print(f"✓ Métricas mensais anteriores decrementadas")
         
         # ============================================
@@ -283,7 +292,7 @@ def lambda_handler(event, context):
         # Salvar informações de métricas no processo (para deduplicação futura)
         # ============================================
         print("Salvando informações de métricas no processo...")
-        save_metrics_status(process_id, status, date_key, failed_rules)
+        save_metrics_status(process_id, status, date_key, failed_rules, processing_time)
         print("✓ Informações de métricas salvas no processo")
         
         print("="*80)
@@ -308,7 +317,7 @@ def lambda_handler(event, context):
         'previous_status': previous_metrics_status
     }
 
-def save_metrics_status(process_id, status, date_key, failed_rules):
+def save_metrics_status(process_id, status, date_key, failed_rules, processing_time=0):
     """Salva informações de métricas no processo para suportar deduplicação em reprocessamento"""
     
     pk = f"PROCESS#{process_id}"
@@ -317,15 +326,16 @@ def save_metrics_status(process_id, status, date_key, failed_rules):
     try:
         table.update_item(
             Key={'PK': pk, 'SK': 'METADATA'},
-            UpdateExpression='SET METRICS_STATUS = :status, METRICS_DATE = :date, METRICS_FAILED_RULES = :rules, METRICS_UPDATED_AT = :timestamp',
+            UpdateExpression='SET METRICS_STATUS = :status, METRICS_DATE = :date, METRICS_FAILED_RULES = :rules, METRICS_UPDATED_AT = :timestamp, METRICS_PROCESSING_TIME = :proc_time',
             ExpressionAttributeValues={
                 ':status': status,
                 ':date': date_key,
                 ':rules': json.dumps(failed_rules if failed_rules else []),
-                ':timestamp': timestamp
+                ':timestamp': timestamp,
+                ':proc_time': Decimal(str(round(processing_time, 2)))
             }
         )
-        print(f"[save_metrics_status] Métricas salvas: status={status}, date={date_key}, rules={failed_rules}")
+        print(f"[save_metrics_status] Métricas salvas: status={status}, date={date_key}, rules={failed_rules}, processing_time={processing_time}s")
     except Exception as e:
         print(f"[save_metrics_status] Erro ao salvar: {e}")
         # Não falhar o processo por causa disso
@@ -333,11 +343,11 @@ def save_metrics_status(process_id, status, date_key, failed_rules):
         traceback.print_exc()
 
 
-def decrement_daily_metrics(date_key, status, process_type, failed_rules=None):
+def decrement_daily_metrics(date_key, status, process_type, failed_rules=None, previous_processing_time=0):
     """Decrementa métricas diárias (usado em reprocessamento para evitar duplicação)"""
     
     print(f"\n[decrement_daily_metrics] Decrementando métricas para {date_key}")
-    print(f"[decrement_daily_metrics] Status: {status}, Process type: {process_type}, Failed rules: {failed_rules}")
+    print(f"[decrement_daily_metrics] Status: {status}, Process type: {process_type}, Failed rules: {failed_rules}, Previous time: {previous_processing_time}s")
     
     if failed_rules is None:
         failed_rules = []
@@ -365,6 +375,13 @@ def decrement_daily_metrics(date_key, status, process_type, failed_rules=None):
         
         # Decrementar total_count
         add_parts.append('total_count :dec')
+        
+        # Decrementar total_time com o tempo de processamento anterior
+        if previous_processing_time > 0:
+            dec_time = Decimal(str(round(previous_processing_time, 2))) * Decimal('-1')
+            expr_values[':dec_time'] = dec_time
+            add_parts.append('total_time :dec_time')
+            print(f"[decrement_daily_metrics] Decrementando total_time em {previous_processing_time}s")
         
         # Decrementar contador de status
         if status == 'SUCCESS':
@@ -429,11 +446,11 @@ def decrement_daily_metrics(date_key, status, process_type, failed_rules=None):
         # Não falhar - apenas log
 
 
-def decrement_monthly_metrics(month_key, status, process_type):
+def decrement_monthly_metrics(month_key, status, process_type, previous_processing_time=0):
     """Decrementa métricas mensais (usado em reprocessamento para evitar duplicação)"""
     
     print(f"\n[decrement_monthly_metrics] Decrementando métricas para {month_key}")
-    print(f"[decrement_monthly_metrics] Status: {status}, Process type: {process_type}")
+    print(f"[decrement_monthly_metrics] Status: {status}, Process type: {process_type}, Previous time: {previous_processing_time}s")
     
     try:
         # Verificar se o item existe
@@ -456,6 +473,13 @@ def decrement_monthly_metrics(month_key, status, process_type):
         
         # Decrementar total_count
         add_parts.append('total_count :dec')
+        
+        # Decrementar total_time com o tempo de processamento anterior
+        if previous_processing_time > 0:
+            dec_time = Decimal(str(round(previous_processing_time, 2))) * Decimal('-1')
+            expr_values[':dec_time'] = dec_time
+            add_parts.append('total_time :dec_time')
+            print(f"[decrement_monthly_metrics] Decrementando total_time em {previous_processing_time}s")
         
         # Decrementar contador de status
         if status == 'SUCCESS':

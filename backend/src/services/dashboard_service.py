@@ -146,6 +146,62 @@ class DashboardService:
             'failed_rules_week': failed_rules_week
         }
     
+    def _get_raw_hourly(self, date):
+        """Busca processes_by_hour raw (UTC) de uma data específica"""
+        try:
+            response = self.table.get_item(
+                Key={'PK': f'METRICS#{date}', 'SK': 'SUMMARY'}
+            )
+            if 'Item' not in response:
+                return {}
+            item = response['Item']
+            raw = {}
+            if 'processes_by_hour' in item:
+                for hour, count in item['processes_by_hour'].items():
+                    try:
+                        raw[int(hour)] = int(count)
+                    except (ValueError, TypeError):
+                        pass
+            return raw
+        except Exception:
+            return {}
+    
+    def _convert_hourly_utc_to_brt(self, date):
+        """
+        Monta a distribuição por hora em BRT para uma data específica.
+        
+        Para montar um dia BRT completo:
+        - Horas 3-23 UTC do mesmo dia → BRT 0-20
+        - Horas 0-2 UTC do dia seguinte → BRT 21-23
+        """
+        BRT_OFFSET = -3
+        
+        # Buscar dados raw UTC do dia atual e do dia seguinte
+        current_date = datetime.strptime(date, '%Y-%m-%d')
+        next_date = (current_date + timedelta(days=1)).strftime('%Y-%m-%d')
+        
+        raw_current = self._get_raw_hourly(date)
+        raw_next = self._get_raw_hourly(next_date)
+        
+        processes_by_hour = {}
+        
+        # Do dia UTC atual: horas 3-23 → BRT 0-20 (pertencem ao mesmo dia BRT)
+        for hour_utc, count in raw_current.items():
+            hour_brt = hour_utc + BRT_OFFSET
+            if hour_brt >= 0:  # Só incluir se ainda pertence ao mesmo dia BRT
+                key = str(hour_brt)
+                processes_by_hour[key] = processes_by_hour.get(key, 0) + count
+        
+        # Do dia UTC seguinte: horas 0-2 → BRT 21-23 (pertencem a este dia BRT)
+        for hour_utc, count in raw_next.items():
+            hour_brt = hour_utc + BRT_OFFSET
+            if hour_brt < 0:  # Só incluir se pertence ao dia BRT anterior (nosso dia alvo)
+                hour_brt += 24
+                key = str(hour_brt)
+                processes_by_hour[key] = processes_by_hour.get(key, 0) + count
+        
+        return processes_by_hour
+
     def get_metrics_by_date(self, date):
         """Retorna métricas de uma data específica"""
         try:
@@ -179,11 +235,8 @@ class DashboardService:
             success_rate = (success_count / total_count * 100) if total_count > 0 else 0
             avg_time = (total_time / total_count) if total_count > 0 else 0
             
-            # Converter nested objects
-            processes_by_hour = {}
-            if 'processes_by_hour' in item:
-                for hour, count in item['processes_by_hour'].items():
-                    processes_by_hour[hour] = int(count)
+            # Converter horas UTC para BRT buscando dados do dia atual e seguinte
+            processes_by_hour = self._convert_hourly_utc_to_brt(date)
             
             failure_reasons = {}
             if 'failure_reasons' in item:

@@ -143,18 +143,39 @@ function refreshDashboard() {
 function updateMetricCards(data) {
     // Suportar tanto formato antigo (today) quanto novo (period)
     const summary = data.summary || {};
-    const today = data.today || {};
+    const todayData = data.today || {};
     
     // Determinar se há filtro de período ativo
     const hasPeriodFilter = currentStartDate && currentEndDate;
     const isToday = hasPeriodFilter && currentStartDate === currentEndDate && 
                     currentStartDate === new Date().toISOString().split('T')[0];
     
-    // Se há período filtrado, usar summary; senão usar today
-    const total = summary.total || today.total_count || 0;
-    const success = summary.success || today.success_count || 0;
-    const failed = summary.failed || today.failed_count || 0;
-    const successRate = summary.success_rate || summary.success_rate_week || today.success_rate || 0;
+    let total, success, failed, successRate, avgTime, periodLabel;
+    
+    if (hasPeriodFilter && !isToday) {
+        // Filtro de período ativo (não é "hoje") → usar summary do período
+        total = summary.total ?? 0;
+        success = summary.success ?? 0;
+        failed = summary.failed ?? 0;
+        successRate = summary.success_rate ?? 0;
+        avgTime = summary.avg_processing_time ?? 0;
+        
+        const startDate = parseDateLocal(currentStartDate);
+        const endDate = parseDateLocal(currentEndDate);
+        const startStr = startDate.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
+        const endStr = endDate.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
+        periodLabel = startDate.getTime() === endDate.getTime() 
+            ? startStr 
+            : `${startStr} - ${endStr}`;
+    } else {
+        // Sem filtro ou filtro "hoje" → usar dados de hoje
+        total = todayData.total_count ?? 0;
+        success = todayData.success_count ?? 0;
+        failed = todayData.failed_count ?? 0;
+        successRate = todayData.success_rate ?? 0;
+        avgTime = todayData.avg_processing_time ?? 0;
+        periodLabel = 'Hoje';
+    }
     
     // Atualizar valores
     document.getElementById('totalToday').textContent = total;
@@ -162,24 +183,11 @@ function updateMetricCards(data) {
     document.getElementById('failedToday').textContent = failed;
     document.getElementById('successRate').textContent = successRate.toFixed(1) + '%';
     
-    // Atualizar labels dinamicamente baseado no filtro
-    let periodLabel = 'Hoje';
-    if (hasPeriodFilter && !isToday) {
-        const startDate = new Date(currentStartDate);
-        const endDate = new Date(currentEndDate);
-        const startStr = startDate.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
-        const endStr = endDate.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
-        periodLabel = startDate.getTime() === endDate.getTime() 
-            ? startStr 
-            : `${startStr} - ${endStr}`;
-    }
-    
     document.getElementById('totalLabel').textContent = `Processos ${periodLabel}`;
     document.getElementById('successLabel').textContent = `Sucessos ${periodLabel}`;
     document.getElementById('failedLabel').textContent = `Falhas ${periodLabel}`;
     
-    // Formatar tempo médio de processamento (usar summary quando disponível, senão today)
-    const avgTime = summary.avg_processing_time || today.avg_processing_time || 0;
+    // Formatar tempo médio de processamento
     let timeDisplay;
     if (avgTime >= 60) {
         const minutes = Math.floor(avgTime / 60);
@@ -191,6 +199,16 @@ function updateMetricCards(data) {
     document.getElementById('avgTime').textContent = timeDisplay;
 }
 
+// Helper: converte string de data YYYY-MM-DD para Date local (sem problema de timezone)
+function parseDateLocal(dateStr) {
+    // 'YYYY-MM-DD' sem hora é interpretado como UTC pelo JS, causando dia errado em fuso negativo
+    // Adicionando T12:00:00 garante que mesmo com qualquer fuso o dia permanece correto
+    if (typeof dateStr === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
+        return new Date(dateStr + 'T12:00:00');
+    }
+    return new Date(dateStr);
+}
+
 function createDailyProcessesChart(data) {
     const ctx = document.getElementById('dailyProcessesChart').getContext('2d');
     const periodData = data.period || data.last_7_days || [];
@@ -199,7 +217,7 @@ function createDailyProcessesChart(data) {
     
     // Formatar datas para exibição
     const labels = periodData.map(d => {
-        const date = new Date(d.date);
+        const date = parseDateLocal(d.date);
         return date.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
     }).reverse();
     
@@ -284,12 +302,24 @@ function createDailyProcessesChart(data) {
 
 function createSuccessErrorRateChart(data) {
     const ctx = document.getElementById('successErrorRateChart').getContext('2d');
-    const summary = data.summary || {};
-    const today = data.today || {};
     
-    const total = summary.total || today.total_count || 0;
-    const success = summary.success || today.success_count || 0;
-    const failed = summary.failed || today.failed_count || 0;
+    // Determinar se há filtro de período ativo
+    const hasPeriodFilter = currentStartDate && currentEndDate;
+    const isToday = hasPeriodFilter && currentStartDate === currentEndDate && 
+                    currentStartDate === new Date().toISOString().split('T')[0];
+    
+    let total, success, failed;
+    if (hasPeriodFilter && !isToday) {
+        const summary = data.summary || {};
+        total = summary.total ?? 0;
+        success = summary.success ?? 0;
+        failed = summary.failed ?? 0;
+    } else {
+        const todayData = data.today || {};
+        total = todayData.total_count ?? 0;
+        success = todayData.success_count ?? 0;
+        failed = todayData.failed_count ?? 0;
+    }
     
     if (successErrorRateChart) successErrorRateChart.destroy();
     
@@ -468,7 +498,20 @@ function createErrorChart(data) {
 
 function createTypeChart(data) {
     const ctx = document.getElementById('typeChart').getContext('2d');
-    const types = data.processes_by_type || data.processes_by_type_week || data.today?.processes_by_type || {};
+    
+    // Determinar se há filtro de período ativo
+    const hasPeriodFilter = currentStartDate && currentEndDate;
+    const isToday = hasPeriodFilter && currentStartDate === currentEndDate && 
+                    currentStartDate === new Date().toISOString().split('T')[0];
+    
+    let types;
+    if (hasPeriodFilter && !isToday) {
+        // Com filtro de período → usar dados do período
+        types = data.processes_by_type || {};
+    } else {
+        // Sem filtro ou "hoje" → usar dados de hoje
+        types = data.today?.processes_by_type || {};
+    }
     
     if (typeChart) typeChart.destroy();
     
@@ -529,7 +572,20 @@ function createTypeChart(data) {
 
 function createFailedRulesChart(data) {
     const ctx = document.getElementById('failedRulesChart').getContext('2d');
-    const failedRules = data.failed_rules || data.failed_rules_week || {};
+    
+    // Determinar se há filtro de período ativo
+    const hasPeriodFilter = currentStartDate && currentEndDate;
+    const isToday = hasPeriodFilter && currentStartDate === currentEndDate && 
+                    currentStartDate === new Date().toISOString().split('T')[0];
+    
+    let failedRules;
+    if (hasPeriodFilter && !isToday) {
+        // Com filtro de período → usar dados do período
+        failedRules = data.failed_rules || {};
+    } else {
+        // Sem filtro ou "hoje" → usar dados de hoje
+        failedRules = data.today?.failed_rules || {};
+    }
     
     if (failedRulesChart) failedRulesChart.destroy();
     
@@ -672,7 +728,7 @@ function createFailedRulesByDayChart(data) {
     
     // Formatar datas
     const dates = periodData.map(d => {
-        const date = new Date(d.date);
+        const date = parseDateLocal(d.date);
         return date.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
     }).reverse();
     
@@ -788,7 +844,7 @@ function createFailedRulesByDayChart(data) {
     
     // Formatar datas
     const dates = periodData.map(d => {
-        const date = new Date(d.date);
+        const date = parseDateLocal(d.date);
         return date.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
     }).reverse();
     
