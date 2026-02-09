@@ -442,10 +442,11 @@ export class AgroAmazoniaStack extends cdk.Stack {
     });
 
     // Task para atualizar métricas no fluxo de SUCESSO (quando tudo deu certo)
+    // IMPORTANTE: Usar resultPath ao invés de outputPath para preservar protheus_result no estado
     const updateMetricsTaskSuccess = new tasks.LambdaInvoke(this, 'UpdateMetricsSuccess', {
       lambdaFunction: updateMetricsLambda,
       payload: sfn.TaskInput.fromJsonPathAt('$.metrics_input'),
-      outputPath: '$.Payload'
+      resultPath: '$.metrics_result'  // Preserva o estado anterior (incluindo protheus_result)
     });
     
     // Task para atualizar métricas no fluxo de FALHA DE VALIDAÇÃO
