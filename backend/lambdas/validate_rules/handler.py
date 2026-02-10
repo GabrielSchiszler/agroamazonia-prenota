@@ -242,10 +242,48 @@ def handler(event, context):
         
         ocr_docs.append(doc_prepared)
     
+    # Verificar se algum item do pedido de compra já tem codigoOperacao definido
+    # Se tiver, a regra validar_cfop_chave deve ser ignorada
+    has_codigo_operacao_in_metadata = False
+    try:
+        # Verificar no input_json
+        if input_json and input_json.get('requestBody', {}).get('itens'):
+            for item_check in input_json['requestBody']['itens']:
+                if item_check.get('codigoOperacao'):
+                    has_codigo_operacao_in_metadata = True
+                    break
+        
+        # Verificar no pedido de compra metadata
+        if not has_codigo_operacao_in_metadata and pedido_compra_item:
+            metadados_check_str = pedido_compra_item.get('METADADOS', '')
+            if metadados_check_str:
+                metadados_check = json.loads(metadados_check_str) if isinstance(metadados_check_str, str) else metadados_check_str
+                if isinstance(metadados_check, dict) and metadados_check.get('requestBody', {}).get('itens'):
+                    for item_check in metadados_check['requestBody']['itens']:
+                        if item_check.get('codigoOperacao'):
+                            has_codigo_operacao_in_metadata = True
+                            break
+        
+        if has_codigo_operacao_in_metadata:
+            logger.info("[handler] codigoOperacao encontrado nos itens do pedido de compra - regra validar_cfop_chave será ignorada")
+    except Exception as e:
+        logger.warning(f"[handler] Erro ao verificar codigoOperacao nos metadados: {str(e)}")
+
     for rule in rules:
         rule_name = rule['rule_name']
         logger.info(f"Executing rule: {rule_name}")
         
+        # Ignorar validar_cfop_chave se codigoOperacao já veio no pedido de compra
+        if rule_name == 'validar_cfop_chave' and has_codigo_operacao_in_metadata:
+            logger.info(f"[handler] Regra {rule_name} ignorada - codigoOperacao já definido no pedido de compra")
+            results.append({
+                'rule': rule_name,
+                'status': 'SKIPPED',
+                'danfe_value': 'N/A',
+                'message': 'Regra ignorada: codigoOperacao já definido no pedido de compra'
+            })
+            continue
+
         try:
             module = __import__(f"rules.{rule_name}", fromlist=['validate'])
             if not hasattr(module, 'validate'):

@@ -1789,6 +1789,21 @@ def lambda_handler(event, context):
             print(f"[8.{idx}.7] Lote: {lote}")
             print(f"[8.{idx}.8] pedidoDeCompra: {pedido_de_compra}")
             
+            # Variável para armazenar codigoOperacao vindo do pedido de compra (prioridade sobre CFOP mapping)
+            codigo_operacao_from_metadata = None
+            
+            # Tentar buscar codigoOperacao do item no requestBody pelo código do produto
+            if request_body_data and request_body_data.get('itens'):
+                for item_rb_check in request_body_data['itens']:
+                    codigo_rb_check = item_rb_check.get('codigoProduto', '').strip()
+                    if codigo_produto and codigo_rb_check:
+                        codigo_rb_norm = codigo_rb_check.lstrip('0') or '0'
+                        codigo_prod_norm = codigo_produto.lstrip('0') or '0'
+                        if codigo_rb_norm == codigo_prod_norm and item_rb_check.get('codigoOperacao'):
+                            codigo_operacao_from_metadata = item_rb_check['codigoOperacao']
+                            print(f"[8.{idx}.8.1] codigoOperacao encontrado no requestBody por código: {codigo_operacao_from_metadata}")
+                            break
+            
             # Se não encontrou pedidoDeCompra, tentar buscar novamente
             if not pedido_de_compra or not pedido_de_compra.get('pedidoErp'):
                 print(f"[8.{idx}.9] pedidoDeCompra não encontrado, buscando no requestBody...")
@@ -1846,6 +1861,12 @@ def lambda_handler(event, context):
                                     pedido_de_compra = {}
                                 
                                 print(f"[8.{idx}.10] pedidoDeCompra encontrado por nome: {pedido_de_compra}")
+                                
+                                # Capturar codigoOperacao do pedido de compra se existir
+                                if item_rb.get('codigoOperacao'):
+                                    codigo_operacao_from_metadata = item_rb['codigoOperacao']
+                                    print(f"[8.{idx}.10.1] codigoOperacao encontrado no pedido de compra: {codigo_operacao_from_metadata}")
+                                
                                 break
                             else:
                                 print(f"[8.{idx}.9.DEBUG.{item_idx}] ❌ Não deu match por nome")
@@ -1882,6 +1903,12 @@ def lambda_handler(event, context):
                                     pedido_de_compra = {}
                                 
                                 print(f"[8.{idx}.11] pedidoDeCompra encontrado por código: {pedido_de_compra}")
+                                
+                                # Capturar codigoOperacao do pedido de compra se existir
+                                if item_rb.get('codigoOperacao'):
+                                    codigo_operacao_from_metadata = item_rb['codigoOperacao']
+                                    print(f"[8.{idx}.11.1] codigoOperacao encontrado no pedido de compra: {codigo_operacao_from_metadata}")
+                                
                                 break
                             else:
                                 print(f"[8.{idx}.9.DEBUG.{item_idx}] ❌ Não deu match por código")
@@ -1895,12 +1922,17 @@ def lambda_handler(event, context):
                 print(f"  - Código do produto XML: {codigo_produto}")
                 print(f"  - Continuando processamento sem pedidoDeCompra...")
             
-            # Buscar codigoOperacao do CFOP mapping
+            # Buscar codigoOperacao: prioridade 1 = pedido de compra, prioridade 2 = CFOP mapping
             codigo_operacao = ''
-            if cfop_mapping and cfop_mapping.get('chave'):
+            if codigo_operacao_from_metadata:
+                codigo_operacao = codigo_operacao_from_metadata
+                print(f"[8.{idx}.12.op] Usando codigoOperacao do pedido de compra: {codigo_operacao}")
+            elif cfop_mapping and cfop_mapping.get('chave'):
                 codigo_operacao = cfop_mapping.get('chave', '')
+                print(f"[8.{idx}.12.op] Usando codigoOperacao do CFOP mapping (chave): {codigo_operacao}")
             elif cfop_mapping and cfop_mapping.get('operacao'):
                 codigo_operacao = cfop_mapping.get('operacao', '')
+                print(f"[8.{idx}.12.op] Usando codigoOperacao do CFOP mapping (operacao): {codigo_operacao}")
             
             # Montar item do payload
             item = {
@@ -1955,23 +1987,35 @@ def lambda_handler(event, context):
                 if codigo.isdigit():
                     codigo = codigo.lstrip('0') or '0'
                 
-                # Usar chave encontrada na validação do CFOP (prioridade)
-                # A chave é o código de operação que o Protheus precisa
+                # Buscar codigoOperacao: prioridade 1 = pedido de compra, prioridade 2 = CFOP mapping, prioridade 3 = CFOP XML
                 cfop_original = produto.get('cfop', '')
                 codigo_operacao = ''
                 
-                if cfop_mapping and cfop_mapping.get('chave'):
-                    # Prioridade 1: Chave encontrada na validação
-                    codigo_operacao = cfop_mapping.get('chave', '')
-                    print(f"[8.{idx}] Produto {idx}: CFOP={cfop_original} → Chave encontrada na validação: {codigo_operacao}")
-                elif cfop_mapping and cfop_mapping.get('operacao'):
-                    # Prioridade 2: Operação do mapping (mesmo valor da chave)
-                    codigo_operacao = cfop_mapping.get('operacao', '')
-                    print(f"[8.{idx}] Produto {idx}: CFOP={cfop_original} → Usando operação do mapping: {codigo_operacao}")
-                else:
-                    # Fallback: Usar CFOP original do XML (caso não tenha passado pela validação)
-                    codigo_operacao = cfop_original
-                    print(f"[8.{idx}] Produto {idx}: CFOP={cfop_original} → Nenhuma chave encontrada, usando CFOP original como fallback")
+                # Prioridade 1: codigoOperacao do requestBody (pedido de compra)
+                if request_body_data and request_body_data.get('itens'):
+                    for item_rb_check in request_body_data['itens']:
+                        codigo_rb_check = item_rb_check.get('codigoProduto', '').strip()
+                        if codigo and codigo_rb_check:
+                            codigo_rb_norm = codigo_rb_check.lstrip('0') or '0'
+                            codigo_norm = codigo.lstrip('0') or '0'
+                            if codigo_rb_norm == codigo_norm and item_rb_check.get('codigoOperacao'):
+                                codigo_operacao = item_rb_check['codigoOperacao']
+                                print(f"[8.{idx}] Produto {idx}: codigoOperacao do pedido de compra: {codigo_operacao}")
+                                break
+                
+                if not codigo_operacao:
+                    if cfop_mapping and cfop_mapping.get('chave'):
+                        # Prioridade 2: Chave encontrada na validação
+                        codigo_operacao = cfop_mapping.get('chave', '')
+                        print(f"[8.{idx}] Produto {idx}: CFOP={cfop_original} → Chave encontrada na validação: {codigo_operacao}")
+                    elif cfop_mapping and cfop_mapping.get('operacao'):
+                        # Prioridade 3: Operação do mapping (mesmo valor da chave)
+                        codigo_operacao = cfop_mapping.get('operacao', '')
+                        print(f"[8.{idx}] Produto {idx}: CFOP={cfop_original} → Usando operação do mapping: {codigo_operacao}")
+                    else:
+                        # Fallback: Usar CFOP original do XML (caso não tenha passado pela validação)
+                        codigo_operacao = cfop_original
+                        print(f"[8.{idx}] Produto {idx}: CFOP={cfop_original} → Nenhuma chave encontrada, usando CFOP original como fallback")
                 
                 # Montar pedidoDeCompra
                 pedido_de_compra = {
