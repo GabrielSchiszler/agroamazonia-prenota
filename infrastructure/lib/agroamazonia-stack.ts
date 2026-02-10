@@ -5,11 +5,9 @@ import * as lambda from 'aws-cdk-lib/aws-lambda';
 import * as sfn from 'aws-cdk-lib/aws-stepfunctions';
 import * as tasks from 'aws-cdk-lib/aws-stepfunctions-tasks';
 import * as iam from 'aws-cdk-lib/aws-iam';
-import * as apigateway from 'aws-cdk-lib/aws-apigateway';
 import * as s3n from 'aws-cdk-lib/aws-s3-notifications';
-import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
 import * as sns from 'aws-cdk-lib/aws-sns';
-import * as cr from 'aws-cdk-lib/custom-resources';
+import * as ec2 from 'aws-cdk-lib/aws-ec2';
 import { Construct } from 'constructs';
 
 interface AgroAmazoniaStackProps extends cdk.StackProps {
@@ -18,7 +16,6 @@ interface AgroAmazoniaStackProps extends cdk.StackProps {
 
 export class AgroAmazoniaStack extends cdk.Stack {
   private readonly envName: string;
-  public readonly apiUrl: string; // Expor URL da API para outras stacks
 
   constructor(scope: Construct, id: string, props: AgroAmazoniaStackProps) {
     super(scope, id, props);
@@ -34,6 +31,26 @@ export class AgroAmazoniaStack extends cdk.Stack {
     const name = (resourceType: string, resourceName: string): string => {
       const normalizedName = resourceName.toLowerCase().replace(/_/g, '-');
       return `${resourceType}-${normalizedName}-${this.envName}`;
+    };
+
+    // VPC e Subnet para todas as Lambdas
+    const vpc = ec2.Vpc.fromLookup(this, 'ExistingVpc', {
+      vpcId: 'vpc-0f7e58cab8170d2d5'
+    });
+
+    const privateSubnet = ec2.Subnet.fromSubnetAttributes(this, 'PrivateSubnet', {
+      subnetId: 'subnet-04bd6b0e1367cfffe',
+      availabilityZone: 'sa-east-1a'
+    });
+
+    // Security Group existente para as Lambdas na VPC
+    const lambdaSg = ec2.SecurityGroup.fromSecurityGroupId(this, 'LambdaSecurityGroup', 'sg-048ca965b1065aa57');
+
+    // Configuração comum de VPC para todas as Lambdas
+    const vpcConfig = {
+      vpc,
+      vpcSubnets: { subnets: [privateSubnet] },
+      securityGroups: [lambdaSg]
     };
 
     // S3 Bucket para documentos brutos
@@ -94,7 +111,8 @@ export class AgroAmazoniaStack extends cdk.Stack {
         TABLE_NAME: documentTable.tableName,
         BUCKET_NAME: rawDocumentsBucket.bucketName
       },
-      timeout: cdk.Duration.seconds(30)
+      timeout: cdk.Duration.seconds(30),
+      ...vpcConfig
     });
 
     documentTable.grantReadWriteData(notifyReceiptLambda);
@@ -112,7 +130,8 @@ export class AgroAmazoniaStack extends cdk.Stack {
         TABLE_NAME: documentTable.tableName
       },
       timeout: cdk.Duration.minutes(2),
-      memorySize: 256
+      memorySize: 256,
+      ...vpcConfig
     });
 
     documentTable.grantReadWriteData(processorLambda);
@@ -127,7 +146,8 @@ export class AgroAmazoniaStack extends cdk.Stack {
         TABLE_NAME: documentTable.tableName
       },
       timeout: cdk.Duration.minutes(5),
-      memorySize: 512
+      memorySize: 512,
+      ...vpcConfig
     });
 
     documentTable.grantReadWriteData(validateRulesLambda);
@@ -171,17 +191,14 @@ export class AgroAmazoniaStack extends cdk.Stack {
         OCR_FAILURE_PASSWORD: ocrFailurePassword
       },
       timeout: cdk.Duration.seconds(60),
-      memorySize: 256
+      memorySize: 256,
+      ...vpcConfig
     });
 
     documentTable.grantReadWriteData(reportOcrFailureLambda);
 
-    // Lambda: Send to Protheus
-    // OAuth2 credentials from environment variables or CDK context
-    const protheusApiUrl = this.node.tryGetContext('protheusApiUrl') || process.env.PROTHEUS_API_URL || 'https://api.agroamazonia.com/hom-ocr';
-    const protheusAuthUrl = this.node.tryGetContext('protheusAuthUrl') || process.env.PROTHEUS_AUTH_URL || '';
-    const protheusClientId = this.node.tryGetContext('protheusClientId') || process.env.PROTHEUS_CLIENT_ID || '';
-    const protheusClientSecret = this.node.tryGetContext('protheusClientSecret') || process.env.PROTHEUS_CLIENT_SECRET || '';
+    // Lambda: Send to Protheus (via Lambda invocation)
+    const protheusLambdaArn = this.node.tryGetContext('protheusLambdaArn') || process.env.PROTHEUS_LAMBDA_ARN || 'arn:aws:lambda:sa-east-1:835671581949:function:agroam-lambda-protheus-integracao-post';
 
     const sendToProtheusLambda = new lambda.Function(this, 'SendToProtheusFunction', {
       functionName: name('lambda', 'send-to-protheus'),
@@ -198,10 +215,7 @@ export class AgroAmazoniaStack extends cdk.Stack {
       }),
       environment: {
         TABLE_NAME: documentTable.tableName,
-        PROTHEUS_API_URL: protheusApiUrl,
-        PROTHEUS_AUTH_URL: protheusAuthUrl,
-        PROTHEUS_CLIENT_ID: protheusClientId,
-        PROTHEUS_CLIENT_SECRET: protheusClientSecret,
+        PROTHEUS_LAMBDA_ARN: protheusLambdaArn,
         // Variáveis para reportar falhas do Protheus para SCTASK
         OCR_FAILURE_API_URL: ocrFailureApiUrl,
         OCR_FAILURE_AUTH_URL: ocrFailureAuthUrl,
@@ -211,13 +225,19 @@ export class AgroAmazoniaStack extends cdk.Stack {
         OCR_FAILURE_PASSWORD: ocrFailurePassword
       },
       timeout: cdk.Duration.minutes(2),
-      memorySize: 512
+      memorySize: 512,
+      ...vpcConfig
     });
 
     documentTable.grantReadWriteData(sendToProtheusLambda);
     sendToProtheusLambda.addToRolePolicy(new iam.PolicyStatement({
       actions: ['bedrock:InvokeModel'],
       resources: ['*']
+    }));
+    // Permissão para invocar a Lambda do Protheus
+    sendToProtheusLambda.addToRolePolicy(new iam.PolicyStatement({
+      actions: ['lambda:InvokeFunction'],
+      resources: [protheusLambdaArn]
     }));
 
     // Lambda: Update Metrics
@@ -230,7 +250,8 @@ export class AgroAmazoniaStack extends cdk.Stack {
         TABLE_NAME: documentTable.tableName
       },
       timeout: cdk.Duration.seconds(30),
-      memorySize: 256
+      memorySize: 256,
+      ...vpcConfig
     });
 
     documentTable.grantReadWriteData(updateMetricsLambda);
@@ -261,7 +282,8 @@ export class AgroAmazoniaStack extends cdk.Stack {
         OCR_FAILURE_PASSWORD: ocrFailurePassword
       },
       timeout: cdk.Duration.seconds(30),
-      memorySize: 256
+      memorySize: 256,
+      ...vpcConfig
     });
 
     documentTable.grantReadData(notifySuccessLambda);
@@ -293,7 +315,8 @@ export class AgroAmazoniaStack extends cdk.Stack {
         ENVIRONMENT: this.envName
       },
       timeout: cdk.Duration.seconds(30),
-      memorySize: 256
+      memorySize: 256,
+      ...vpcConfig
     });
 
     documentTable.grantReadData(sendFeedbackLambda);
@@ -310,7 +333,8 @@ export class AgroAmazoniaStack extends cdk.Stack {
         BUCKET_NAME: rawDocumentsBucket.bucketName
       },
       timeout: cdk.Duration.minutes(2),
-      memorySize: 256
+      memorySize: 256,
+      ...vpcConfig
     });
 
     documentTable.grantReadWriteData(parseXmlLambda);
@@ -326,7 +350,8 @@ export class AgroAmazoniaStack extends cdk.Stack {
         TABLE_NAME: documentTable.tableName
       },
       timeout: cdk.Duration.seconds(30),
-      memorySize: 128
+      memorySize: 128,
+      ...vpcConfig
     });
 
     documentTable.grantReadWriteData(updateProcessStatusLambda);
@@ -340,7 +365,8 @@ export class AgroAmazoniaStack extends cdk.Stack {
       environment: {
         TABLE_NAME: documentTable.tableName
       },
-      timeout: cdk.Duration.seconds(30)
+      timeout: cdk.Duration.seconds(30),
+      ...vpcConfig
     });
 
     documentTable.grantReadWriteData(s3UploadHandler);
@@ -635,88 +661,6 @@ export class AgroAmazoniaStack extends cdk.Stack {
       resources: ['*']
     }));
 
-    // API Key padrão para o frontend
-    // Esta é a mesma chave usada no frontend-stack.ts
-    const defaultApiKey = 'agroamazonia_key_UPXsb8Hb8sjbxWBQqouzYnTL5w-V_dJx';
-    
-    // Secrets Manager for API Keys
-    const apiKeysSecret = new secretsmanager.Secret(this, 'ApiKeysSecret', {
-      secretName: name('secret', 'agroamazonia-api-keys'),
-      description: `API Keys for AgroAmazonia clients - ${this.envName}`,
-      generateSecretString: {
-        secretStringTemplate: JSON.stringify({}),
-        generateStringKey: 'placeholder'
-      }
-    });
-    
-    // Custom Resource Lambda para garantir que a API key padrão esteja sempre presente
-    // Isso faz merge com chaves existentes, não sobrescreve
-    const ensureApiKeyLambda = new lambda.Function(this, 'EnsureApiKeyFunction', {
-      functionName: name('lambda', 'ensure-api-key'),
-      runtime: lambda.Runtime.PYTHON_3_11,
-      handler: 'index.handler',
-      code: lambda.Code.fromInline(`
-import json
-import boto3
-from datetime import datetime
-
-def handler(event, context):
-    secrets_client = boto3.client('secretsmanager')
-    # O Provider do CDK passa as propriedades em event['ResourceProperties']
-    props = event.get('ResourceProperties', event)
-    secret_arn = props['SecretArn']
-    api_key = props['ApiKey']
-    
-    # Obter secret existente
-    try:
-        response = secrets_client.get_secret_value(SecretId=secret_arn)
-        current_keys = json.loads(response['SecretString'])
-    except secrets_client.exceptions.ResourceNotFoundException:
-        current_keys = {}
-    
-    # Adicionar ou atualizar a API key padrão
-    if api_key not in current_keys:
-        current_keys[api_key] = {
-            'status': 'active',
-            'client_name': 'frontend',
-            'created_at': datetime.utcnow().isoformat() + 'Z'
-        }
-    else:
-        current_keys[api_key]['status'] = 'active'
-        current_keys[api_key]['client_name'] = 'frontend'
-        current_keys[api_key]['updated_at'] = datetime.utcnow().isoformat() + 'Z'
-    
-    # Atualizar o secret
-    secrets_client.update_secret(
-        SecretId=secret_arn,
-        SecretString=json.dumps(current_keys, indent=2)
-    )
-    
-    return {
-        'Message': f'API key {api_key[:20]}... ensured',
-        'TotalKeys': len(current_keys)
-    }
-`),
-      timeout: cdk.Duration.seconds(30)
-    });
-    
-    // Permissão para a Lambda acessar o Secrets Manager
-    apiKeysSecret.grantRead(ensureApiKeyLambda);
-    apiKeysSecret.grantWrite(ensureApiKeyLambda);
-    
-    // Custom Resource para garantir que a API key esteja presente
-    const ensureApiKeyProvider = new cr.Provider(this, 'EnsureApiKeyProvider', {
-      onEventHandler: ensureApiKeyLambda
-    });
-    
-    new cdk.CustomResource(this, 'EnsureApiKeyResource', {
-      serviceToken: ensureApiKeyProvider.serviceToken,
-      properties: {
-        SecretArn: apiKeysSecret.secretArn,
-        ApiKey: defaultApiKey
-      }
-    });
-
     // Lambda: API FastAPI
     const apiLambda = new lambda.Function(this, 'ApiFunction', {
       functionName: name('lambda', 'api'),
@@ -734,53 +678,21 @@ def handler(event, context):
       environment: {
         TABLE_NAME: documentTable.tableName,
         STATE_MACHINE_ARN: stateMachine.stateMachineArn,
-        BUCKET_NAME: rawDocumentsBucket.bucketName,
-        API_KEYS_SECRET_ARN: apiKeysSecret.secretArn
+        BUCKET_NAME: rawDocumentsBucket.bucketName
       },
       timeout: cdk.Duration.seconds(30),
-      memorySize: 512
+      memorySize: 512,
+      ...vpcConfig
     });
 
     documentTable.grantReadWriteData(apiLambda);
     rawDocumentsBucket.grantReadWrite(apiLambda);
     stateMachine.grantStartExecution(apiLambda);
-    apiKeysSecret.grantRead(apiLambda);
-
-    // API Gateway
-    const api = new apigateway.RestApi(this, 'DocumentApi', {
-      restApiName: name('api', 'agroamazonia-document-api'),
-      deployOptions: {
-        stageName: 'v1',
-        throttlingRateLimit: 100,
-        throttlingBurstLimit: 200
-      },
-      defaultCorsPreflightOptions: {
-        allowOrigins: apigateway.Cors.ALL_ORIGINS,
-        allowMethods: apigateway.Cors.ALL_METHODS,
-        allowHeaders: ['Content-Type', 'x-api-key', 'Authorization']
-      }
-    });
-
-    // Lambda integration
-    const lambdaIntegration = new apigateway.LambdaIntegration(apiLambda);
-
-    // Root method
-    api.root.addMethod('ANY', lambdaIntegration);
-    
-    // Catch-all proxy
-    api.root.addProxy({
-      defaultIntegration: lambdaIntegration,
-      anyMethod: true
-    });
-
-    // Expor URL da API como propriedade pública para outras stacks
-    this.apiUrl = api.url;
 
     // Outputs
-    const apiUrlOutput = new cdk.CfnOutput(this, 'ApiUrl', {
-      value: api.url,
-      description: 'API Gateway URL',
-      exportName: `agroamazonia-backend-${this.envName}-ApiUrl` // Export para uso em outras stacks
+    new cdk.CfnOutput(this, 'ApiLambdaArn', {
+      value: apiLambda.functionArn,
+      description: 'API Lambda Function ARN (vincular ao API Gateway existente)'
     });
 
     new cdk.CfnOutput(this, 'BucketName', {
@@ -796,11 +708,6 @@ def handler(event, context):
     new cdk.CfnOutput(this, 'StateMachineArn', {
       value: stateMachine.stateMachineArn,
       description: 'Step Functions State Machine ARN'
-    });
-
-    new cdk.CfnOutput(this, 'ApiKeysSecretArn', {
-      value: apiKeysSecret.secretArn,
-      description: 'Secrets Manager ARN for API Keys'
     });
 
     new cdk.CfnOutput(this, 'ErrorTopicArn', {
