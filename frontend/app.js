@@ -147,13 +147,11 @@ function updateMetricCards(data) {
     
     // Determinar se há filtro de período ativo
     const hasPeriodFilter = currentStartDate && currentEndDate;
-    const isToday = hasPeriodFilter && currentStartDate === currentEndDate && 
-                    currentStartDate === new Date().toISOString().split('T')[0];
     
     let total, success, failed, successRate, avgTime, periodLabel;
     
-    if (hasPeriodFilter && !isToday) {
-        // Filtro de período ativo (não é "hoje") → usar summary do período
+    if (hasPeriodFilter) {
+        // Filtro de período ativo → usar summary do período (inclui "hoje")
         total = summary.total ?? 0;
         success = summary.success ?? 0;
         failed = summary.failed ?? 0;
@@ -168,7 +166,7 @@ function updateMetricCards(data) {
             ? startStr 
             : `${startStr} - ${endStr}`;
     } else {
-        // Sem filtro ou filtro "hoje" → usar dados de hoje
+        // Sem filtro → usar dados de hoje
         total = todayData.total_count ?? 0;
         success = todayData.success_count ?? 0;
         failed = todayData.failed_count ?? 0;
@@ -305,11 +303,9 @@ function createSuccessErrorRateChart(data) {
     
     // Determinar se há filtro de período ativo
     const hasPeriodFilter = currentStartDate && currentEndDate;
-    const isToday = hasPeriodFilter && currentStartDate === currentEndDate && 
-                    currentStartDate === new Date().toISOString().split('T')[0];
     
     let total, success, failed;
-    if (hasPeriodFilter && !isToday) {
+    if (hasPeriodFilter) {
         const summary = data.summary || {};
         total = summary.total ?? 0;
         success = summary.success ?? 0;
@@ -501,15 +497,13 @@ function createTypeChart(data) {
     
     // Determinar se há filtro de período ativo
     const hasPeriodFilter = currentStartDate && currentEndDate;
-    const isToday = hasPeriodFilter && currentStartDate === currentEndDate && 
-                    currentStartDate === new Date().toISOString().split('T')[0];
     
     let types;
-    if (hasPeriodFilter && !isToday) {
-        // Com filtro de período → usar dados do período
+    if (hasPeriodFilter) {
+        // Com filtro de período (inclui "hoje") → usar dados do período
         types = data.processes_by_type || {};
     } else {
-        // Sem filtro ou "hoje" → usar dados de hoje
+        // Sem filtro → usar dados de hoje
         types = data.today?.processes_by_type || {};
     }
     
@@ -575,15 +569,13 @@ function createFailedRulesChart(data) {
     
     // Determinar se há filtro de período ativo
     const hasPeriodFilter = currentStartDate && currentEndDate;
-    const isToday = hasPeriodFilter && currentStartDate === currentEndDate && 
-                    currentStartDate === new Date().toISOString().split('T')[0];
     
     let failedRules;
-    if (hasPeriodFilter && !isToday) {
-        // Com filtro de período → usar dados do período
+    if (hasPeriodFilter) {
+        // Com filtro de período (inclui "hoje") → usar dados do período
         failedRules = data.failed_rules || {};
     } else {
-        // Sem filtro ou "hoje" → usar dados de hoje
+        // Sem filtro → usar dados de hoje
         failedRules = data.today?.failed_rules || {};
     }
     
