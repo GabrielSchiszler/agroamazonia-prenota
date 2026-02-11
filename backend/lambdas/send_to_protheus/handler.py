@@ -2192,7 +2192,7 @@ def lambda_handler(event, context):
         except Exception as save_err:
             print(f"[9.7.1] WARNING: Erro ao salvar payload no DynamoDB: {str(save_err)}")
         
-        response = requests.post(api_url_doc, json=payload, headers=headers, timeout=60)
+        response = requests.post(api_url_doc, json=payload, headers=headers, timeout=180)
         
         print(f"\n{'='*80}")
         print(f"[10] RESPOSTA DA API PROTHEUS")
@@ -2455,7 +2455,7 @@ def lambda_handler(event, context):
         error_details = {
             'error': str(timeout_err),
             'error_type': error_type,
-            'error_message': f'Read timeout após 60 segundos. A conexão com a API do Protheus excedeu o tempo limite.',
+            'error_message': f'Read timeout após 180 segundos. A conexão com a API do Protheus excedeu o tempo limite.',
             'timeout_seconds': 60,
             'request_payload': payload if 'payload' in locals() else None,
             'request_url': api_url_doc if 'api_url_doc' in locals() else api_url if 'api_url' in locals() else None,
