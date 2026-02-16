@@ -56,25 +56,24 @@ export class AgroAmazoniaStack extends cdk.Stack {
     // S3 Bucket para documentos brutos
     // Nota: bucket names devem ser únicos globalmente, então incluímos account
     const accountId = this.account || 'unknown';
+    
+    // IPs permitidos para acesso ao bucket (ranges de rede privada)
+    const allowedIpRanges = [
+      '10.255.0.0/24',
+      '10.65.0.0/24'
+    ];
+    
     const rawDocumentsBucket = new s3.Bucket(this, 'RawDocumentsBucket', {
       bucketName: `bucket-agroamazonia-raw-documents-${this.envName}-${accountId}`,
       versioned: true,
       encryption: s3.BucketEncryption.S3_MANAGED,
+      // Ativar todas as opções de Block Public Access
       blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
+      // Remover ACL pública - usar apenas políticas de bucket
+      accessControl: s3.BucketAccessControl.PRIVATE,
       removalPolicy: cdk.RemovalPolicy.RETAIN,
-      cors: [{
-        allowedMethods: [
-          s3.HttpMethods.GET,
-          s3.HttpMethods.PUT,
-          s3.HttpMethods.POST,
-          s3.HttpMethods.DELETE,
-          s3.HttpMethods.HEAD
-        ],
-        allowedOrigins: ['*'],
-        allowedHeaders: ['*'],
-        exposedHeaders: ['ETag'],
-        maxAge: 3000
-      }],
+      // Remover CORS público - acesso será apenas via IPs permitidos
+      // CORS removido para garantir privacidade total
       lifecycleRules: [{
         transitions: [{
           storageClass: s3.StorageClass.INTELLIGENT_TIERING,
@@ -82,6 +81,62 @@ export class AgroAmazoniaStack extends cdk.Stack {
         }]
       }]
     });
+    
+    // Bucket Policy: Permitir acesso apenas dos ranges de IP especificados
+    // IMPORTANTE: Presigned URLs geradas por Lambdas não respeitam restrições de IP
+    // As Lambdas continuam tendo acesso via IAM roles (grantRead/grantReadWrite)
+    
+    // Permitir GetObject apenas dos IPs permitidos
+    rawDocumentsBucket.addToResourcePolicy(
+      new iam.PolicyStatement({
+        sid: 'AllowGetObjectFromAllowedIpRanges',
+        effect: iam.Effect.ALLOW,
+        principals: [new iam.AnyPrincipal()],
+        actions: [
+          's3:GetObject',
+          's3:GetObjectVersion'
+        ],
+        resources: [
+          rawDocumentsBucket.arnForObjects('*')
+        ],
+        conditions: {
+          IpAddress: {
+            'aws:SourceIp': allowedIpRanges
+          }
+        }
+      })
+    );
+    
+    // Permitir ListBucket apenas dos IPs permitidos
+    rawDocumentsBucket.addToResourcePolicy(
+      new iam.PolicyStatement({
+        sid: 'AllowListBucketFromAllowedIpRanges',
+        effect: iam.Effect.ALLOW,
+        principals: [new iam.AnyPrincipal()],
+        actions: [
+          's3:ListBucket'
+        ],
+        resources: [
+          rawDocumentsBucket.bucketArn
+        ],
+        conditions: {
+          IpAddress: {
+            'aws:SourceIp': allowedIpRanges
+          }
+        }
+      })
+    );
+    
+    // IMPORTANTE: Presigned URLs geradas por Lambdas NÃO respeitam restrições de IP
+    // Presigned URLs são tokens assinados que funcionam de qualquer lugar
+    // Para bloquear completamente, seria necessário:
+    // 1. Remover presigned URLs do código backend
+    // 2. Fazer uploads passarem pela Lambda (proxy)
+    // 3. Ou usar VPC endpoints com políticas de rede
+    
+    // A política abaixo bloqueia acesso direto ao bucket de IPs não permitidos
+    // Mas presigned URLs ainda funcionarão de qualquer IP
+    // Isso é uma limitação do S3 - presigned URLs bypassam bucket policies baseadas em IP
 
     // SNS Topic para erros de Lambda (unificado para sucesso e falha)
     const errorTopic = new sns.Topic(this, 'LambdaErrorTopic', {
@@ -700,8 +755,18 @@ export class AgroAmazoniaStack extends cdk.Stack {
     });
 
     documentTable.grantReadWriteData(apiLambda);
+    // IMPORTANTE: grantReadWrite permite gerar presigned URLs que funcionam de qualquer IP
+    // Para bloquear completamente, seria necessário remover presigned URLs e fazer upload via Lambda
+    // Por enquanto, mantemos grantReadWrite mas adicionamos restrições na bucket policy
     rawDocumentsBucket.grantReadWrite(apiLambda);
     stateMachine.grantStartExecution(apiLambda);
+    
+    // Permissão para acessar Secrets Manager (para endpoint de autenticação)
+    apiLambda.addToRolePolicy(new iam.PolicyStatement({
+      effect: iam.Effect.ALLOW,
+      actions: ['secretsmanager:GetSecretValue'],
+      resources: ['*'] // Permite acessar qualquer secret (pode ser restringido depois)
+    }));
 
     // Outputs
     new cdk.CfnOutput(this, 'ApiLambdaArn', {
@@ -727,6 +792,11 @@ export class AgroAmazoniaStack extends cdk.Stack {
     new cdk.CfnOutput(this, 'ErrorTopicArn', {
       value: errorTopic.topicArn,
       description: 'SNS Topic ARN for Lambda Errors'
+    });
+
+    new cdk.CfnOutput(this, 'AllowedIpRanges', {
+      value: allowedIpRanges.join(', '),
+      description: 'IP ranges allowed for S3 bucket access (CIDR format)'
     });
 
   }

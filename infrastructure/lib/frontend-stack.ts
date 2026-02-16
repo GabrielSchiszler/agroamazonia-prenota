@@ -104,6 +104,61 @@ export class FrontendStack extends cdk.Stack {
     // O grantRead() adiciona automaticamente a política de bucket necessária
     frontendBucket.grantRead(originAccessIdentity);
 
+    // IPs permitidos para acesso ao CloudFront (mesmos do bucket S3)
+    const allowedIpRanges = [
+      '10.255.0.0/24',
+      '10.65.0.0/24'
+    ];
+
+    // CloudFront Function para validar IP de origem (GRÁTIS)
+    // Limite: 10.000 req/s por distribuição (suficiente para a maioria dos casos)
+    const ipRestrictionFunction = new cloudfront.Function(this, 'IpRestrictionFunction', {
+      functionName: name('function', 'ip-restriction'),
+      code: cloudfront.FunctionCode.fromInline(`
+function handler(event) {
+    var clientIp = event.request.clientIp;
+    var allowedRanges = [
+        { network: '10.255.0.0', mask: 24 },
+        { network: '10.65.0.0', mask: 24 }
+    ];
+    
+    // Converter IP para número
+    function ipToNumber(ip) {
+        var parts = ip.split('.');
+        return (parseInt(parts[0]) << 24) + 
+               (parseInt(parts[1]) << 16) + 
+               (parseInt(parts[2]) << 8) + 
+               parseInt(parts[3]);
+    }
+    
+    // Verificar se IP está no range
+    function isInRange(ip, network, mask) {
+        var ipNum = ipToNumber(ip);
+        var networkNum = ipToNumber(network);
+        var maskNum = (0xFFFFFFFF << (32 - mask)) >>> 0;
+        return (ipNum & maskNum) === (networkNum & maskNum);
+    }
+    
+    // Verificar se IP está em algum range permitido
+    for (var i = 0; i < allowedRanges.length; i++) {
+        if (isInRange(clientIp, allowedRanges[i].network, allowedRanges[i].mask)) {
+            return event.request; // Permitir requisição
+        }
+    }
+    
+    // IP não está nos ranges permitidos - bloquear
+    return {
+        statusCode: 403,
+        statusDescription: 'Forbidden',
+        headers: {
+            'content-type': { value: 'text/plain' }
+        },
+        body: 'Access denied. Your IP address is not allowed.'
+    };
+}
+      `)
+    });
+
     // CloudFront Distribution
     // Nota: CloudFront Distribution não suporta nome customizado diretamente
     // O CDK gera um nome único automaticamente baseado no construct ID
@@ -117,6 +172,11 @@ export class FrontendStack extends cdk.Stack {
         cachedMethods: cloudfront.CachedMethods.CACHE_GET_HEAD,
         compress: true,
         cachePolicy: cloudfront.CachePolicy.CACHING_OPTIMIZED,
+        // CloudFront Function para validar IP de origem
+        functionAssociations: [{
+          function: ipRestrictionFunction,
+          eventType: cloudfront.FunctionEventType.VIEWER_REQUEST
+        }],
         // Invalidar cache para arquivos HTML e JS
         responseHeadersPolicy: new cloudfront.ResponseHeadersPolicy(this, 'FrontendHeadersPolicy', {
           responseHeadersPolicyName: name('response-headers-policy', 'agroamazonia-frontend'),
@@ -151,6 +211,11 @@ export class FrontendStack extends cdk.Stack {
           allowedMethods: cloudfront.AllowedMethods.ALLOW_GET_HEAD,
           cachedMethods: cloudfront.CachedMethods.CACHE_GET_HEAD,
           compress: true,
+          // CloudFront Function para validar IP de origem
+          functionAssociations: [{
+            function: ipRestrictionFunction,
+            eventType: cloudfront.FunctionEventType.VIEWER_REQUEST
+          }],
           // Cache longo para assets (CSS, JS, imagens)
           cachePolicy: new cloudfront.CachePolicy(this, 'AssetsCachePolicy', {
             cachePolicyName: name('cache-policy', 'assets-long-cache'),
@@ -169,6 +234,11 @@ export class FrontendStack extends cdk.Stack {
           allowedMethods: cloudfront.AllowedMethods.ALLOW_GET_HEAD,
           cachedMethods: cloudfront.CachedMethods.CACHE_GET_HEAD,
           compress: true,
+          // CloudFront Function para validar IP de origem
+          functionAssociations: [{
+            function: ipRestrictionFunction,
+            eventType: cloudfront.FunctionEventType.VIEWER_REQUEST
+          }],
           // Cache curto para HTML (para facilitar invalidação)
           // Nota: Quando TTL = 0 (cache desabilitado), não podemos habilitar compressão
           cachePolicy: new cloudfront.CachePolicy(this, 'HtmlCachePolicy', {
@@ -187,6 +257,11 @@ export class FrontendStack extends cdk.Stack {
           allowedMethods: cloudfront.AllowedMethods.ALLOW_GET_HEAD,
           cachedMethods: cloudfront.CachedMethods.CACHE_GET_HEAD,
           compress: true,
+          // CloudFront Function para validar IP de origem
+          functionAssociations: [{
+            function: ipRestrictionFunction,
+            eventType: cloudfront.FunctionEventType.VIEWER_REQUEST
+          }],
           // Cache curto para JS (para facilitar invalidação)
           // Nota: Quando TTL = 0 (cache desabilitado), não podemos habilitar compressão
           cachePolicy: new cloudfront.CachePolicy(this, 'JsCachePolicy', {

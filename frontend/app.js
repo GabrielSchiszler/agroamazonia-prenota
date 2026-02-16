@@ -52,13 +52,13 @@ let currentEndDate = null;
 
 async function loadDashboardMetrics() {
     try {
-        let url = `${API_URL}/api/dashboard/metrics`;
+        let url = `${API_URL}/dashboard/metrics`;
         if (currentStartDate && currentEndDate) {
             url += `?start_date=${currentStartDate}&end_date=${currentEndDate}`;
         }
         
         const response = await fetch(url, {
-            headers: { 'x-api-key': API_KEY }
+            headers: getAuthHeaders()
         });
         if (!response.ok) return;
 
@@ -952,8 +952,8 @@ async function loadProcesses(silent = false) {
             `;
         }
         
-        const response = await fetch(`${API_URL}/api/process/`, {
-            headers: { 'x-api-key': API_KEY }
+        const response = await fetch(`${API_URL}/process/`, {
+            headers: getAuthHeaders()
         });
         if (!response.ok) {
             if (!silent) {
@@ -1074,8 +1074,8 @@ async function loadProcesses(silent = false) {
 
 async function selectProcess(processId, silent = false) {
     try {
-        const response = await fetch(`${API_URL}/api/process/${processId}`, {
-            headers: { 'x-api-key': API_KEY }
+        const response = await fetch(`${API_URL}/process/${processId}`, {
+            headers: getAuthHeaders()
         });
         if (!response.ok) throw new Error('Falha ao carregar processo');
 
@@ -1396,8 +1396,8 @@ async function loadExtractedData() {
 
 async function loadValidationResults() {
     try {
-        const response = await fetch(`${API_URL}/api/process/${selectedProcess.process_id}/validations`, {
-            headers: { 'x-api-key': API_KEY }
+        const response = await fetch(`${API_URL}/process/${selectedProcess.process_id}/validations`, {
+            headers: getAuthHeaders()
         });
         if (!response.ok) return;
         
@@ -1455,11 +1455,11 @@ async function sendMetadataOnly() {
     }
     
     try {
-        const response = await fetch(`${API_URL}/api/process/metadados/pedido`, {
+        const response = await fetch(`${API_URL}/process/metadados/pedido`, {
             method: 'POST',
             headers: { 
                 'Content-Type': 'application/json',
-                'x-api-key': API_KEY
+                ...getAuthHeaders()
             },
             body: JSON.stringify({
                 process_id: selectedProcess.process_id,
@@ -1508,11 +1508,11 @@ async function uploadFile(file, docType, fileInput, userMetadata = null) {
                 requestBody.metadados = userMetadata;
             }
             
-            urlResponse = await fetch(`${API_URL}/api/process/presigned-url/xml`, {
+            urlResponse = await fetch(`${API_URL}/process/presigned-url/xml`, {
                 method: 'POST',
                 headers: { 
                     'Content-Type': 'application/json',
-                    'x-api-key': API_KEY
+                    ...getAuthHeaders()
                 },
                 body: JSON.stringify(requestBody)
             });
@@ -1531,11 +1531,11 @@ async function uploadFile(file, docType, fileInput, userMetadata = null) {
             };
             }
             
-            urlResponse = await fetch(`${API_URL}/api/process/presigned-url/docs`, {
+            urlResponse = await fetch(`${API_URL}/process/presigned-url/docs`, {
                 method: 'POST',
                 headers: { 
                     'Content-Type': 'application/json',
-                    'x-api-key': API_KEY
+                    ...getAuthHeaders()
                 },
                 body: JSON.stringify({
                     process_id: selectedProcess.process_id,
@@ -1596,11 +1596,11 @@ async function startProcess() {
     btn.textContent = 'Iniciando...';
 
     try {
-        const response = await fetch(`${API_URL}/api/process/start`, {
+        const response = await fetch(`${API_URL}/process/start`, {
             method: 'POST',
             headers: { 
                 'Content-Type': 'application/json',
-                'x-api-key': API_KEY
+                ...getAuthHeaders()
             },
             body: JSON.stringify({ 
                 process_id: selectedProcess.process_id
@@ -1656,10 +1656,10 @@ let availableRules = []; // Cache de regras disponíveis do backend
 // Carregar regras disponíveis do backend
 async function loadAvailableRules() {
     try {
-        const response = await fetch(`${API_URL}/api/rules/available`, {
+        const response = await fetch(`${API_URL}/rules/available`, {
             headers: { 
-                'x-api-key': API_KEY,
-                'Content-Type': 'application/json'
+                'Content-Type': 'application/json',
+                ...getAuthHeaders()
             }
         });
         
@@ -1710,10 +1710,10 @@ async function showRules(processType) {
         }
 
         // Buscar regras ativas para este tipo de processo
-        const response = await fetch(`${API_URL}/api/rules/${processType}`, {
+        const response = await fetch(`${API_URL}/rules/${processType}`, {
             headers: { 
-                'x-api-key': API_KEY,
-                'Content-Type': 'application/json'
+                'Content-Type': 'application/json',
+                ...getAuthHeaders()
             }
         });
         
@@ -1777,11 +1777,11 @@ async function toggleRule(processType, ruleName, isEnabled, order) {
     try {
         if (isEnabled) {
             // Adicionar regra
-            const response = await fetch(`${API_URL}/api/rules/`, {
+            const response = await fetch(`${API_URL}/rules/`, {
                 method: 'POST',
                 headers: { 
                     'Content-Type': 'application/json',
-                    'x-api-key': API_KEY
+                    ...getAuthHeaders()
                 },
                 body: JSON.stringify({
                     process_type: processType,
@@ -1794,9 +1794,9 @@ async function toggleRule(processType, ruleName, isEnabled, order) {
             showToast('✓ Regra ativada!', 'success');
         } else {
             // Remover regra
-            const response = await fetch(`${API_URL}/api/rules/${processType}/${ruleName}`, {
+            const response = await fetch(`${API_URL}/rules/${processType}/${ruleName}`, {
                 method: 'DELETE',
-                headers: { 'x-api-key': API_KEY }
+                headers: getAuthHeaders()
             });
             if (!response.ok) throw new Error('Falha ao desativar regra');
             showToast('✓ Regra desativada!', 'success');
@@ -1833,11 +1833,11 @@ function showToast(message, type = 'info') {
 
 async function downloadFile(fileKey, fileName) {
     try {
-        const response = await fetch(`${API_URL}/api/process/download`, {
+        const response = await fetch(`${API_URL}/process/download`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
-                'x-api-key': API_KEY
+                ...getAuthHeaders()
             },
             body: JSON.stringify({ file_key: fileKey })
         });
@@ -1914,11 +1914,11 @@ async function saveMetadata() {
     saveBtn.textContent = 'Salvando...';
     
     try {
-        const response = await fetch(`${API_URL}/api/process/file/metadata`, {
+        const response = await fetch(`${API_URL}/process/file/metadata`, {
             method: 'PUT',
             headers: {
                 'Content-Type': 'application/json',
-                'x-api-key': API_KEY
+                ...getAuthHeaders()
             },
             body: JSON.stringify({
                 process_id: selectedProcess.process_id,
@@ -1965,8 +1965,8 @@ async function loadCfopRules() {
             </div>
         `;
         
-        const response = await fetch(`${API_URL}/api/cfop-operation/`, {
-            headers: { 'x-api-key': API_KEY }
+        const response = await fetch(`${API_URL}/cfop-operation/`, {
+            headers: getAuthHeaders()
         });
         
         if (!response.ok) {
@@ -2256,11 +2256,11 @@ async function saveNewCfopRow(rowId) {
     if (saveBtn) saveBtn.textContent = 'Salvando...';
     
     try {
-        const response = await fetch(`${API_URL}/api/cfop-operation/`, {
+        const response = await fetch(`${API_URL}/cfop-operation/`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
-                'x-api-key': API_KEY
+                ...getAuthHeaders()
             },
             body: JSON.stringify({
                 chave: chave,
@@ -2503,11 +2503,11 @@ async function saveCfopRow(ruleId) {
     }
     
     try {
-        const response = await fetch(`${API_URL}/api/cfop-operation/${ruleId}`, {
+        const response = await fetch(`${API_URL}/cfop-operation/${ruleId}`, {
             method: 'PUT',
             headers: {
                 'Content-Type': 'application/json',
-                'x-api-key': API_KEY
+                ...getAuthHeaders()
             },
             body: JSON.stringify({
                 chave: chave,
@@ -2540,9 +2540,9 @@ async function deleteCfopRule(id, cfop) {
     }
     
     try {
-        const response = await fetch(`${API_URL}/api/cfop-operation/${id}`, {
+        const response = await fetch(`${API_URL}/cfop-operation/${id}`, {
             method: 'DELETE',
-            headers: { 'x-api-key': API_KEY }
+            headers: getAuthHeaders()
         });
         
         if (!response.ok) {

@@ -22,6 +22,7 @@ from src.controllers.process_controller import router as process_router
 from src.controllers.rules_controller import router as rules_router
 from src.controllers.dashboard_controller import router as dashboard_router
 from src.controllers.cfop_operation_controller import router as cfop_operation_router
+from src.controllers.auth_controller import router as auth_router
 from fastapi import Request, HTTPException
 
 # Detectar se está rodando na AWS Lambda
@@ -195,6 +196,7 @@ app.include_router(process_router)
 app.include_router(rules_router)
 app.include_router(dashboard_router)
 app.include_router(cfop_operation_router)
+app.include_router(auth_router)
 
 @app.get("/health")
 async def health():
