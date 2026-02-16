@@ -24,10 +24,20 @@ REGRAS:
    - Tenham informações adicionais diferentes (código, lote, registro, etc.)
    - Tenham unidades de medida diferentes na descrição (KG, SC, PT, etc.)
    - Tenham formatação diferente (maiúsculas/minúsculas, espaços, etc.)
+   - Tenham códigos numéricos com separadores diferentes (pontos vs traços)
+     Exemplo: "15.15.15" é EQUIVALENTE a "15-15-15"
+     Exemplo: "30.00.20" é EQUIVALENTE a "30-00-20"
 
-2. Produtos são DIFERENTES apenas se:
+2. IMPORTANTE - Normalização de códigos numéricos:
+   - Códigos numéricos com pontos (.) são EQUIVALENTES aos mesmos códigos com traços (-)
+   - "15.15.15" = "15-15-15" = "15 15 15" (mesmo código, apenas separador diferente)
+   - "30.00.20" = "30-00-20" = "30 00 20" (mesmo código, apenas separador diferente)
+   - Se os códigos numéricos forem iguais (ignorando separadores), os produtos são o MESMO
+
+3. Produtos são DIFERENTES apenas se:
    - O nome principal for completamente diferente
    - Não houver palavras-chave em comum que identifiquem o mesmo produto
+   - Os códigos numéricos forem diferentes (mesmo após normalizar separadores)
 
 EXEMPLOS:
 
@@ -43,11 +53,29 @@ Produto2: PROTAC NORTOX AD PT 500 GR (03100013)
 RESULTADO: {{"validado": true}}
 EXPLICAÇÃO: Ambos são "PROTAC NORTOX AD", apenas com unidades diferentes (36X0,500 vs PT 500 GR)
 
-EXEMPLO 3 (PRODUTOS DIFERENTES):
+EXEMPLO 3 (MESMO PRODUTO - código com ponto vs traço):
+Produto1: 15.15.15 UNI BASE 180 AMIDICO
+Produto2: 15-15-15 UNIFERTIL TN 1000 KG
+RESULTADO: {{"validado": true}}
+EXPLICAÇÃO: Código "15.15.15" é equivalente a "15-15-15" (mesmo código, separador diferente). Ambos são o mesmo produto.
+
+EXEMPLO 4 (MESMO PRODUTO - código com ponto vs traço):
+Produto1: 30.00.20 UNI COBERTURA 180
+Produto2: 30-00-20 UNIFERTIL TN 1000 KG
+RESULTADO: {{"validado": true}}
+EXPLICAÇÃO: Código "30.00.20" é equivalente a "30-00-20" (mesmo código, separador diferente). Ambos são o mesmo produto.
+
+EXEMPLO 5 (PRODUTOS DIFERENTES):
 Produto1: SPHERIC PLUS NORTOX
 Produto2: GALIL SC 1X20
 RESULTADO: {{"validado": false}}
 EXPLICAÇÃO: Produtos completamente diferentes
+
+EXEMPLO 6 (PRODUTOS DIFERENTES - códigos diferentes):
+Produto1: 15.15.15 UNI BASE 180 AMIDICO
+Produto2: 20.20.20 UNIFERTIL TN 1000 KG
+RESULTADO: {{"validado": false}}
+EXPLICAÇÃO: Códigos diferentes (15.15.15 vs 20.20.20), são produtos diferentes
 
 Responda APENAS JSON: {{"validado": true}} ou {{"validado": false}}"""
     else:
