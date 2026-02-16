@@ -116,44 +116,111 @@ export class FrontendStack extends cdk.Stack {
       functionName: name('function', 'ip-restriction'),
       code: cloudfront.FunctionCode.fromInline(`
 function handler(event) {
-    var clientIp = event.request.clientIp;
+
+    var request = event.request;
+    var uri = request.uri;
+
+    // IP correto no CloudFront Functions
+    var clientIp = event.viewer && event.viewer.ip 
+        ? event.viewer.ip 
+        : null;
+
+    // ===============================
+    // DEBUG MODE
+    // ===============================
+    if (uri === '/debug-ip' || uri === '/debug-ip.html') {
+
+        return {
+            statusCode: 200,
+            statusDescription: 'OK',
+            headers: {
+                'content-type': { value: 'application/json' }
+            },
+            body: JSON.stringify({
+                clientIp: clientIp || 'NOT_AVAILABLE',
+                ipType: clientIp 
+                    ? (clientIp.indexOf(':') !== -1 ? 'IPv6' : 'IPv4')
+                    : 'UNKNOWN'
+            }, null, 2)
+        };
+    }
+
+    // Se IP não disponível → bloquear
+    if (!clientIp) {
+        return {
+            statusCode: 403,
+            statusDescription: 'Forbidden',
+            body: 'IP not detected.'
+        };
+    }
+
+    // Se for IPv6 → bloquear (ou ajuste se quiser permitir)
+    if (clientIp.indexOf(':') !== -1) {
+        return {
+            statusCode: 403,
+            statusDescription: 'Forbidden',
+            body: 'IPv6 not allowed.'
+        };
+    }
+
+    // ===============================
+    // RANGES PERMITIDOS
+    // ===============================
     var allowedRanges = [
         { network: '10.255.0.0', mask: 24 },
         { network: '10.65.0.0', mask: 24 }
     ];
-    
-    // Converter IP para número
+
     function ipToNumber(ip) {
         var parts = ip.split('.');
-        return (parseInt(parts[0]) << 24) + 
-               (parseInt(parts[1]) << 16) + 
-               (parseInt(parts[2]) << 8) + 
-               parseInt(parts[3]);
+        if (parts.length !== 4) return null;
+
+        var p0 = parseInt(parts[0], 10);
+        var p1 = parseInt(parts[1], 10);
+        var p2 = parseInt(parts[2], 10);
+        var p3 = parseInt(parts[3], 10);
+
+        if (
+            p0 < 0 || p0 > 255 ||
+            p1 < 0 || p1 > 255 ||
+            p2 < 0 || p2 > 255 ||
+            p3 < 0 || p3 > 255
+        ) return null;
+
+        // >>> 0 força unsigned
+        return (((p0 << 24) >>> 0) +
+                ((p1 << 16) >>> 0) +
+                ((p2 << 8) >>> 0) +
+                (p3 >>> 0)) >>> 0;
     }
-    
-    // Verificar se IP está no range
+
     function isInRange(ip, network, mask) {
         var ipNum = ipToNumber(ip);
         var networkNum = ipToNumber(network);
+
+        if (ipNum === null || networkNum === null) return false;
+
         var maskNum = (0xFFFFFFFF << (32 - mask)) >>> 0;
+
         return (ipNum & maskNum) === (networkNum & maskNum);
     }
-    
-    // Verificar se IP está em algum range permitido
+
     for (var i = 0; i < allowedRanges.length; i++) {
         if (isInRange(clientIp, allowedRanges[i].network, allowedRanges[i].mask)) {
-            return event.request; // Permitir requisição
+            return request; // permitido
         }
     }
-    
-    // IP não está nos ranges permitidos - bloquear
+
+    // ===============================
+    // BLOQUEAR
+    // ===============================
     return {
         statusCode: 403,
         statusDescription: 'Forbidden',
         headers: {
             'content-type': { value: 'text/plain' }
         },
-        body: 'Access denied. Your IP address is not allowed.'
+        body: 'Access denied. Your IP (' + clientIp + ') is not allowed.'
     };
 }
       `)
