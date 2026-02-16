@@ -2,7 +2,7 @@ from fastapi import APIRouter, HTTPException, Query
 from typing import Optional
 from src.services.dashboard_service import DashboardService
 
-router = APIRouter(prefix="/api/dashboard", tags=["Dashboard"])
+router = APIRouter(prefix="/dashboard", tags=["Dashboard"])
 service = DashboardService()
 
 @router.get("/metrics", summary="Métricas Dashboard")

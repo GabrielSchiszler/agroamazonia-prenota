@@ -197,8 +197,9 @@ export class AgroAmazoniaStack extends cdk.Stack {
 
     documentTable.grantReadWriteData(reportOcrFailureLambda);
 
-    // Lambda: Send to Protheus (via Lambda invocation)
-    const protheusLambdaArn = this.node.tryGetContext('protheusLambdaArn') || process.env.PROTHEUS_LAMBDA_ARN || 'arn:aws:lambda:sa-east-1:835671581949:function:agroam-lambda-protheus-integracao-post';
+    // Lambda: Send to Protheus (via HTTP direto com Basic Auth)
+    const protheusSecretId = this.node.tryGetContext('protheusSecretId') || process.env.PROTHEUS_SECRET_ID || '';
+    const protheusUrl = this.node.tryGetContext('protheusUrl') || process.env.PROTHEUS_API_URL || '';
 
     const sendToProtheusLambda = new lambda.Function(this, 'SendToProtheusFunction', {
       functionName: name('lambda', 'send-to-protheus'),
@@ -215,7 +216,9 @@ export class AgroAmazoniaStack extends cdk.Stack {
       }),
       environment: {
         TABLE_NAME: documentTable.tableName,
-        PROTHEUS_LAMBDA_ARN: protheusLambdaArn,
+        PROTHEUS_SECRET_ID: protheusSecretId,
+        PROTHEUS_API_URL: protheusUrl,
+        PROTHEUS_TIMEOUT: '30', // Timeout em segundos
         // Variáveis para reportar falhas do Protheus para SCTASK
         OCR_FAILURE_API_URL: ocrFailureApiUrl,
         OCR_FAILURE_AUTH_URL: ocrFailureAuthUrl,
@@ -234,11 +237,22 @@ export class AgroAmazoniaStack extends cdk.Stack {
       actions: ['bedrock:InvokeModel'],
       resources: ['*']
     }));
-    // Permissão para invocar a Lambda do Protheus
-    sendToProtheusLambda.addToRolePolicy(new iam.PolicyStatement({
-      actions: ['lambda:InvokeFunction'],
-      resources: [protheusLambdaArn]
-    }));
+    // Permissão para ler Secrets Manager (credenciais do Protheus)
+    if (protheusSecretId) {
+      // Construir ARN do secret (suporta ARN completo ou nome do secret)
+      let secretArn: string;
+      if (protheusSecretId.startsWith('arn:')) {
+        secretArn = protheusSecretId;
+      } else {
+        // Se for apenas o nome, usar wildcard para cobrir o sufixo aleatório do AWS
+        secretArn = `arn:aws:secretsmanager:${this.region}:${this.account}:secret:${protheusSecretId}*`;
+      }
+      
+      sendToProtheusLambda.addToRolePolicy(new iam.PolicyStatement({
+        actions: ['secretsmanager:GetSecretValue'],
+        resources: [secretArn]
+      }));
+    }
 
     // Lambda: Update Metrics
     const updateMetricsLambda = new lambda.Function(this, 'UpdateMetricsFunction', {

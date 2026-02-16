@@ -9,7 +9,7 @@ from src.models.api import (
 from src.services.process_service import ProcessService
 
 logger = logging.getLogger(__name__)
-router = APIRouter(prefix="/api/process", tags=["Process"])
+router = APIRouter(prefix="/process", tags=["Process"])
 service = ProcessService()
 
 @router.post("/presigned-url/xml", summary="Upload DANFE XML")

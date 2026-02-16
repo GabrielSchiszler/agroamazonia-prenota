@@ -3,11 +3,13 @@
 Script para criar um processo de teste BARTER (Commodities) com documentos
 
 Uso:
-    python3 test_create_process_barter.py --api-url <URL> --api-key <KEY> [--xml-file <arquivo.xml>] [--start]
+    python3 test_create_process_barter.py --api-url <URL> [--token <BEARER_TOKEN>] [--xml-file <arquivo.xml>] [--start]
 
 Ou criar um arquivo .env com:
-    API_URL=https://ovyt3c2b2c.execute-api.us-east-1.amazonaws.com/v1
-    API_KEY=agroamazonia_key_<seu_codigo>
+    API_URL=https://g7qrbptvqj.execute-api.sa-east-1.amazonaws.com/hml
+    AUTH_TOKEN=eyJraWQiOi... (token Bearer do Cognito)
+
+Nota: O token Bearer é usado no header Authorization para todas as requisições.
 """
 
 import requests
@@ -238,25 +240,39 @@ def get_metadata_json():
     }
 
 
-def upload_file_to_s3(presigned_url: str, file_content: bytes, content_type: str):
-    """Faz upload de um arquivo para S3 usando presigned URL"""
+def upload_file_to_s3(presigned_url: str, file_content: bytes, content_type: str, auth_token: str = None):
+    """
+    Faz upload de um arquivo para S3 usando presigned URL.
+    
+    NOTA: Presigned URLs do S3 NÃO devem ter header Authorization,
+    pois a autenticação já está na própria URL (query parameters).
+    """
+    # Presigned URLs do S3 já têm autenticação na URL, não precisam de header Authorization
+    headers = {'Content-Type': content_type}
+    # NÃO adicionar Authorization aqui - presigned URLs não aceitam isso
+    
     response = requests.put(
         presigned_url,
         data=file_content,
-        headers={'Content-Type': content_type}
+        headers=headers
     )
     response.raise_for_status()
     return response
 
 
-def test_create_process(api_url: str, api_key: str, xml_file: str = None, start_process: bool = False):
+def test_create_process(api_url: str, api_key: str = None, xml_file: str = None, start_process: bool = False, auth_token: str = None):
     """Cria um processo de teste BARTER com documentos - SEMPRE gera um novo processo único"""
     
     print("="*80)
     print("TESTE DE CRIAÇÃO DE PROCESSO BARTER (COMMODITIES) COM DOCUMENTOS")
     print("="*80)
     print(f"\nAPI URL: {api_url}")
-    print(f"API Key: {api_key[:20]}..." if len(api_key) > 20 else f"API Key: {api_key}")
+    if auth_token:
+        print(f"Authorization Token: Bearer {auth_token[:30]}..." if len(auth_token) > 30 else f"Authorization Token: Bearer {auth_token}")
+    elif api_key:
+        print(f"API Key: {api_key[:20]}..." if len(api_key) > 20 else f"API Key: {api_key}")
+    else:
+        print("Autenticação: Não fornecida (pode falhar se API Gateway exigir autenticação)")
     print()
     
     # SEMPRE gerar um novo process_id único (nunca reutilizar)
@@ -296,6 +312,13 @@ def test_create_process(api_url: str, api_key: str, xml_file: str = None, start_
     xml_filename = os.path.basename(xml_file)
     print(f"✓ XML carregado ({len(xml_content)} bytes)")
     
+    # Preparar headers de autenticação
+    headers = {}
+    if auth_token:
+        headers['Authorization'] = f'Bearer {auth_token}'
+    elif api_key:
+        headers['x-api-key'] = api_key
+    
     # 0. Verificar se o processo já existe (não deveria, mas vamos validar)
     print(f"\n{'='*80}")
     print("0️⃣  VERIFICANDO SE PROCESSO JÁ EXISTE")
@@ -304,8 +327,8 @@ def test_create_process(api_url: str, api_key: str, xml_file: str = None, start_
     
     try:
         check_response = requests.get(
-            f"{api_url}/api/process/{process_id}",
-            headers={'x-api-key': api_key}
+            f"{api_url}/process/{process_id}",
+            headers=headers
         )
         if check_response.ok:
             existing_data = check_response.json()
@@ -331,12 +354,17 @@ def test_create_process(api_url: str, api_key: str, xml_file: str = None, start_
     print(f"   Process ID: {process_id}")
     print(f"   Arquivo: {xml_filename}")
     
+    request_headers = {
+        'Content-Type': 'application/json'
+    }
+    if auth_token:
+        request_headers['Authorization'] = f'Bearer {auth_token}'
+    elif api_key:
+        request_headers['x-api-key'] = api_key
+    
     xml_url_response = requests.post(
-        f"{api_url}/api/process/presigned-url/xml",
-        headers={
-            'Content-Type': 'application/json',
-            'x-api-key': api_key
-        },
+        f"{api_url}/process/presigned-url/xml",
+        headers=request_headers,
         json={
             'process_id': process_id,
             'file_name': xml_filename,
@@ -361,6 +389,7 @@ def test_create_process(api_url: str, api_key: str, xml_file: str = None, start_
     print(f"   Tamanho: {len(xml_content)} bytes")
     
     try:
+        # Presigned URLs do S3 não precisam de token - a autenticação está na URL
         upload_file_to_s3(
             xml_url_data['upload_url'],
             xml_content,
@@ -382,11 +411,8 @@ def test_create_process(api_url: str, api_key: str, xml_file: str = None, start_
     metadata = get_metadata_json()
     
     metadata_response = requests.post(
-        f"{api_url}/api/process/metadados/pedido",
-        headers={
-            'Content-Type': 'application/json',
-            'x-api-key': api_key
-        },
+        f"{api_url}/process/metadados/pedido",
+        headers=request_headers,
         json={
             'process_id': process_id,
             'metadados': metadata
@@ -417,8 +443,8 @@ def test_create_process(api_url: str, api_key: str, xml_file: str = None, start_
     
     try:
         process_response = requests.get(
-            f"{api_url}/api/process/{process_id}",
-            headers={'x-api-key': api_key}
+            f"{api_url}/process/{process_id}",
+            headers=headers
         )
         
         if process_response.ok:
@@ -463,11 +489,8 @@ def test_create_process(api_url: str, api_key: str, xml_file: str = None, start_
         
         try:
             start_response = requests.post(
-                f"{api_url}/api/process/start",
-                headers={
-                    'Content-Type': 'application/json',
-                    'x-api-key': api_key
-                },
+                f"{api_url}/process/start",
+                headers=request_headers,
                 json={
                     'process_id': process_id
                 }
@@ -495,8 +518,8 @@ def test_create_process(api_url: str, api_key: str, xml_file: str = None, start_
     print(f"   - XML (DANFE): {xml_filename}")
     print(f"   - Metadados do pedido de compra: vinculados (isCommodities: true)")
     print(f"\n🔗 URLs:")
-    print(f"   - Ver processo: GET {api_url}/api/process/{process_id}")
-    print(f"   - Iniciar processamento: POST {api_url}/api/process/start")
+    print(f"   - Ver processo: GET {api_url}/process/{process_id}")
+    print(f"   - Iniciar processamento: POST {api_url}/process/start")
     print(f"     Body: {{\"process_id\": \"{process_id}\"}}")
     print(f"\n💡 Dica: Cada execução deste script cria um processo completamente novo!")
     print(f"💡 Dica: O tipo BARTER será detectado automaticamente ao iniciar o processamento")
@@ -506,21 +529,22 @@ def test_create_process(api_url: str, api_key: str, xml_file: str = None, start_
 
 def main():
     parser = argparse.ArgumentParser(description='Cria um processo de teste BARTER (Commodities) com documentos')
-    parser.add_argument('--api-url', help='URL base da API (padrão: https://kv8riifhmh.execute-api.us-east-1.amazonaws.com/v1)')
-    parser.add_argument('--api-key', help='Chave de API (padrão: agroamazonia_key_UPXsb8Hb8sjbxWBQqouzYnTL5w-V_dJx)')
+    parser.add_argument('--api-url', help='URL base da API (ex: https://g7qrbptvqj.execute-api.sa-east-1.amazonaws.com/hml)')
+    parser.add_argument('--token', '--bearer-token', dest='auth_token', help='Token Bearer para autenticação (header Authorization)')
+    parser.add_argument('--api-key', help='Chave de API (opcional, legado)')
     parser.add_argument('--xml-file', help='Caminho para arquivo XML (padrão: test_nfe_barter.xml)')
     parser.add_argument('--start', action='store_true', help='Iniciar processamento após criar')
     parser.add_argument('--env-file', default='.env', help='Arquivo .env para carregar variáveis (padrão: .env)')
     
     args = parser.parse_args()
     
-    # Valores padrão (dev environment)
-    default_api_url = 'https://gx3eyeb4i1.execute-api.us-east-1.amazonaws.com/v1'
-    default_api_key = 'agroamazonia_key_UPXsb8Hb8sjbxWBQqouzYnTL5w-V_dJx'
+    # Valores padrão
+    default_api_url = 'https://g7qrbptvqj.execute-api.sa-east-1.amazonaws.com/hml'
     
     # Tentar carregar do arquivo .env se existir
     api_url = args.api_url
     api_key = args.api_key
+    auth_token = args.auth_token
     
     if os.path.exists(args.env_file):
         print(f"Carregando variáveis do arquivo {args.env_file}...")
@@ -537,21 +561,25 @@ def main():
                         api_url = value
                     elif key == 'API_KEY' and not api_key:
                         api_key = value
+                    elif key in ['AUTH_TOKEN', 'BEARER_TOKEN', 'TOKEN'] and not auth_token:
+                        auth_token = value
     
     # Usar valores padrão se não fornecidos
     if not api_url:
         api_url = default_api_url
         print(f"ℹ️  Usando API URL padrão: {api_url}")
-    if not api_key:
-        api_key = default_api_key
-        print(f"ℹ️  Usando API Key padrão: {api_key[:30]}...")
+    if not auth_token and not api_key:
+        print(f"⚠️  Aviso: Token Bearer ou API Key não fornecidos")
+        print(f"   Se o API Gateway exigir autenticação, as requisições podem falhar")
+        print(f"   Use --token <TOKEN> ou defina AUTH_TOKEN no .env")
     
     # Executar teste
     process_id = test_create_process(
         api_url=api_url,
         api_key=api_key,
         xml_file=args.xml_file,
-        start_process=args.start
+        start_process=args.start,
+        auth_token=auth_token
     )
     
     if process_id:

@@ -32,14 +32,43 @@ export class FrontendStack extends cdk.Stack {
     };
 
     // Obter URL da API do backend
-    // Se apiUrl foi passada diretamente, usar; senão, tentar importar do stack do backend
-    let apiUrl: string;
-    if (props.apiUrl) {
+    // Prioridade: CDK context > variável de ambiente > props > importValue
+    let apiUrl: string | undefined;
+    
+    // 1. Tentar obter do CDK context (--context apiUrl=...)
+    const contextApiUrl = this.node.tryGetContext('apiUrl');
+    if (contextApiUrl) {
+      apiUrl = contextApiUrl;
+      console.log(`[FrontendStack] API URL obtida do CDK context: ${apiUrl}`);
+    }
+    // 2. Tentar obter da variável de ambiente
+    else if (process.env.API_URL) {
+      apiUrl = process.env.API_URL;
+      console.log(`[FrontendStack] API URL obtida da variável de ambiente: ${apiUrl}`);
+    }
+    // 3. Tentar obter das props (passada diretamente)
+    else if (props.apiUrl) {
       apiUrl = props.apiUrl;
-    } else {
-      // Tentar importar baseado no nome padrão do stack
+      console.log(`[FrontendStack] API URL obtida das props: ${apiUrl}`);
+    }
+    
+    // 4. Se não foi fornecida, usar importValue como fallback (pode falhar se o export não existir)
+    if (!apiUrl) {
+      console.warn(`[FrontendStack] ⚠️  API URL não fornecida via context/env/props. Tentando importValue do backend stack...`);
+      console.warn(`[FrontendStack] ⚠️  Se o export não existir, o deploy falhará.`);
+      console.warn(`[FrontendStack] ⚠️  Recomendado: forneça via --context apiUrl=https://... ou export API_URL=https://...`);
       const backendStackName = `agroamazonia-backend-${this.envName}`;
       apiUrl = cdk.Fn.importValue(`${backendStackName}-ApiUrl`);
+    }
+    
+    // Validar que a URL foi fornecida (apenas para strings reais, não tokens CloudFormation)
+    if (apiUrl && typeof apiUrl === 'string' && apiUrl.trim() === '') {
+      throw new Error(
+        `API URL não pode ser vazia! Forneça via:\n` +
+        `  - CDK context: cdk deploy --context apiUrl=https://...\n` +
+        `  - Variável de ambiente: export API_URL=https://...\n` +
+        `  - Props no código: new FrontendStack(..., { apiUrl: 'https://...' })`
+      );
     }
 
     // API Key (pode vir de variável de ambiente ou ser definida)

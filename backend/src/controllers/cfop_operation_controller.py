@@ -5,7 +5,7 @@ from typing import Optional
 from src.services.cfop_operation_service import CfopOperationService
 
 logger = logging.getLogger(__name__)
-router = APIRouter(prefix="/api/cfop-operation", tags=["Chave x CFOP"])
+router = APIRouter(prefix="/cfop-operation", tags=["Chave x CFOP"])
 service = CfopOperationService()
 
 class CfopOperationCreate(BaseModel):

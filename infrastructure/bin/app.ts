@@ -28,11 +28,16 @@ const backendStack = new AgroAmazoniaStack(app, `AgroAmazoniaStack-${environment
   stackName: `agroamazonia-backend-${environment}`
 });
 
-// Stack do frontend (recebe referência da API do backend)
-// A URL da API será importada automaticamente do export do backend stack
+// Stack do frontend
+// A URL da API pode ser fornecida via:
+//   - CDK context: cdk deploy --context apiUrl=https://...
+//   - Variável de ambiente: export API_URL=https://...
+//   - Props no código (se necessário)
+const apiUrl = app.node.tryGetContext('apiUrl') || process.env.API_URL;
+
 new FrontendStack(app, `FrontendStack-${environment}`, {
   ...stackProps,
   environment: environment,
-  stackName: `agroamazonia-frontend-${environment}`
-  // apiUrl será importada automaticamente via Fn.importValue se não fornecida
+  stackName: `agroamazonia-frontend-${environment}`,
+  apiUrl: apiUrl // Passar URL se fornecida via context ou env var
 });

@@ -4,7 +4,7 @@ from src.services.rules_service import RulesService
 from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
-router = APIRouter(prefix="/api/rules", tags=["Rules"])
+router = APIRouter(prefix="/rules", tags=["Rules"])
 service = RulesService()
 
 class RuleCreate(BaseModel):
