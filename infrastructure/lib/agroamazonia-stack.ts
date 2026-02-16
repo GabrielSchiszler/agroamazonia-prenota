@@ -218,7 +218,7 @@ export class AgroAmazoniaStack extends cdk.Stack {
         TABLE_NAME: documentTable.tableName,
         PROTHEUS_SECRET_ID: protheusSecretId,
         PROTHEUS_API_URL: protheusUrl,
-        PROTHEUS_TIMEOUT: '30', // Timeout em segundos
+        PROTHEUS_TIMEOUT: '100', // Timeout em segundos
         // Variáveis para reportar falhas do Protheus para SCTASK
         OCR_FAILURE_API_URL: ocrFailureApiUrl,
         OCR_FAILURE_AUTH_URL: ocrFailureAuthUrl,

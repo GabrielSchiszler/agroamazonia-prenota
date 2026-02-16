@@ -5,9 +5,6 @@ import requests
 import base64
 import random
 import html
-import urllib.request
-import urllib.error
-import socket
 from datetime import datetime
 
 dynamodb = boto3.resource('dynamodb')
@@ -1978,7 +1975,7 @@ def lambda_handler(event, context):
     # Enviar para Protheus via HTTP direto (autenticação Basic)
     protheus_secret_id = _env('PROTHEUS_SECRET_ID')
     protheus_endpoint = _env('PROTHEUS_API_URL')
-    protheus_timeout = int(os.environ.get('PROTHEUS_TIMEOUT', '30'))
+    protheus_timeout = int(os.environ.get('PROTHEUS_TIMEOUT', '100'))
     
     print(f"\n{'='*80}")
     print(f"[9] PREPARANDO ENVIO PARA PROTHEUS (via HTTP direto)")
@@ -2082,61 +2079,63 @@ def lambda_handler(event, context):
         print(f"[9.7.1] WARNING: Erro ao salvar payload no DynamoDB: {str(save_err)}")
     
     try:
-        # Preparar requisição HTTP POST
+        # Preparar requisição HTTP POST usando requests
         body_json = json.dumps(payload, default=str)
-        body_bytes = body_json.encode('utf-8')
-        
-        req = urllib.request.Request(
-            url=protheus_endpoint,
-            data=body_bytes,
-            headers=headers,
-            method='POST'
-        )
         
         print(f"\n{'='*80}")
         print(f"[10] ENVIANDO REQUISIÇÃO PARA PROTHEUS")
         print(f"{'='*80}")
+        print(f"[10.0] Timeout configurado: {protheus_timeout}s")
         
-        # Fazer requisição HTTP
+        # Fazer requisição HTTP usando requests
         try:
-            with urllib.request.urlopen(req, timeout=protheus_timeout) as resp:
-                response_status_code = resp.getcode()
-                response_headers = dict(resp.headers)
-                response_body_raw = resp.read().decode('utf-8', errors='replace')
+            resp = requests.post(
+                protheus_endpoint,
+                json=payload,
+                headers=headers,
+                timeout=protheus_timeout
+            )
+            
+            response_status_code = resp.status_code
+            response_headers = dict(resp.headers)
+            response_body_raw = resp.text
+            
+            print(f"\n{'='*80}")
+            print(f"[10] RESPOSTA DO PROTHEUS")
+            print(f"{'='*80}")
+            print(f"[10.1] HTTP Status Code: {response_status_code}")
+            print(f"[10.2] Response Headers: {json.dumps(response_headers, indent=2, default=str)}")
+            
+            print(f"\n[10.3] Response Body:")
+            print(f"{'-'*80}")
+            try:
+                protheus_response = resp.json()
+                print(json.dumps(protheus_response, indent=2, ensure_ascii=False, default=str))
+            except:
+                protheus_response = {'raw_response': response_body_raw}
+                print(response_body_raw[:500] + ('...' if len(response_body_raw) > 500 else ''))
+            print(f"{'-'*80}")
                 
-                print(f"\n{'='*80}")
-                print(f"[10] RESPOSTA DO PROTHEUS")
-                print(f"{'='*80}")
-                print(f"[10.1] HTTP Status Code: {response_status_code}")
-                print(f"[10.2] Response Headers: {json.dumps(response_headers, indent=2, default=str)}")
-                
-                print(f"\n[10.3] Response Body:")
-                print(f"{'-'*80}")
-                try:
-                    protheus_response = json.loads(response_body_raw)
-                    print(json.dumps(protheus_response, indent=2, ensure_ascii=False, default=str))
-                except:
-                    protheus_response = {'raw_response': response_body_raw}
-                    print(response_body_raw[:500] + ('...' if len(response_body_raw) > 500 else ''))
-                print(f"{'-'*80}")
-                
-        except urllib.error.HTTPError as e:
-            response_status_code = e.code
-            response_headers = dict(e.headers) if e.headers else {}
-            response_body_raw = e.read().decode('utf-8', errors='replace') if hasattr(e, 'read') else ''
+        except requests.exceptions.HTTPError as e:
+            response_status_code = e.response.status_code if e.response else 500
+            response_headers = dict(e.response.headers) if e.response and e.response.headers else {}
+            response_body_raw = e.response.text if e.response else str(e)
             
             print(f"\n{'='*80}")
             print(f"[10] ERRO HTTP DO PROTHEUS")
             print(f"{'='*80}")
             print(f"[10.1] HTTP Status Code: {response_status_code}")
             print(f"[10.2] Response Headers: {json.dumps(response_headers, indent=2, default=str)}")
-            print(f"[10.3] Response Body: {response_body_raw[:500]}")
+            print(f"[10.3] Response Body: {response_body_raw[:500] if isinstance(response_body_raw, str) else str(response_body_raw)[:500]}")
             
             # Processar resposta de erro
             try:
-                protheus_response = json.loads(response_body_raw) if response_body_raw else {}
+                if e.response:
+                    protheus_response = e.response.json()
+                else:
+                    protheus_response = {'raw_response': str(e)}
             except:
-                protheus_response = {'raw_response': response_body_raw}
+                protheus_response = {'raw_response': response_body_raw if isinstance(response_body_raw, str) else str(response_body_raw)}
         
         # Verificar se houve erro HTTP na resposta
         if response_status_code >= 400:
@@ -2240,38 +2239,7 @@ def lambda_handler(event, context):
             print(f"[10.4.1] Informações da requisição Protheus salvas no DynamoDB")
         except Exception as save_err:
             print(f"[10.4.1] WARNING: Erro ao salvar informações da requisição: {str(save_err)}")
-    except urllib.error.URLError as e:
-        print(f"\n[10] ERRO de rede/DNS ao conectar ao Protheus: {e}")
-        import traceback
-        traceback.print_exc()
-        
-        error_type = type(e).__name__
-        error_message = f"Erro de rede/DNS ao conectar ao Protheus: {str(e)}"
-        error_details = {
-            'error': str(e),
-            'error_type': 'NetworkError',
-            'error_message': error_message,
-            'protheus_url': protheus_endpoint if 'protheus_endpoint' in locals() else protheus_url,
-            'request_payload': payload if 'payload' in locals() else None,
-            'request_headers': {k: v for k, v in headers.items() if k != 'Authorization'} if 'headers' in locals() else None
-        }
-        
-        # Reportar falha para API do SCTASK
-        print(f"\n[10.7] Reportando falha de rede para API do SCTASK...")
-        try:
-            sctask_id = report_protheus_failure_to_sctask(process_id, error_details)
-            if sctask_id:
-                print(f"[10.8] Falha reportada com sucesso. SCTASK ID: {sctask_id}")
-            else:
-                print(f"[10.8] Falha ao reportar para SCTASK (mas continuando com o erro)")
-        except Exception as sctask_err:
-            print(f"[10.8] Erro ao reportar para SCTASK: {str(sctask_err)}")
-        
-        error_with_details = Exception(error_message)
-        error_with_details.error_details = error_details
-        raise error_with_details
-    
-    except socket.timeout:
+    except requests.exceptions.Timeout:
         print(f"\n[10] TIMEOUT ao conectar ao Protheus (após {protheus_timeout}s)")
         error_message = f"Timeout após {protheus_timeout}s ao conectar ao Protheus (VPC/rota/SG/DNS?)"
         error_details = {
@@ -2286,6 +2254,68 @@ def lambda_handler(event, context):
         
         # Reportar falha para API do SCTASK
         print(f"\n[10.7] Reportando falha de timeout para API do SCTASK...")
+        try:
+            sctask_id = report_protheus_failure_to_sctask(process_id, error_details)
+            if sctask_id:
+                print(f"[10.8] Falha reportada com sucesso. SCTASK ID: {sctask_id}")
+            else:
+                print(f"[10.8] Falha ao reportar para SCTASK (mas continuando com o erro)")
+        except Exception as sctask_err:
+            print(f"[10.8] Erro ao reportar para SCTASK: {str(sctask_err)}")
+        
+        error_with_details = Exception(error_message)
+        error_with_details.error_details = error_details
+        raise error_with_details
+    
+    except requests.exceptions.ConnectionError as e:
+        print(f"\n[10] ERRO de conexão ao conectar ao Protheus: {e}")
+        import traceback
+        traceback.print_exc()
+        
+        error_type = type(e).__name__
+        error_message = f"Erro de conexão ao conectar ao Protheus: {str(e)}"
+        error_details = {
+            'error': str(e),
+            'error_type': 'ConnectionError',
+            'error_message': error_message,
+            'protheus_url': protheus_endpoint if 'protheus_endpoint' in locals() else protheus_url,
+            'request_payload': payload if 'payload' in locals() else None,
+            'request_headers': {k: v for k, v in headers.items() if k != 'Authorization'} if 'headers' in locals() else None
+        }
+        
+        # Reportar falha para API do SCTASK
+        print(f"\n[10.7] Reportando falha de conexão para API do SCTASK...")
+        try:
+            sctask_id = report_protheus_failure_to_sctask(process_id, error_details)
+            if sctask_id:
+                print(f"[10.8] Falha reportada com sucesso. SCTASK ID: {sctask_id}")
+            else:
+                print(f"[10.8] Falha ao reportar para SCTASK (mas continuando com o erro)")
+        except Exception as sctask_err:
+            print(f"[10.8] Erro ao reportar para SCTASK: {str(sctask_err)}")
+        
+        error_with_details = Exception(error_message)
+        error_with_details.error_details = error_details
+        raise error_with_details
+    
+    except requests.exceptions.RequestException as e:
+        print(f"\n[10] ERRO na requisição para o Protheus: {e}")
+        import traceback
+        traceback.print_exc()
+        
+        error_type = type(e).__name__
+        error_message = f"Erro na requisição para o Protheus: {str(e)}"
+        error_details = {
+            'error': str(e),
+            'error_type': error_type,
+            'error_message': error_message,
+            'protheus_url': protheus_endpoint if 'protheus_endpoint' in locals() else protheus_url,
+            'request_payload': payload if 'payload' in locals() else None,
+            'request_headers': {k: v for k, v in headers.items() if k != 'Authorization'} if 'headers' in locals() else None
+        }
+        
+        # Reportar falha para API do SCTASK
+        print(f"\n[10.7] Reportando falha da requisição para API do SCTASK...")
         try:
             sctask_id = report_protheus_failure_to_sctask(process_id, error_details)
             if sctask_id:
