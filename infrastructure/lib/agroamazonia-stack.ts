@@ -69,8 +69,9 @@ export class AgroAmazoniaStack extends cdk.Stack {
       encryption: s3.BucketEncryption.S3_MANAGED,
       // Ativar todas as opções de Block Public Access
       blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
-      // Remover ACL pública - usar apenas políticas de bucket
-      accessControl: s3.BucketAccessControl.PRIVATE,
+      // Desabilitar ACLs (obrigatório para buckets criados após abril de 2023)
+      // Usar apenas políticas de bucket para controle de acesso
+      objectOwnership: s3.ObjectOwnership.BUCKET_OWNER_ENFORCED,
       removalPolicy: cdk.RemovalPolicy.RETAIN,
       // Remover CORS público - acesso será apenas via IPs permitidos
       // CORS removido para garantir privacidade total

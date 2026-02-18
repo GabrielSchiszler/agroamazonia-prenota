@@ -83,6 +83,8 @@ export class FrontendStack extends cdk.Stack {
       // Não usar websiteIndexDocument/websiteErrorDocument com OAI
       publicReadAccess: false, // CloudFront vai servir o conteúdo via OAI
       blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
+      // Desabilitar ACLs (obrigatório para buckets criados após abril de 2023)
+      objectOwnership: s3.ObjectOwnership.BUCKET_OWNER_ENFORCED,
       removalPolicy: cdk.RemovalPolicy.DESTROY, // Pode deletar em dev/stg
       autoDeleteObjects: true, // Limpar objetos ao deletar bucket
       versioned: false, // Não precisa versionar frontend
