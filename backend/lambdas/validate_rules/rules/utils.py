@@ -4,22 +4,48 @@ import boto3
 
 logger = logging.getLogger()
 
-def compare_with_bedrock(value1, value2, field):
-    """Usa Bedrock Nova para comparação contextual (cria cliente internamente)"""
+def compare_with_bedrock(value1, value2, field, has_equivalent_code=False):
+    """Usa Bedrock Nova para comparação contextual (cria cliente internamente)
+    
+    Args:
+        value1: Primeiro valor a comparar
+        value2: Segundo valor a comparar
+        field: Nome do campo sendo comparado
+        has_equivalent_code: Se True, indica que os códigos numéricos já foram validados como equivalentes
+    """
     bedrock_client = boto3.client('bedrock-runtime', region_name='us-east-1')
-    return _compare_with_bedrock_client(bedrock_client, value1, value2, field)
+    return _compare_with_bedrock_client(bedrock_client, value1, value2, field, has_equivalent_code)
 
-def _compare_with_bedrock_client(bedrock_client, value1, value2, field):
-    """Usa Bedrock Nova para comparação contextual"""
+def _compare_with_bedrock_client(bedrock_client, value1, value2, field, has_equivalent_code=False):
+    """Usa Bedrock Nova para comparação contextual
+    
+    Args:
+        bedrock_client: Cliente Bedrock
+        value1: Primeiro valor a comparar
+        value2: Segundo valor a comparar
+        field: Nome do campo sendo comparado
+        has_equivalent_code: Se True, indica que os códigos numéricos já foram validados como equivalentes
+    """
     
     # Prompt específico para nomes de produtos
     if 'produto' in field.lower() or 'nome' in field.lower():
+        # Se os códigos já foram validados como equivalentes, adicionar informação crítica no prompt
+        equivalent_code_note = ""
+        if has_equivalent_code:
+            equivalent_code_note = """
+⚠️ ATENÇÃO CRÍTICA - CÓDIGOS NUMÉRICOS EQUIVALENTES:
+Os códigos numéricos dos produtos foram VALIDADOS como EQUIVALENTES (mesmo código, apenas separador diferente).
+Exemplos: "20.00.20" = "20-00-20", "15.15.15" = "15-15-15"
+Quando os códigos numéricos são equivalentes, os produtos são SEMPRE o MESMO produto, mesmo que outras partes do nome sejam diferentes.
+Neste caso, você DEVE retornar {{"validado": true}} a menos que sejam produtos completamente diferentes (não relacionados).
+
+"""
+        
         prompt = f"""Compare os seguintes nomes de produtos:
 
 Produto 1: {value1}
 Produto 2: {value2}
-
-REGRAS:
+{equivalent_code_note}REGRAS:
 1. Produtos são o MESMO se tiverem o mesmo nome principal/essencial, mesmo que:
    - Tenham informações adicionais diferentes (código, lote, registro, etc.)
    - Tenham unidades de medida diferentes na descrição (KG, SC, PT, etc.)
@@ -27,11 +53,13 @@ REGRAS:
    - Tenham códigos numéricos com separadores diferentes (pontos vs traços)
      Exemplo: "15.15.15" é EQUIVALENTE a "15-15-15"
      Exemplo: "30.00.20" é EQUIVALENTE a "30-00-20"
+     Exemplo: "20.00.20" é EQUIVALENTE a "20-00-20"
 
 2. IMPORTANTE - Normalização de códigos numéricos:
    - Códigos numéricos com pontos (.) são EQUIVALENTES aos mesmos códigos com traços (-)
    - "15.15.15" = "15-15-15" = "15 15 15" (mesmo código, apenas separador diferente)
    - "30.00.20" = "30-00-20" = "30 00 20" (mesmo código, apenas separador diferente)
+   - "20.00.20" = "20-00-20" = "20 00 20" (mesmo código, apenas separador diferente)
    - Se os códigos numéricos forem iguais (ignorando separadores), os produtos são o MESMO
 
 3. Produtos são DIFERENTES apenas se:
@@ -65,13 +93,20 @@ Produto2: 30-00-20 UNIFERTIL TN 1000 KG
 RESULTADO: {{"validado": true}}
 EXPLICAÇÃO: Código "30.00.20" é equivalente a "30-00-20" (mesmo código, separador diferente). Ambos são o mesmo produto.
 
-EXEMPLO 5 (PRODUTOS DIFERENTES):
+EXEMPLO 5 (MESMO PRODUTO - código equivalente validado):
+Produto1: FERTILIZANTE 20.00.20
+Produto2: 20-00-20 TOCANTINS TN 1000 KG
+RESULTADO: {{"validado": true}}
+EXPLICAÇÃO: Os códigos numéricos "20.00.20" e "20-00-20" são equivalentes (mesmo código, apenas separador diferente). 
+Mesmo que outras partes do nome sejam diferentes (FERTILIZANTE vs TOCANTINS TN 1000 KG), são o mesmo produto.
+
+EXEMPLO 6 (PRODUTOS DIFERENTES):
 Produto1: SPHERIC PLUS NORTOX
 Produto2: GALIL SC 1X20
 RESULTADO: {{"validado": false}}
 EXPLICAÇÃO: Produtos completamente diferentes
 
-EXEMPLO 6 (PRODUTOS DIFERENTES - códigos diferentes):
+EXEMPLO 7 (PRODUTOS DIFERENTES - códigos diferentes):
 Produto1: 15.15.15 UNI BASE 180 AMIDICO
 Produto2: 20.20.20 UNIFERTIL TN 1000 KG
 RESULTADO: {{"validado": false}}

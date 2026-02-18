@@ -124,7 +124,8 @@ def normalize_code_separators(text):
     return text.strip()
 
 def find_matching_product(danfe_prod, doc_produtos, used_indices):
-    """Encontra produto correspondente no documento usando apenas nome, sem depender de código/ID"""
+    """Encontra produto correspondente no documento usando apenas nome, sem depender de código/ID
+    Retorna: (doc_idx, doc_prod, has_equivalent_code) onde has_equivalent_code indica se houve match por código numérico equivalente"""
     import logging
     logger = logging.getLogger()
     
@@ -155,7 +156,7 @@ def find_matching_product(danfe_prod, doc_produtos, used_indices):
         # Match exato
         if danfe_nome_upper == doc_nome_upper:
             logger.info(f"  ✓ MATCH EXATO por nome no índice {i} (DANFE: '{danfe_nome}', DOC: '{doc_nome}')")
-            return i, doc_prod
+            return i, doc_prod, False
     
     # PRIORIDADE 1.5: Match com normalização de códigos (pontos vs traços)
     # Extrair códigos numéricos e comparar separadamente
@@ -184,14 +185,14 @@ def find_matching_product(danfe_prod, doc_produtos, used_indices):
                 logger.info(f"  ✓ MATCH por código numérico equivalente no índice {i}")
                 logger.info(f"    DANFE: '{danfe_nome}' (código: '{danfe_codes[0]}' -> '{danfe_code_normalized}')")
                 logger.info(f"    DOC: '{doc_nome}' (código: '{doc_codes[0]}' -> '{doc_code_normalized}')")
-                return i, doc_prod
+                return i, doc_prod, True
         
         # Match após normalização completa do texto
         if danfe_nome_normalized == doc_nome_normalized:
             logger.info(f"  ✓ MATCH EXATO após normalização de códigos no índice {i}")
             logger.info(f"    DANFE: '{danfe_nome}' (normalizado: '{danfe_nome_normalized}')")
             logger.info(f"    DOC: '{doc_nome}' (normalizado: '{doc_nome_normalized}')")
-            return i, doc_prod
+            return i, doc_prod, False
     
     # PRIORIDADE 2: Match parcial (uma contém a outra) - mais permissivo
     for i, doc_prod in enumerate(doc_produtos):
@@ -217,12 +218,12 @@ def find_matching_product(danfe_prod, doc_produtos, used_indices):
             if len(common_words) >= 2:
                 logger.info(f"  ✓ MATCH PARCIAL por palavras-chave no índice {i} (palavras comuns: {common_words})")
                 logger.info(f"    DANFE: '{danfe_nome}', DOC: '{doc_nome}'")
-                return i, doc_prod
+                return i, doc_prod, False
             
             # Fallback: verificar se uma string contém a outra (substring)
             if danfe_nome_upper in doc_nome_upper or doc_nome_upper in danfe_nome_upper:
                 logger.info(f"  ✓ MATCH PARCIAL por substring no índice {i} (DANFE: '{danfe_nome}', DOC: '{doc_nome}')")
-                return i, doc_prod
+                return i, doc_prod, False
             
             # Verificar match parcial após normalização de códigos
             danfe_nome_normalized = normalize_code_separators(danfe_nome_upper)
@@ -231,7 +232,7 @@ def find_matching_product(danfe_prod, doc_produtos, used_indices):
                 logger.info(f"  ✓ MATCH PARCIAL por substring após normalização de códigos no índice {i}")
                 logger.info(f"    DANFE: '{danfe_nome}' (normalizado: '{danfe_nome_normalized}')")
                 logger.info(f"    DOC: '{doc_nome}' (normalizado: '{doc_nome_normalized}')")
-                return i, doc_prod
+                return i, doc_prod, False
     
     # PRIORIDADE 3: Tentar todos os produtos restantes e usar Bedrock para validar
     # Se chegou aqui, não encontrou match exato nem parcial
@@ -253,10 +254,10 @@ def find_matching_product(danfe_prod, doc_produtos, used_indices):
         
         if bedrock_result == 'MATCH':
             logger.info(f"  ✓ MATCH via Bedrock no índice {i} (DANFE: '{danfe_nome}', DOC: '{doc_nome}')")
-            return i, doc_prod
+            return i, doc_prod, False
     
     logger.warning(f"  ✗ Nenhum match encontrado para produto (nome: '{danfe_nome}')")
-    return None, None
+    return None, None, False
 
 def extract_quantity_and_unit(produto, is_danfe=True):
     """Extrai quantidade e unidade de medida do produto"""
@@ -337,7 +338,7 @@ def validate_products_comparison(danfe_produtos, doc_produtos, doc_file, source_
     
     # Tentar parear cada produto DANFE com DOC
     for danfe_idx, danfe_prod in enumerate(danfe_produtos):
-        doc_idx, doc_prod = find_matching_product(danfe_prod, doc_produtos, used_indices)
+        doc_idx, doc_prod, has_equivalent_code = find_matching_product(danfe_prod, doc_produtos, used_indices)
         
         if doc_prod is not None:
             used_indices.add(doc_idx)
@@ -354,8 +355,9 @@ def validate_products_comparison(danfe_produtos, doc_produtos, doc_file, source_
                        doc_prod.get('descricao', '')).strip()
             
             # Sempre usar Bedrock para comparação semântica (mais flexível)
+            # Passar informação sobre código numérico equivalente se houver
             from .utils import compare_with_bedrock
-            nome_status = compare_with_bedrock(danfe_nome, doc_nome, 'nome do produto')
+            nome_status = compare_with_bedrock(danfe_nome, doc_nome, 'nome do produto', has_equivalent_code=has_equivalent_code)
             
             # Se Bedrock não conseguir determinar, tentar match parcial como fallback
             if nome_status not in ['MATCH', 'MISMATCH']:
