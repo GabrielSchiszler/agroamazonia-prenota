@@ -1,0 +1,64 @@
+{
+  "metadata": {
+    "exported_at": "2026-02-20T13:13:13.356193+00:00",
+    "source_table": "tabela-document-processor-stg",
+    "source_region": "us-east-1",
+    "process_types": [
+      "AGROQUIMICOS",
+      "BARTER"
+    ],
+    "total_rules": 7,
+    "format_version": 1
+  },
+  "rules": [
+    {
+      "ORDER": 7,
+      "ENABLED": true,
+      "PK": "RULES#AGROQUIMICOS",
+      "RULE_NAME": "validar_cfop_chave",
+      "SK": "RULE#validar_cfop_chave"
+    },
+    {
+      "ORDER": 9,
+      "ENABLED": true,
+      "PK": "RULES#AGROQUIMICOS",
+      "RULE_NAME": "validar_cnpj_destinatario",
+      "SK": "RULE#validar_cnpj_destinatario"
+    },
+    {
+      "ORDER": 4,
+      "ENABLED": true,
+      "PK": "RULES#AGROQUIMICOS",
+      "RULE_NAME": "validar_cnpj_fornecedor",
+      "SK": "RULE#validar_cnpj_fornecedor"
+    },
+    {
+      "ORDER": 5,
+      "ENABLED": true,
+      "PK": "RULES#AGROQUIMICOS",
+      "RULE_NAME": "validar_produtos",
+      "SK": "RULE#validar_produtos"
+    },
+    {
+      "ORDER": 7,
+      "ENABLED": true,
+      "PK": "RULES#BARTER",
+      "RULE_NAME": "validar_cfop_chave",
+      "SK": "RULE#validar_cfop_chave"
+    },
+    {
+      "ORDER": 9,
+      "ENABLED": true,
+      "PK": "RULES#BARTER",
+      "RULE_NAME": "validar_cnpj_destinatario",
+      "SK": "RULE#validar_cnpj_destinatario"
+    },
+    {
+      "ORDER": 5,
+      "ENABLED": true,
+      "PK": "RULES#BARTER",
+      "RULE_NAME": "validar_produtos",
+      "SK": "RULE#validar_produtos"
+    }
+  ]
+}

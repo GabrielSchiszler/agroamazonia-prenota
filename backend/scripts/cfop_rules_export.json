@@ -1,0 +1,781 @@
+{
+  "metadata": {
+    "exported_at": "2026-02-20T13:16:46.085710+00:00",
+    "source_table": "tabela-document-processor-stg",
+    "source_region": "us-east-1",
+    "pk": "CFOP_OPERATION",
+    "total_items": 57,
+    "mapping_items": 31,
+    "cfop_items": 26,
+    "format_version": 1
+  },
+  "items": [
+    {
+      "MAPPING_IDS": [
+        "96",
+        "3R"
+      ],
+      "MAPPING_ID": "3R",
+      "CFOP": "1116",
+      "CHAVE": "3R",
+      "PK": "CFOP_OPERATION",
+      "ATIVO": true,
+      "SK": "CFOP#1116"
+    },
+    {
+      "MAPPING_IDS": [
+        "96",
+        "3R"
+      ],
+      "MAPPING_ID": "3R",
+      "CFOP": "1117",
+      "CHAVE": "3R",
+      "PK": "CFOP_OPERATION",
+      "ATIVO": true,
+      "SK": "CFOP#1117"
+    },
+    {
+      "MAPPING_IDS": [
+        "96",
+        "3R"
+      ],
+      "MAPPING_ID": "3R",
+      "CFOP": "2116",
+      "CHAVE": "3R",
+      "PK": "CFOP_OPERATION",
+      "ATIVO": true,
+      "SK": "CFOP#2116"
+    },
+    {
+      "MAPPING_IDS": [
+        "96",
+        "3R"
+      ],
+      "MAPPING_ID": "3R",
+      "CFOP": "2117",
+      "CHAVE": "3R",
+      "PK": "CFOP_OPERATION",
+      "ATIVO": true,
+      "SK": "CFOP#2117"
+    },
+    {
+      "MAPPING_IDS": [
+        "1B",
+        "4G"
+      ],
+      "MAPPING_ID": "4G",
+      "CFOP": "5101",
+      "CHAVE": "4G",
+      "PK": "CFOP_OPERATION",
+      "ATIVO": true,
+      "SK": "CFOP#5101"
+    },
+    {
+      "MAPPING_IDS": [
+        "1B"
+      ],
+      "MAPPING_ID": "1B",
+      "CFOP": "5102",
+      "CHAVE": "1B",
+      "PK": "CFOP_OPERATION",
+      "ATIVO": true,
+      "SK": "CFOP#5102"
+    },
+    {
+      "MAPPING_IDS": [
+        "1B",
+        "3I"
+      ],
+      "MAPPING_ID": "3I",
+      "CFOP": "5105",
+      "CHAVE": "3I",
+      "PK": "CFOP_OPERATION",
+      "ATIVO": true,
+      "SK": "CFOP#5105"
+    },
+    {
+      "MAPPING_IDS": [
+        "1B",
+        "3I"
+      ],
+      "MAPPING_ID": "3I",
+      "CFOP": "5106",
+      "CHAVE": "3I",
+      "PK": "CFOP_OPERATION",
+      "ATIVO": true,
+      "SK": "CFOP#5106"
+    },
+    {
+      "MAPPING_IDS": [
+        "2A",
+        "3J",
+        "4S"
+      ],
+      "MAPPING_ID": "4S",
+      "CFOP": "5118",
+      "CHAVE": "4S",
+      "PK": "CFOP_OPERATION",
+      "ATIVO": true,
+      "SK": "CFOP#5118"
+    },
+    {
+      "MAPPING_IDS": [
+        "2A",
+        "3J"
+      ],
+      "MAPPING_ID": "3J",
+      "CFOP": "5119",
+      "CHAVE": "2A",
+      "PK": "CFOP_OPERATION",
+      "ATIVO": true,
+      "SK": "CFOP#5119"
+    },
+    {
+      "MAPPING_IDS": [
+        "1H",
+        "1L",
+        "1M"
+      ],
+      "MAPPING_ID": "1M",
+      "CFOP": "5910",
+      "CHAVE": "1L",
+      "PK": "CFOP_OPERATION",
+      "ATIVO": false,
+      "SK": "CFOP#5910"
+    },
+    {
+      "MAPPING_IDS": [
+        "2X"
+      ],
+      "MAPPING_ID": "2X",
+      "CFOP": "5920",
+      "CHAVE": "2X",
+      "PK": "CFOP_OPERATION",
+      "ATIVO": true,
+      "SK": "CFOP#5920"
+    },
+    {
+      "MAPPING_IDS": [
+        "1C",
+        "3Q"
+      ],
+      "MAPPING_ID": "3Q",
+      "CFOP": "5922",
+      "CHAVE": "3Q",
+      "PK": "CFOP_OPERATION",
+      "ATIVO": true,
+      "SK": "CFOP#5922"
+    },
+    {
+      "MAPPING_IDS": [
+        "1A"
+      ],
+      "MAPPING_ID": "1A",
+      "CFOP": "5923",
+      "CHAVE": "1A",
+      "PK": "CFOP_OPERATION",
+      "ATIVO": true,
+      "SK": "CFOP#5923"
+    },
+    {
+      "MAPPING_IDS": [
+        "95"
+      ],
+      "MAPPING_ID": "95",
+      "CFOP": "5949",
+      "CHAVE": "95",
+      "PK": "CFOP_OPERATION",
+      "ATIVO": true,
+      "SK": "CFOP#5949"
+    },
+    {
+      "MAPPING_IDS": [
+        "1B"
+      ],
+      "MAPPING_ID": "1B",
+      "CFOP": "6101",
+      "CHAVE": "1B",
+      "PK": "CFOP_OPERATION",
+      "ATIVO": true,
+      "SK": "CFOP#6101"
+    },
+    {
+      "MAPPING_IDS": [
+        "1B"
+      ],
+      "MAPPING_ID": "1B",
+      "CFOP": "6102",
+      "CHAVE": "1B",
+      "PK": "CFOP_OPERATION",
+      "ATIVO": true,
+      "SK": "CFOP#6102"
+    },
+    {
+      "MAPPING_IDS": [
+        "1B",
+        "3I"
+      ],
+      "MAPPING_ID": "3I",
+      "CFOP": "6105",
+      "CHAVE": "3I",
+      "PK": "CFOP_OPERATION",
+      "ATIVO": true,
+      "SK": "CFOP#6105"
+    },
+    {
+      "MAPPING_IDS": [
+        "1B",
+        "3I"
+      ],
+      "MAPPING_ID": "3I",
+      "CFOP": "6106",
+      "CHAVE": "3I",
+      "PK": "CFOP_OPERATION",
+      "ATIVO": true,
+      "SK": "CFOP#6106"
+    },
+    {
+      "MAPPING_IDS": [
+        "2A"
+      ],
+      "MAPPING_ID": "2A",
+      "CFOP": "6118",
+      "CHAVE": "2A",
+      "PK": "CFOP_OPERATION",
+      "ATIVO": true,
+      "SK": "CFOP#6118"
+    },
+    {
+      "MAPPING_IDS": [
+        "2A"
+      ],
+      "MAPPING_ID": "2A",
+      "CFOP": "6119",
+      "CHAVE": "2A",
+      "PK": "CFOP_OPERATION",
+      "ATIVO": true,
+      "SK": "CFOP#6119"
+    },
+    {
+      "MAPPING_IDS": [
+        "1H",
+        "1L",
+        "1M"
+      ],
+      "MAPPING_ID": "1M",
+      "CFOP": "6910",
+      "CHAVE": "1L",
+      "PK": "CFOP_OPERATION",
+      "ATIVO": false,
+      "SK": "CFOP#6910"
+    },
+    {
+      "MAPPING_IDS": [
+        "2X"
+      ],
+      "MAPPING_ID": "2X",
+      "CFOP": "6920",
+      "CHAVE": "2X",
+      "PK": "CFOP_OPERATION",
+      "ATIVO": true,
+      "SK": "CFOP#6920"
+    },
+    {
+      "MAPPING_IDS": [
+        "1C",
+        "3Q"
+      ],
+      "MAPPING_ID": "3Q",
+      "CFOP": "6922",
+      "CHAVE": "3Q",
+      "PK": "CFOP_OPERATION",
+      "ATIVO": true,
+      "SK": "CFOP#6922"
+    },
+    {
+      "MAPPING_IDS": [
+        "1A"
+      ],
+      "MAPPING_ID": "1A",
+      "CFOP": "6923",
+      "CHAVE": "1A",
+      "PK": "CFOP_OPERATION",
+      "ATIVO": true,
+      "SK": "CFOP#6923"
+    },
+    {
+      "MAPPING_IDS": [
+        "95"
+      ],
+      "MAPPING_ID": "95",
+      "CFOP": "6949",
+      "CHAVE": "95",
+      "PK": "CFOP_OPERATION",
+      "ATIVO": true,
+      "SK": "CFOP#6949"
+    },
+    {
+      "OBSERVACAO": "Deve ser utilizada em conjunto com a operação 2X (CFOP 5920/6920). Esta nota acompanha o trânsito da mercadoria.",
+      "CFOP": "5923 6923",
+      "PEDIDO_COMPRA": false,
+      "REGRA": "Utilizar para registro da nota fiscal de remessa que acoberta o transporte físico da mercadoria em operações de venda à ordem ou operações triangulares.",
+      "CFOP_LIST": [
+        "5923",
+        "6923"
+      ],
+      "OPERACAO": "1A",
+      "CHAVE": "1A",
+      "PK": "CFOP_OPERATION",
+      "ATIVO": true,
+      "DESCRICAO": "E-031-REMESSA P/ CONTA E ORDEM DE TERCEIROS",
+      "SK": "MAPPING#1A"
+    },
+    {
+      "OBSERVACAO": "Tipo de operação mais utilizado para entrada de mercadoria para revenda (\"Entradas Normais\"). Utilizar quando a nota fiscal se referir à entrada de mercadoria para revenda. Não utilizar para devoluções ou entradas simbólicas.",
+      "CFOP": "5101 6101 5102 6102 5105 6105 5106 6106",
+      "PEDIDO_COMPRA": true,
+      "REGRA": "Utilizar quando a nota fiscal se referir à entrada de mercadoria para revenda. Aplicável às entradas normais de mercadoria, conforme CFOPs listados.",
+      "CFOP_LIST": [
+        "5101",
+        "6101",
+        "5102",
+        "6102",
+        "5105",
+        "6105",
+        "5106",
+        "6106"
+      ],
+      "OPERACAO": "1B",
+      "CHAVE": "1B",
+      "PK": "CFOP_OPERATION",
+      "ATIVO": true,
+      "DESCRICAO": "E-033-COMPRA PARA COMERCIALIZACAO",
+      "SK": "MAPPING#1B"
+    },
+    {
+      "OBSERVACAO": "A remessa (Operação 96) movimenta estoque",
+      "CFOP": "5922 6922",
+      "PEDIDO_COMPRA": true,
+      "REGRA": "",
+      "CFOP_LIST": [
+        "5922",
+        "6922"
+      ],
+      "OPERACAO": "1C",
+      "CHAVE": "1C",
+      "PK": "CFOP_OPERATION",
+      "ATIVO": true,
+      "DESCRICAO": "E-034-COMPRA PARA ENTREGA FUTURA",
+      "SK": "MAPPING#1C"
+    },
+    {
+      "OBSERVACAO": "O CFOP 5910/6910 também é utilizado para Doação e Brinde. Avaliar sempre a finalidade da mercadoria para definir o tipo de operação correto.",
+      "CFOP": "5910 6910",
+      "PEDIDO_COMPRA": true,
+      "REGRA": "Utilizar quando a mercadoria for recebida a título de bonificação e tiver finalidade de revenda.",
+      "CFOP_LIST": [
+        "5910",
+        "6910"
+      ],
+      "OPERACAO": "1H",
+      "CHAVE": "1H",
+      "PK": "CFOP_OPERATION",
+      "ATIVO": true,
+      "DESCRICAO": "E-047-BONIFICACAO RECEBIDA",
+      "SK": "MAPPING#1H"
+    },
+    {
+      "OBSERVACAO": "",
+      "CFOP": "",
+      "PEDIDO_COMPRA": false,
+      "REGRA": "",
+      "CFOP_LIST": [],
+      "OPERACAO": "1I",
+      "CHAVE": "1I",
+      "PK": "CFOP_OPERATION",
+      "ATIVO": false,
+      "DESCRICAO": "E-049-RETORNO MERC REMETIDA PARA TROCA",
+      "SK": "MAPPING#1I"
+    },
+    {
+      "ATIVO": false,
+      "CFOP": "5910 6910",
+      "CFOP_LIST": [
+        "5910",
+        "6910"
+      ],
+      "CHAVE": "1L",
+      "DESCRICAO": "E-061-DOAC-O RECEBIDA",
+      "OBSERVACAO": "O CFOP 5910/6910 também é utilizado para Bonificação e Brinde. Confirmar a finalidade da mercadoria antes da classificação.",
+      "OPERACAO": "1L",
+      "PEDIDO_COMPRA": true,
+      "PK": "CFOP_OPERATION",
+      "REGRA": "Utilizar quando a mercadoria for recebida a título de doação, sem finalidade de revenda.",
+      "SK": "MAPPING#1L"
+    },
+    {
+      "ATIVO": false,
+      "CFOP": "5910 6910",
+      "CFOP_LIST": [
+        "5910",
+        "6910"
+      ],
+      "CHAVE": "1M",
+      "DESCRICAO": "E-062-BRINDE RECEBIDO",
+      "OBSERVACAO": "O CFOP 5910/6910 também é utilizado para Bonificação e Doação. A definição do tipo de operação depende da finalidade da mercadoria.",
+      "OPERACAO": "1M",
+      "PEDIDO_COMPRA": true,
+      "PK": "CFOP_OPERATION",
+      "REGRA": "Utilizar quando a mercadoria for recebida como brinde, sem finalidade de revenda - O produto deve ser do grupo BRINDE.",
+      "SK": "MAPPING#1M"
+    },
+    {
+      "OBSERVACAO": "Registro realizado via formulário próprio, demanda análise da autorização do departamento de Compliance e Controles Internos (Auditoria) onde deve ser mencionado o número da pré-nota a ser classificada e conter a explícita autorização do auditor para a classificação.",
+      "CFOP": "",
+      "PEDIDO_COMPRA": false,
+      "REGRA": "",
+      "CFOP_LIST": [],
+      "OPERACAO": "1N",
+      "CHAVE": "1N",
+      "PK": "CFOP_OPERATION",
+      "ATIVO": false,
+      "DESCRICAO": "E-079-OUTRAS ENTRADAS - SOBRAS DE ESTOQUE",
+      "SK": "MAPPING#1N"
+    },
+    {
+      "OBSERVACAO": "",
+      "CFOP": "",
+      "PEDIDO_COMPRA": false,
+      "REGRA": "",
+      "CFOP_LIST": [],
+      "OPERACAO": "1O",
+      "CHAVE": "1O",
+      "PK": "CFOP_OPERATION",
+      "ATIVO": false,
+      "DESCRICAO": "E-081-ENTRADA DE AMOSTRA GRATIS",
+      "SK": "MAPPING#1O"
+    },
+    {
+      "OBSERVACAO": "",
+      "CFOP": "",
+      "PEDIDO_COMPRA": false,
+      "REGRA": "",
+      "CFOP_LIST": [],
+      "OPERACAO": "1Q",
+      "CHAVE": "1Q",
+      "PK": "CFOP_OPERATION",
+      "ATIVO": false,
+      "DESCRICAO": "E-086-ENTRADA DE BEM P/ CONTA DE CONTRATO COMODATO",
+      "SK": "MAPPING#1Q"
+    },
+    {
+      "OBSERVACAO": "",
+      "CFOP": "",
+      "PEDIDO_COMPRA": true,
+      "REGRA": "",
+      "CFOP_LIST": [],
+      "OPERACAO": "1R",
+      "CHAVE": "1R",
+      "PK": "CFOP_OPERATION",
+      "ATIVO": false,
+      "DESCRICAO": "E-088-COMPRA PARA COMERCIALIZACAO COM SUBST.TRIBUTARIA",
+      "SK": "MAPPING#1R"
+    },
+    {
+      "OBSERVACAO": "",
+      "CFOP": "",
+      "PEDIDO_COMPRA": false,
+      "REGRA": "",
+      "CFOP_LIST": [],
+      "OPERACAO": "1S",
+      "CHAVE": "1S",
+      "PK": "CFOP_OPERATION",
+      "ATIVO": false,
+      "DESCRICAO": "E-089-COMPLEMENTO DE ICMS - ENTRADA",
+      "SK": "MAPPING#1S"
+    },
+    {
+      "ATIVO": true,
+      "CFOP": "5118 5119 6119 6118",
+      "CFOP_LIST": [
+        "5118",
+        "5119",
+        "6119",
+        "6118"
+      ],
+      "CHAVE": "2A",
+      "DESCRICAO": "E-096-COMPRA P/ COMERCIALIZACAO - VENDA ORDEM",
+      "OBSERVACAO": "Não atualiza Estoque",
+      "OPERACAO": "2A",
+      "PEDIDO_COMPRA": true,
+      "PK": "CFOP_OPERATION",
+      "REGRA": "",
+      "SK": "MAPPING#2A"
+    },
+    {
+      "OBSERVACAO": "",
+      "CFOP": "",
+      "PEDIDO_COMPRA": false,
+      "REGRA": "",
+      "CFOP_LIST": [],
+      "OPERACAO": "2K",
+      "CHAVE": "2K",
+      "PK": "CFOP_OPERATION",
+      "ATIVO": false,
+      "DESCRICAO": "E-115-RETORNO DE MERC OU BEM REMETIDO P/ CONSERTO/REPAR",
+      "SK": "MAPPING#2K"
+    },
+    {
+      "OBSERVACAO": "",
+      "CFOP": "",
+      "PEDIDO_COMPRA": false,
+      "REGRA": "",
+      "CFOP_LIST": [],
+      "OPERACAO": "2L",
+      "CHAVE": "2L",
+      "PK": "CFOP_OPERATION",
+      "ATIVO": false,
+      "DESCRICAO": "E-116-ENTRADA DE VASILHAME OU SACARIA",
+      "SK": "MAPPING#2L"
+    },
+    {
+      "OBSERVACAO": "",
+      "CFOP": "",
+      "PEDIDO_COMPRA": false,
+      "REGRA": "",
+      "CFOP_LIST": [],
+      "OPERACAO": "2V",
+      "CHAVE": "2V",
+      "PK": "CFOP_OPERATION",
+      "ATIVO": false,
+      "DESCRICAO": "E-140-RET. DE MERC. REMETIDA P/IND. POR ENCOMENDA",
+      "SK": "MAPPING#2V"
+    },
+    {
+      "OBSERVACAO": "Deve ser utilizada em conjunto com a operação 1A (CFOP 5923/6923) para formalização da operação triangular ou venda à ordem. Aplica-se, por exemplo, a notas de sementes recebidas em venda à ordem.",
+      "CFOP": "5920 6920",
+      "PEDIDO_COMPRA": true,
+      "REGRA": "Utilizar para registro da nota fiscal da transação comercial em operações de venda à ordem, quando a empresa for o destinatário final e não houver trânsito físico da mercadoria. Esta operação movimenta apenas o financeiro.",
+      "CFOP_LIST": [
+        "5920",
+        "6920"
+      ],
+      "OPERACAO": "2X",
+      "CHAVE": "2X",
+      "PK": "CFOP_OPERATION",
+      "ATIVO": true,
+      "DESCRICAO": "E-141-COMPRA P/ COMERC EM VENDA A ORDEM JA RECEBIDA",
+      "SK": "MAPPING#2X"
+    },
+    {
+      "OBSERVACAO": "",
+      "CFOP": "",
+      "PEDIDO_COMPRA": true,
+      "REGRA": "",
+      "CFOP_LIST": [],
+      "OPERACAO": "3H",
+      "CHAVE": "3H",
+      "PK": "CFOP_OPERATION",
+      "ATIVO": false,
+      "DESCRICAO": "E-154-COMPRA DE MAQUINA USADA",
+      "SK": "MAPPING#3H"
+    },
+    {
+      "ATIVO": true,
+      "CFOP": "5105 5106 6106 6105",
+      "CFOP_LIST": [
+        "5105",
+        "5106",
+        "6106",
+        "6105"
+      ],
+      "CHAVE": "3I",
+      "DESCRICAO": "E-156-COMPRA MERC. - SIMPLES NACIONAL/NAO TRANSITAR",
+      "OBSERVACAO": "Utilizar apenas para registro de notas com os CFOPs mencionados que não possuam destaque de ICMS.",
+      "OPERACAO": "3I",
+      "PEDIDO_COMPRA": true,
+      "PK": "CFOP_OPERATION",
+      "REGRA": "Utilizar quando a nota fiscal não possuir destaque de ICMS ou se tratar de fornecedor optante Simples Nacional, é a operação equivalente à compra para comercialização (1B) que não gerar cálculo de imposto.",
+      "SK": "MAPPING#3I"
+    },
+    {
+      "OBSERVACAO": "Atualiza Estoque",
+      "CFOP": "5118 5119",
+      "PEDIDO_COMPRA": true,
+      "REGRA": "",
+      "CFOP_LIST": [
+        "5118",
+        "5119"
+      ],
+      "OPERACAO": "3J",
+      "CHAVE": "3J",
+      "PK": "CFOP_OPERATION",
+      "ATIVO": true,
+      "DESCRICAO": "E-157-COMPRA P/ COMERCIALIZACAO - VENDA ORDEM",
+      "SK": "MAPPING#3J"
+    },
+    {
+      "OBSERVACAO": "",
+      "CFOP": "",
+      "PEDIDO_COMPRA": false,
+      "REGRA": "",
+      "CFOP_LIST": [],
+      "OPERACAO": "3K",
+      "CHAVE": "3K",
+      "PK": "CFOP_OPERATION",
+      "ATIVO": false,
+      "DESCRICAO": "E-160-RETORNO DE ARMAZENAGEM",
+      "SK": "MAPPING#3K"
+    },
+    {
+      "OBSERVACAO": "A remessa (Operação 3R) não movimenta estoque",
+      "CFOP": "5922 6922",
+      "PEDIDO_COMPRA": true,
+      "REGRA": "",
+      "CFOP_LIST": [
+        "5922",
+        "6922"
+      ],
+      "OPERACAO": "3Q",
+      "CHAVE": "3Q",
+      "PK": "CFOP_OPERATION",
+      "ATIVO": true,
+      "DESCRICAO": "E-165-COMPRA SIMBOLICA A ORDEM",
+      "SK": "MAPPING#3Q"
+    },
+    {
+      "OBSERVACAO": "Esta operação não movimenta o estoque da filial, utilizada para remessas de entrega fura já entregue em venda a ordem.",
+      "CFOP": "1117 2117 1116 2116",
+      "PEDIDO_COMPRA": false,
+      "REGRA": "",
+      "CFOP_LIST": [
+        "1117",
+        "2117",
+        "1116",
+        "2116"
+      ],
+      "OPERACAO": "3R",
+      "CHAVE": "3R",
+      "PK": "CFOP_OPERATION",
+      "ATIVO": true,
+      "DESCRICAO": "E-166-REMESSA COMPRA SIMBOLICA A ORDEM",
+      "SK": "MAPPING#3R"
+    },
+    {
+      "OBSERVACAO": "",
+      "CFOP": "",
+      "PEDIDO_COMPRA": false,
+      "REGRA": "",
+      "CFOP_LIST": [],
+      "OPERACAO": "3U",
+      "CHAVE": "3U",
+      "PK": "CFOP_OPERATION",
+      "ATIVO": false,
+      "DESCRICAO": "E-168-RETORNO DE VASILHAME OU SACARIA",
+      "SK": "MAPPING#3U"
+    },
+    {
+      "OBSERVACAO": "Operação para entrada de commodities",
+      "CFOP": "5101",
+      "PEDIDO_COMPRA": true,
+      "REGRA": "Operação para entrada de commodities",
+      "CFOP_LIST": [
+        "5101"
+      ],
+      "OPERACAO": "4G",
+      "CHAVE": "4G",
+      "PK": "CFOP_OPERATION",
+      "ATIVO": true,
+      "DESCRICAO": "E-181-COMPRA COMMODITIES MERCADO INTERNO",
+      "SK": "MAPPING#4G"
+    },
+    {
+      "OBSERVACAO": "Operação para entrada de commodities",
+      "CFOP": "5118",
+      "PEDIDO_COMPRA": true,
+      "REGRA": "Operação para entrada de commodities",
+      "CFOP_LIST": [
+        "5118"
+      ],
+      "OPERACAO": "4S",
+      "CHAVE": "4S",
+      "PK": "CFOP_OPERATION",
+      "ATIVO": true,
+      "DESCRICAO": "E-XXX-ENTRADA COM FIM ESP. EXPORTACAO SIMBOLICA - VENDAE",
+      "SK": "MAPPING#4S"
+    },
+    {
+      "OBSERVACAO": "",
+      "CFOP": "",
+      "PEDIDO_COMPRA": false,
+      "REGRA": "",
+      "CFOP_LIST": [],
+      "OPERACAO": "5G",
+      "CHAVE": "5G",
+      "PK": "CFOP_OPERATION",
+      "ATIVO": false,
+      "DESCRICAO": "E-XXX-ENTRADA COMPL COMPRA PARA COMERCIALIZACAO - VARIA",
+      "SK": "MAPPING#5G"
+    },
+    {
+      "OBSERVACAO": "",
+      "CFOP": "",
+      "PEDIDO_COMPRA": false,
+      "REGRA": "",
+      "CFOP_LIST": [],
+      "OPERACAO": "6X",
+      "CHAVE": "6X",
+      "PK": "CFOP_OPERATION",
+      "ATIVO": false,
+      "DESCRICAO": "E-06X-NOTA FISCAL COMPLEMENTO (PRECO) S/ESTOQUE",
+      "SK": "MAPPING#6X"
+    },
+    {
+      "OBSERVACAO": "",
+      "CFOP": "5949 6949",
+      "PEDIDO_COMPRA": false,
+      "REGRA": "",
+      "CFOP_LIST": [
+        "5949",
+        "6949"
+      ],
+      "OPERACAO": "95",
+      "CHAVE": "95",
+      "PK": "CFOP_OPERATION",
+      "ATIVO": true,
+      "DESCRICAO": "E-016-OUTRAS ENTRADAS",
+      "SK": "MAPPING#95"
+    },
+    {
+      "OBSERVACAO": "Esta operação movimenta o estoque da filial",
+      "CFOP": "1117 2117 1116 2116",
+      "PEDIDO_COMPRA": false,
+      "REGRA": "",
+      "CFOP_LIST": [
+        "1117",
+        "2117",
+        "1116",
+        "2116"
+      ],
+      "OPERACAO": "96",
+      "CHAVE": "96",
+      "PK": "CFOP_OPERATION",
+      "ATIVO": true,
+      "DESCRICAO": "E-018-REMESSA PARA ENTREGA FUTURA",
+      "SK": "MAPPING#96"
+    },
+    {
+      "OBSERVACAO": "Registro realizado via formulário próprio, demanda análise da 'Natureza da Operação' da NF de Origem.",
+      "CFOP": "",
+      "PEDIDO_COMPRA": false,
+      "REGRA": "",
+      "CFOP_LIST": [],
+      "OPERACAO": "98",
+      "CHAVE": "98",
+      "PK": "CFOP_OPERATION",
+      "ATIVO": false,
+      "DESCRICAO": "E-024-RETORNO DE EXPOSICAO",
+      "SK": "MAPPING#98"
+    }
+  ]
+}

@@ -18,7 +18,7 @@ import sys
 from boto3.dynamodb.conditions import Key
 from botocore.exceptions import ClientError
 
-def check_table_exists(table_name, dynamodb, region_name):
+def check_table_exists(table_name, dynamodb):
     """Verifica se a tabela existe"""
     try:
         table = dynamodb.Table(table_name)
@@ -29,30 +29,46 @@ def check_table_exists(table_name, dynamodb, region_name):
             return False
         raise
 
-def copy_rules(source_table_name, target_table_name, region_name, dry_run, process_type=None):
+def copy_rules(
+    source_table_name,
+    target_table_name,
+    source_region_name,
+    target_region_name,
+    dry_run,
+    process_type=None,
+    source_profile=None,
+    target_profile=None
+):
     """
     Copia regras de validação de uma tabela DynamoDB para outra.
     
     Args:
         source_table_name: Nome da tabela de origem
         target_table_name: Nome da tabela de destino
-        region_name: Região AWS
+        source_region_name: Região AWS da tabela de origem
+        target_region_name: Região AWS da tabela de destino
         dry_run: Se True, apenas mostra o que seria copiado sem fazer a cópia
         process_type: Se fornecido, copia apenas regras deste tipo (ex: AGROQUIMICOS)
+        source_profile: Profile AWS para acessar a tabela de origem
+        target_profile: Profile AWS para acessar a tabela de destino
     """
-    dynamodb = boto3.resource('dynamodb', region_name=region_name)
-    
-    source_table = dynamodb.Table(source_table_name)
-    target_table = dynamodb.Table(target_table_name)
+    source_session = boto3.Session(profile_name=source_profile) if source_profile else boto3.Session()
+    target_session = boto3.Session(profile_name=target_profile) if target_profile else boto3.Session()
+
+    source_dynamodb = source_session.resource('dynamodb', region_name=source_region_name)
+    target_dynamodb = target_session.resource('dynamodb', region_name=target_region_name)
+
+    source_table = source_dynamodb.Table(source_table_name)
+    target_table = target_dynamodb.Table(target_table_name)
     
     # Verificar se as tabelas existem
-    print(f"Verificando tabela de origem '{source_table_name}'...")
-    if not check_table_exists(source_table_name, dynamodb, region_name):
+    print(f"Verificando tabela de origem '{source_table_name}' (região: {source_region_name}, profile: {source_profile or 'default'})...")
+    if not check_table_exists(source_table_name, source_dynamodb):
         print(f"❌ Erro: Tabela de origem '{source_table_name}' não encontrada!")
         sys.exit(1)
     
-    print(f"Verificando tabela de destino '{target_table_name}'...")
-    if not check_table_exists(target_table_name, dynamodb, region_name):
+    print(f"Verificando tabela de destino '{target_table_name}' (região: {target_region_name}, profile: {target_profile or 'default'})...")
+    if not check_table_exists(target_table_name, target_dynamodb):
         print(f"❌ Erro: Tabela de destino '{target_table_name}' não encontrada!")
         sys.exit(1)
     
@@ -112,7 +128,8 @@ def copy_rules(source_table_name, target_table_name, region_name, dry_run, proce
     # Confirmação do usuário
     print(f"\n⚠️  ATENÇÃO: Você está prestes a copiar {len(all_items)} regra(s) de")
     print(f"   '{source_table_name}' para '{target_table_name}'")
-    print(f"   Região: {region_name}")
+    print(f"   Origem  → região: {source_region_name}, profile: {source_profile or 'default'}")
+    print(f"   Destino → região: {target_region_name}, profile: {target_profile or 'default'}")
     response = input("\nDeseja continuar? (sim/não): ").strip().lower()
     
     if response not in ['sim', 's', 'yes', 'y']:
@@ -164,10 +181,13 @@ Exemplos:
   python copy_rules.py --source-table source-table --target-table target-table --dry-run
   
   # Copiar todas as regras
-  python copy_rules.py --source-table source-table --target-table target-table --region us-east-1
+  python copy_rules.py --source-table source-table --target-table target-table --source-region us-east-1 --target-region us-east-1
   
   # Copiar apenas regras de um tipo específico
   python copy_rules.py --source-table source-table --target-table target-table --process-type AGROQUIMICOS
+
+  # Copiar entre contas diferentes usando profiles AWS distintos
+  python copy_rules.py --source-table source-table --target-table target-table --source-profile conta-origem --target-profile conta-destino
         """
     )
     
@@ -184,9 +204,15 @@ Exemplos:
     )
     
     parser.add_argument(
-        '--region',
+        '--source-region',
         default='us-east-1',
-        help='Região AWS (padrão: us-east-1)'
+        help='Região AWS da tabela de origem (padrão: us-east-1)'
+    )
+
+    parser.add_argument(
+        '--target-region',
+        default='us-east-1',
+        help='Região AWS da tabela de destino (padrão: us-east-1)'
     )
     
     parser.add_argument(
@@ -200,6 +226,16 @@ Exemplos:
         choices=['AGROQUIMICOS', 'BARTER'],
         help='Copiar apenas regras de um tipo específico (opcional)'
     )
+
+    parser.add_argument(
+        '--source-profile',
+        help='AWS profile para acessar a conta/tabela de origem (opcional)'
+    )
+
+    parser.add_argument(
+        '--target-profile',
+        help='AWS profile para acessar a conta/tabela de destino (opcional)'
+    )
     
     args = parser.parse_args()
     
@@ -207,9 +243,12 @@ Exemplos:
         copy_rules(
             args.source_table,
             args.target_table,
-            args.region,
+            args.source_region,
+            args.target_region,
             args.dry_run,
-            args.process_type
+            args.process_type,
+            args.source_profile,
+            args.target_profile
         )
     except KeyboardInterrupt:
         print("\n\nOperação cancelada pelo usuário.")
