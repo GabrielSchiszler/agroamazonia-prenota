@@ -74,6 +74,19 @@ export class FrontendStack extends cdk.Stack {
     // API Key (pode vir de variável de ambiente ou ser definida)
     const apiKey = props.apiKey || process.env.API_KEY || 'agroamazonia_key_UPXsb8Hb8sjbxWBQqouzYnTL5w-V_dJx';
 
+    // OAuth2 Frontend Config (lê de variáveis de ambiente)
+    const oauth2TokenUrl = process.env.OAUTH2_FRONTEND_TOKEN_URL || 'https://api-auth-hml.agroamazonia.io/oauth2/token';
+    const oauth2ClientId = process.env.OAUTH2_FRONTEND_CLIENT_ID || '';
+    const oauth2ClientSecret = process.env.OAUTH2_FRONTEND_CLIENT_SECRET || '';
+    const oauth2Scope = process.env.OAUTH2_FRONTEND_SCOPE || 'App_Fast/HML';
+    
+    // Log das configurações OAuth2 (sem expor o secret)
+    console.log(`[FrontendStack] OAuth2 Config:`);
+    console.log(`  Token URL: ${oauth2TokenUrl}`);
+    console.log(`  Client ID: ${oauth2ClientId ? `${oauth2ClientId.substring(0, 10)}...` : '(não definido)'}`);
+    console.log(`  Client Secret: ${oauth2ClientSecret ? '***' : '(não definido)'}`);
+    console.log(`  Scope: ${oauth2Scope}`);
+
     // S3 Bucket para frontend (website estático)
     // Nota: bucket names devem ser únicos globalmente, então incluímos account
     // IMPORTANTE: Não usar website hosting quando usar OAI com CloudFront
@@ -360,7 +373,7 @@ function handler(event) {
       comment: `AgroAmazonia Frontend Distribution - ${this.envName}`
     });
 
-    // Criar arquivo config.js dinâmico com a URL da API e API Key
+    // Criar arquivo config.js dinâmico com a URL da API, API Key e OAuth2 Config
     // Este arquivo será gerado durante o deploy e sobrescreverá o config.js estático
     // A URL será normalizada no JavaScript do frontend (removendo barra final)
     const configContent = cdk.Fn.sub(
@@ -369,7 +382,11 @@ function handler(event) {
 // A URL será normalizada no app.js para remover barra final
 window.ENV = {
     API_URL: '\${ApiUrl}',
-    API_KEY: '${apiKey}'
+    API_KEY: '${apiKey}',
+    OAUTH2_FRONTEND_TOKEN_URL: '${oauth2TokenUrl}',
+    OAUTH2_FRONTEND_CLIENT_ID: '${oauth2ClientId}',
+    OAUTH2_FRONTEND_CLIENT_SECRET: '${oauth2ClientSecret}',
+    OAUTH2_FRONTEND_SCOPE: '${oauth2Scope}'
 };`,
       {
         ApiUrl: apiUrl

@@ -134,6 +134,8 @@ O deploy do frontend automaticamente:
 
 ## Variáveis de Ambiente Necessárias
 
+### Backend
+
 Para o backend funcionar corretamente, algumas variáveis podem ser necessárias:
 
 ```bash
@@ -148,6 +150,24 @@ export OCR_FAILURE_PASSWORD='sua_password'
 # ServiceNow Feedback API (para feedback de sucesso/falha do processo)
 export SERVICENOW_FEEDBACK_API_URL='https://agroamazoniad.service-now.com/api/x_aapas_fast_ocr/ocr/feedback'
 ```
+
+### Frontend
+
+Para o frontend funcionar corretamente com autenticação OAuth2:
+
+```bash
+# OAuth2 Frontend (obrigatório para autenticação)
+export OAUTH2_FRONTEND_TOKEN_URL='https://api-auth-hml.agroamazonia.io/oauth2/token'
+export OAUTH2_FRONTEND_CLIENT_ID='seu-client-id'
+export OAUTH2_FRONTEND_CLIENT_SECRET='seu-client-secret'
+export OAUTH2_FRONTEND_SCOPE='App_Fast/HML'
+
+# API URL e Key (opcional, tem valores padrão)
+export API_URL='https://api-hml.agroamazonia.io'
+export API_KEY='dev'
+```
+
+**Nota**: As variáveis OAuth2 são incluídas automaticamente no `config.js` gerado durante o deploy do frontend.
 
 Ou via CDK context:
 

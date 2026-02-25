@@ -13,19 +13,45 @@ let dailyProcessesChart, successErrorRateChart, hourlyChart, errorChart, typeCha
 
 // Removido: PROCESS_RULES hardcoded - agora busca do backend
 
-document.addEventListener('DOMContentLoaded', function() {
-    // Limpar localStorage e usar .env
-    localStorage.removeItem('apiUrl');
-    localStorage.removeItem('apiKey');
+document.addEventListener('DOMContentLoaded', async function() {
+    console.log('[App] DOMContentLoaded - Iniciando...');
+    console.log('[App] window.ENV disponível:', !!window.ENV);
+    if (window.ENV) {
+        console.log('[App] window.ENV keys:', Object.keys(window.ENV));
+    }
+    
+    // Obter token OAuth2 ANTES de fazer qualquer requisição
+    console.log('[App] Obtendo token OAuth2...');
+    const tokenResult = await getOAuth2Token();
+    if (tokenResult.success) {
+        console.log('[App] ✅ Token OAuth2 obtido com sucesso', { 
+            cached: tokenResult.cached,
+            tokenLength: tokenResult.token?.length || 0
+        });
+        // Verificar se o token está disponível para uso
+        const headers = getAuthHeaders();
+        if (headers.Authorization) {
+            console.log('[App] ✅ Token disponível para requisições:', headers.Authorization.substring(0, 30) + '...');
+        } else {
+            console.warn('[App] ⚠️ Token obtido mas não disponível em getAuthHeaders()');
+        }
+    } else {
+        console.error('[App] ❌ Erro ao obter token OAuth2:', tokenResult.error);
+        if (typeof showToast === 'function') {
+            showToast('⚠️ Erro ao autenticar. Algumas funcionalidades podem não funcionar.', 'error');
+        }
+    }
+
     // Normalizar URL ao carregar (remove barra final se existir)
     API_URL = normalizeApiUrl(window.ENV?.API_URL || API_URL);
-    API_KEY = window.ENV?.API_KEY || API_KEY;
     
-    document.getElementById('apiUrl').value = API_URL;
-    document.getElementById('apiKey').value = API_KEY;
+    if (document.getElementById('apiUrl')) {
+        document.getElementById('apiUrl').value = API_URL;
+    }
+
     // Carregar regras disponíveis do backend primeiro
     loadAvailableRules().then(() => {
-    showRules('AGROQUIMICOS');
+        showRules('AGROQUIMICOS');
     });
     loadProcesses();
     loadDashboardMetrics();
@@ -50,7 +76,20 @@ function showPage(pageName) {
 let currentStartDate = null;
 let currentEndDate = null;
 
+// Helper: verifica se estamos na página do dashboard
+function isDashboardPage() {
+    // Verificar se estamos em index.html ou se o elemento principal do dashboard existe
+    return window.location.pathname.endsWith('index.html') || 
+           window.location.pathname.endsWith('/') ||
+           document.getElementById('totalToday') !== null;
+}
+
 async function loadDashboardMetrics() {
+    // Verificar se estamos na página do dashboard antes de fazer requisição
+    if (!isDashboardPage()) {
+        return; // Não fazer nada se não estiver na página do dashboard
+    }
+    
     try {
         let url = `${API_URL}/dashboard/metrics`;
         if (currentStartDate && currentEndDate) {
@@ -60,54 +99,97 @@ async function loadDashboardMetrics() {
         const response = await fetch(url, {
             headers: getAuthHeaders()
         });
-        if (!response.ok) return;
+        if (!response.ok) {
+            console.warn(`[Dashboard] Resposta não OK: ${response.status}`);
+            return;
+        }
 
         const data = await response.json();
-        updateMetricCards(data);
-        createDailyProcessesChart(data);
-        createSuccessErrorRateChart(data);
-        createHourlyChart(data);
-        createErrorChart(data);
-        createTypeChart(data);
-        createFailedRulesChart(data);
-        createFailedRulesByDayChart(data);
+        
+        // Verificar novamente se os elementos existem antes de atualizar
+        if (isDashboardPage()) {
+            updateMetricCards(data);
+            createDailyProcessesChart(data);
+            createSuccessErrorRateChart(data);
+            createHourlyChart(data);
+            createErrorChart(data);
+            createTypeChart(data);
+            createFailedRulesChart(data);
+            createFailedRulesByDayChart(data);
+        }
         
     } catch (error) {
+        // Só mostrar erro se realmente for um erro de rede/API, não erro de elemento não encontrado
+        if (error.name === 'TypeError' && error.message.includes('null')) {
+            // Erro de elemento não encontrado - não mostrar toast, apenas log
+            console.warn('[Dashboard] Elementos do dashboard não encontrados. Pode estar em outra página.');
+            return;
+        }
         console.error('Erro ao carregar métricas:', error);
-        showToast('❌ Erro ao carregar métricas', 'error');
+        // Só mostrar toast se estiver na página do dashboard
+        if (isDashboardPage() && typeof showToast === 'function') {
+            showToast('❌ Erro ao carregar métricas', 'error');
+        }
     }
 }
 
 function applyDateFilter() {
-    const startDate = document.getElementById('startDateFilter').value;
-    const endDate = document.getElementById('endDateFilter').value;
+    // Verificar se estamos na página do dashboard
+    if (!isDashboardPage()) return;
+    
+    const startDateEl = document.getElementById('startDateFilter');
+    const endDateEl = document.getElementById('endDateFilter');
+    
+    if (!startDateEl || !endDateEl) return; // Elementos não existem
+    
+    const startDate = startDateEl.value;
+    const endDate = endDateEl.value;
     
     if (!startDate || !endDate) {
-        showToast('⚠️ Selecione data inicial e final', 'error');
+        if (typeof showToast === 'function') {
+            showToast('⚠️ Selecione data inicial e final', 'error');
+        }
         return;
     }
     
     if (new Date(startDate) > new Date(endDate)) {
-        showToast('⚠️ Data inicial deve ser anterior à data final', 'error');
+        if (typeof showToast === 'function') {
+            showToast('⚠️ Data inicial deve ser anterior à data final', 'error');
+        }
         return;
     }
     
     currentStartDate = startDate;
     currentEndDate = endDate;
     loadDashboardMetrics();
-    showToast('✓ Filtro aplicado', 'success');
+    if (typeof showToast === 'function') {
+        showToast('✓ Filtro aplicado', 'success');
+    }
 }
 
 function resetDateFilter() {
+    // Verificar se estamos na página do dashboard
+    if (!isDashboardPage()) return;
+    
     currentStartDate = null;
     currentEndDate = null;
-    document.getElementById('startDateFilter').value = '';
-    document.getElementById('endDateFilter').value = '';
+    
+    const startDateEl = document.getElementById('startDateFilter');
+    const endDateEl = document.getElementById('endDateFilter');
+    
+    if (startDateEl) startDateEl.value = '';
+    if (endDateEl) endDateEl.value = '';
+    
     loadDashboardMetrics();
-    showToast('✓ Filtro resetado', 'success');
+    if (typeof showToast === 'function') {
+        showToast('✓ Filtro resetado', 'success');
+    }
 }
 
 function setFilterPeriod(period) {
+    // Verificar se estamos na página do dashboard
+    if (!isDashboardPage()) return;
+    
     const today = new Date();
     let startDate, endDate;
     
@@ -130,8 +212,12 @@ function setFilterPeriod(period) {
             break;
     }
     
-    document.getElementById('startDateFilter').value = startDate;
-    document.getElementById('endDateFilter').value = endDate;
+    const startDateEl = document.getElementById('startDateFilter');
+    const endDateEl = document.getElementById('endDateFilter');
+    
+    if (startDateEl) startDateEl.value = startDate;
+    if (endDateEl) endDateEl.value = endDate;
+    
     applyDateFilter();
 }
 
@@ -141,6 +227,21 @@ function refreshDashboard() {
 }
 
 function updateMetricCards(data) {
+    // Verificar se os elementos existem antes de tentar atualizar
+    const totalTodayEl = document.getElementById('totalToday');
+    const successTodayEl = document.getElementById('successToday');
+    const failedTodayEl = document.getElementById('failedToday');
+    const successRateEl = document.getElementById('successRate');
+    const avgTimeEl = document.getElementById('avgTime');
+    const totalLabelEl = document.getElementById('totalLabel');
+    const successLabelEl = document.getElementById('successLabel');
+    const failedLabelEl = document.getElementById('failedLabel');
+    
+    // Se nenhum elemento existir, não fazer nada (não estamos na página do dashboard)
+    if (!totalTodayEl && !successTodayEl && !failedTodayEl) {
+        return;
+    }
+    
     // Suportar tanto formato antigo (today) quanto novo (period)
     const summary = data.summary || {};
     const todayData = data.today || {};
@@ -175,26 +276,28 @@ function updateMetricCards(data) {
         periodLabel = 'Hoje';
     }
     
-    // Atualizar valores
-    document.getElementById('totalToday').textContent = total;
-    document.getElementById('successToday').textContent = success;
-    document.getElementById('failedToday').textContent = failed;
-    document.getElementById('successRate').textContent = successRate.toFixed(1) + '%';
+    // Atualizar valores apenas se os elementos existirem
+    if (totalTodayEl) totalTodayEl.textContent = total;
+    if (successTodayEl) successTodayEl.textContent = success;
+    if (failedTodayEl) failedTodayEl.textContent = failed;
+    if (successRateEl) successRateEl.textContent = successRate.toFixed(1) + '%';
     
-    document.getElementById('totalLabel').textContent = `Processos ${periodLabel}`;
-    document.getElementById('successLabel').textContent = `Sucessos ${periodLabel}`;
-    document.getElementById('failedLabel').textContent = `Falhas ${periodLabel}`;
+    if (totalLabelEl) totalLabelEl.textContent = `Processos ${periodLabel}`;
+    if (successLabelEl) successLabelEl.textContent = `Sucessos ${periodLabel}`;
+    if (failedLabelEl) failedLabelEl.textContent = `Falhas ${periodLabel}`;
     
     // Formatar tempo médio de processamento
-    let timeDisplay;
-    if (avgTime >= 60) {
-        const minutes = Math.floor(avgTime / 60);
-        const seconds = Math.round(avgTime % 60);
-        timeDisplay = `${minutes}m ${seconds}s`;
-    } else {
-        timeDisplay = `${Math.round(avgTime)}s`;
+    if (avgTimeEl) {
+        let timeDisplay;
+        if (avgTime >= 60) {
+            const minutes = Math.floor(avgTime / 60);
+            const seconds = Math.round(avgTime % 60);
+            timeDisplay = `${minutes}m ${seconds}s`;
+        } else {
+            timeDisplay = `${Math.round(avgTime)}s`;
+        }
+        avgTimeEl.textContent = timeDisplay;
     }
-    document.getElementById('avgTime').textContent = timeDisplay;
 }
 
 // Helper: converte string de data YYYY-MM-DD para Date local (sem problema de timezone)
@@ -208,7 +311,10 @@ function parseDateLocal(dateStr) {
 }
 
 function createDailyProcessesChart(data) {
-    const ctx = document.getElementById('dailyProcessesChart').getContext('2d');
+    const chartEl = document.getElementById('dailyProcessesChart');
+    if (!chartEl) return; // Elemento não existe, não criar gráfico
+    
+    const ctx = chartEl.getContext('2d');
     const periodData = data.period || data.last_7_days || [];
     
     if (dailyProcessesChart) dailyProcessesChart.destroy();
@@ -299,7 +405,10 @@ function createDailyProcessesChart(data) {
 }
 
 function createSuccessErrorRateChart(data) {
-    const ctx = document.getElementById('successErrorRateChart').getContext('2d');
+    const chartEl = document.getElementById('successErrorRateChart');
+    if (!chartEl) return; // Elemento não existe, não criar gráfico
+    
+    const ctx = chartEl.getContext('2d');
     
     // Determinar se há filtro de período ativo
     const hasPeriodFilter = currentStartDate && currentEndDate;
@@ -369,7 +478,9 @@ function createSuccessErrorRateChart(data) {
 }
 
 function createHourlyChart(data) {
-    const ctx = document.getElementById('hourlyChart').getContext('2d');
+    const chartEl = document.getElementById('hourlyChart');
+    if (!chartEl) return; // Elemento não existe, não criar gráfico
+    const ctx = chartEl.getContext('2d');
     const hourly = data.today?.processes_by_hour || {};
     
     if (hourlyChart) hourlyChart.destroy();
@@ -400,7 +511,9 @@ function createHourlyChart(data) {
 }
 
 function createErrorChart(data) {
-    const ctx = document.getElementById('errorChart').getContext('2d');
+    const chartEl = document.getElementById('errorChart');
+    if (!chartEl) return; // Elemento não existe, não criar gráfico
+    const ctx = chartEl.getContext('2d');
     const errors = data.today?.failure_reasons || {};
     
     if (errorChart) errorChart.destroy();
@@ -493,7 +606,9 @@ function createErrorChart(data) {
 }
 
 function createTypeChart(data) {
-    const ctx = document.getElementById('typeChart').getContext('2d');
+    const chartEl = document.getElementById('typeChart');
+    if (!chartEl) return; // Elemento não existe, não criar gráfico
+    const ctx = chartEl.getContext('2d');
     
     // Determinar se há filtro de período ativo
     const hasPeriodFilter = currentStartDate && currentEndDate;
@@ -565,7 +680,9 @@ function createTypeChart(data) {
 }
 
 function createFailedRulesChart(data) {
-    const ctx = document.getElementById('failedRulesChart').getContext('2d');
+    const chartEl = document.getElementById('failedRulesChart');
+    if (!chartEl) return; // Elemento não existe, não criar gráfico
+    const ctx = chartEl.getContext('2d');
     
     // Determinar se há filtro de período ativo
     const hasPeriodFilter = currentStartDate && currentEndDate;
@@ -665,7 +782,9 @@ function createFailedRulesChart(data) {
 }
 
 function createFailedRulesByDayChart(data) {
-    const ctx = document.getElementById('failedRulesByDayChart').getContext('2d');
+    const chartEl = document.getElementById('failedRulesByDayChart');
+    if (!chartEl) return; // Elemento não existe, não criar gráfico
+    const ctx = chartEl.getContext('2d');
     const periodData = data.period || data.last_7_days || [];
     
     if (failedRulesByDayChart) failedRulesByDayChart.destroy();
@@ -781,7 +900,9 @@ function createFailedRulesByDayChart(data) {
 }
 
 function createFailedRulesByDayChart(data) {
-    const ctx = document.getElementById('failedRulesByDayChart').getContext('2d');
+    const chartEl = document.getElementById('failedRulesByDayChart');
+    if (!chartEl) return; // Elemento não existe, não criar gráfico
+    const ctx = chartEl.getContext('2d');
     const periodData = data.period || data.last_7_days || [];
     
     if (failedRulesByDayChart) failedRulesByDayChart.destroy();
@@ -934,9 +1055,6 @@ function createNewProcess() {
     
     showToast(`✓ Novo processo preparado. Faça upload dos arquivos para criar.`, 'info');
 }
-
-
-
 
 async function loadProcesses(silent = false) {
     try {
