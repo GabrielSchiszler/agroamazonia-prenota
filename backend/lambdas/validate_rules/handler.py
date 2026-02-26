@@ -8,8 +8,19 @@ from decimal import Decimal
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
+# Usar região da variável de ambiente para serviços locais (DynamoDB)
+aws_region = os.environ.get('AWS_REGION') or os.environ.get('AWS_DEFAULT_REGION')
+if not aws_region:
+    # Fallback apenas para desenvolvimento local
+    try:
+        session = boto3.Session()
+        aws_region = session.region_name or 'sa-east-1'
+    except:
+        aws_region = 'sa-east-1'
+
+# Bedrock Nova Pro está disponível apenas em us-east-1 por enquanto
 bedrock = boto3.client('bedrock-runtime', region_name='us-east-1')
-dynamodb = boto3.resource('dynamodb')
+dynamodb = boto3.resource('dynamodb', region_name=aws_region)
 table = dynamodb.Table(os.environ['TABLE_NAME'])
 
 def decimal_to_native(obj):

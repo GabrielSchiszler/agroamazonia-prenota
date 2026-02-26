@@ -6,11 +6,34 @@ import base64
 import random
 import html
 from datetime import datetime
+import sys
 
-dynamodb = boto3.resource('dynamodb')
+# Adicionar o diretório utils ao path para importar a função
+# No ambiente Lambda, o diretório utils será copiado para o mesmo nível do handler
+sys.path.insert(0, os.path.dirname(__file__))
+try:
+    from utils.bedrock_error_summary import generate_error_summary_with_bedrock
+except ImportError:
+    # Fallback: tentar importar do diretório pai
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+    from utils.bedrock_error_summary import generate_error_summary_with_bedrock
+
+# Usar região da variável de ambiente para serviços locais (DynamoDB, Secrets Manager)
+aws_region = os.environ.get('AWS_REGION') or os.environ.get('AWS_DEFAULT_REGION')
+if not aws_region:
+    # Fallback apenas para desenvolvimento local
+    import boto3
+    try:
+        session = boto3.Session()
+        aws_region = session.region_name or 'sa-east-1'
+    except:
+        aws_region = 'sa-east-1'
+
+dynamodb = boto3.resource('dynamodb', region_name=aws_region)
 table = dynamodb.Table(os.environ['TABLE_NAME'])
+# Bedrock Nova Pro está disponível apenas em us-east-1 por enquanto
 bedrock = boto3.client('bedrock-runtime', region_name='us-east-1')
-secrets_manager = boto3.client('secretsmanager')
+secrets_manager = boto3.client('secretsmanager', region_name=aws_region)
 
 def _env(name: str, default: str | None = None) -> str:
     """Helper para obter variáveis de ambiente com valor padrão opcional"""
@@ -202,11 +225,36 @@ def report_protheus_failure_to_sctask(process_id, error_details):
         # detalhes: HTML simples
         detalhes_texto = "".join(html_parts)
         
+        # Gerar response_summary usando Bedrock
+        response_summary = None
+        try:
+            # Preparar dados completos do erro para o Bedrock
+            error_data_for_bedrock = {
+                "process_id": process_id,
+                "error_details": error_details,
+                "error_type": error_type,
+                "status_code": status_code,
+                "error_code": error_code,
+                "error_message": error_msg,
+                "protheus_cause": protheus_cause,
+                "timeout_seconds": timeout_seconds
+            }
+            response_summary = generate_error_summary_with_bedrock(error_data_for_bedrock)
+            if response_summary:
+                print(f"[SCTASK] response_summary gerado com sucesso ({len(response_summary)} caracteres)")
+            else:
+                print(f"[SCTASK] WARNING: Não foi possível gerar response_summary")
+        except Exception as e:
+            print(f"[SCTASK] WARNING: Erro ao gerar response_summary: {str(e)}")
+            import traceback
+            traceback.print_exc()
+        
         payload = {
             "idUnico": id_unico,
             "descricaoFalha": descricao_falha,
             "traceAWS": process_id,
-            "detalhes": detalhes_texto  # Texto único, não array
+            "detalhes": detalhes_texto,  # Texto único, não array
+            "response_summary": response_summary  # Mensagem amigável gerada pelo Bedrock
         }
         
         # Obter token OAuth2
@@ -621,8 +669,10 @@ Retorne APENAS o JSON.
         }
         
         print(f"[EXTRACT_LOTES] Chamando Bedrock Nova Pro...")
+        # Obter modelo ID da variável de ambiente
+        model_id = os.environ.get('BEDROCK_MODEL_ID', 'amazon.nova-pro-v1:0')
         response = bedrock.invoke_model(
-            modelId='us.amazon.nova-pro-v1:0',
+            modelId=model_id,
             body=json.dumps(request_body)
         )
         

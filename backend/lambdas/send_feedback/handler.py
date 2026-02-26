@@ -4,6 +4,17 @@ import boto3
 import requests
 import base64
 from datetime import datetime
+import sys
+
+# Adicionar o diretório utils ao path para importar a função
+# No ambiente Lambda, o diretório utils será copiado para o mesmo nível do handler
+sys.path.insert(0, os.path.dirname(__file__))
+try:
+    from utils.bedrock_error_summary import generate_error_summary_with_bedrock
+except ImportError:
+    # Fallback: tentar importar do diretório pai
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+    from utils.bedrock_error_summary import generate_error_summary_with_bedrock
 
 dynamodb = boto3.resource('dynamodb')
 table = dynamodb.Table(os.environ['TABLE_NAME'])
@@ -434,9 +445,30 @@ def lambda_handler(event, context):
                     if key not in organized_details:
                         organized_details[key] = value
         
+        # Gerar response_summary usando Bedrock apenas quando for falha
+        response_summary = None
+        if not success:
+            try:
+                # Preparar dados completos do erro para o Bedrock
+                error_data_for_bedrock = {
+                    "process_id": process_id,
+                    "success": success,
+                    "details": organized_details
+                }
+                response_summary = generate_error_summary_with_bedrock(error_data_for_bedrock)
+                if response_summary:
+                    print(f"[FEEDBACK] response_summary gerado com sucesso ({len(response_summary)} caracteres)")
+                else:
+                    print(f"[FEEDBACK] WARNING: Não foi possível gerar response_summary")
+            except Exception as e:
+                print(f"[FEEDBACK] WARNING: Erro ao gerar response_summary: {str(e)}")
+                import traceback
+                traceback.print_exc()
+        
         payload = {
             "success": success,
-            "details": organized_details
+            "details": organized_details,
+            "response_summary": response_summary if not success else None  # Adicionar campo apenas em falhas
         }
         
         headers = {

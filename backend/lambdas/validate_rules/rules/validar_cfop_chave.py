@@ -19,10 +19,46 @@ def get_all_cfop_mappings_direct(table, cfop):
         pk = "CFOP_OPERATION"
         sk = f"CFOP#{cfop}"
         
-        response = table.get_item(Key={'PK': pk, 'SK': sk})
+        logger.info(f"[validar_cfop_chave] Buscando CFOP no DynamoDB - PK: {pk}, SK: {sk}, Tabela: {table.table_name}")
+        
+        try:
+            response = table.get_item(Key={'PK': pk, 'SK': sk})
+        except Exception as get_item_err:
+            logger.error(f"[validar_cfop_chave] Erro ao fazer get_item: {str(get_item_err)}")
+            logger.error(f"[validar_cfop_chave] Tipo do erro: {type(get_item_err).__name__}")
+            # Se for ResourceNotFoundException, pode ser que a tabela não exista ou o item não exista
+            if 'ResourceNotFoundException' in str(type(get_item_err).__name__) or 'ResourceNotFoundException' in str(get_item_err):
+                logger.error(f"[validar_cfop_chave] Tabela ou item não encontrado. Verificando se a tabela existe...")
+                # Tentar fazer uma query para verificar se a tabela existe
+                try:
+                    test_query = table.query(
+                        KeyConditionExpression='PK = :pk',
+                        ExpressionAttributeValues={':pk': pk},
+                        Limit=1
+                    )
+                    logger.info(f"[validar_cfop_chave] Query de teste retornou {len(test_query.get('Items', []))} item(ns)")
+                except Exception as query_err:
+                    logger.error(f"[validar_cfop_chave] Erro ao fazer query de teste: {str(query_err)}")
+            raise
+        
+        logger.info(f"[validar_cfop_chave] Resposta do DynamoDB - Item encontrado: {'Item' in response}")
         
         if 'Item' not in response:
-            logger.info(f"[validar_cfop_chave] CFOP {cfop} não encontrado no DynamoDB")
+            logger.info(f"[validar_cfop_chave] CFOP {cfop} não encontrado no DynamoDB (PK: {pk}, SK: {sk})")
+            # Tentar buscar com query para verificar se existe algum registro similar
+            try:
+                query_response = table.query(
+                    KeyConditionExpression='PK = :pk AND begins_with(SK, :sk_prefix)',
+                    ExpressionAttributeValues={
+                        ':pk': pk,
+                        ':sk_prefix': f'CFOP#{cfop}'
+                    }
+                )
+                logger.info(f"[validar_cfop_chave] Query alternativa encontrou {len(query_response.get('Items', []))} item(ns)")
+                if query_response.get('Items'):
+                    logger.info(f"[validar_cfop_chave] Itens encontrados na query: {[item.get('SK') for item in query_response.get('Items', [])]}")
+            except Exception as query_err:
+                logger.warning(f"[validar_cfop_chave] Erro ao fazer query alternativa: {str(query_err)}")
             return []
         
         cfop_item = response['Item']
@@ -99,8 +135,24 @@ def validate(danfe_data, ocr_docs):
     logger.info(f"[validar_cfop_chave.py] Starting validation with {len(ocr_docs)} docs")
     
     # Usar boto3 diretamente para acessar DynamoDB
-    dynamodb = boto3.resource('dynamodb', region_name='us-east-1')
-    table = dynamodb.Table(os.environ.get('TABLE_NAME', 'DocumentProcessorTable'))
+    # Usar região da variável de ambiente (AWS_REGION é sempre definida nas Lambdas)
+    aws_region = os.environ.get('AWS_REGION') or os.environ.get('AWS_DEFAULT_REGION')
+    if not aws_region:
+        # Fallback apenas para desenvolvimento local (não deve acontecer em Lambda)
+        try:
+            # Tentar obter região do contexto AWS
+            session = boto3.Session()
+            aws_region = session.region_name
+            if not aws_region:
+                logger.warning("[validar_cfop_chave] AWS_REGION não definida, usando fallback")
+                aws_region = 'us-east-1'  # Fallback apenas para dev local
+        except:
+            aws_region = 'us-east-1'  # Fallback apenas para dev local
+    logger.info(f"[validar_cfop_chave] Usando região AWS: {aws_region}")
+    dynamodb = boto3.resource('dynamodb', region_name=aws_region)
+    table_name = os.environ.get('TABLE_NAME', 'DocumentProcessorTable')
+    logger.info(f"[validar_cfop_chave] Nome da tabela DynamoDB: {table_name}, Região: {aws_region}")
+    table = dynamodb.Table(table_name)
     
     # Extrair CFOP do DANFE
     danfe_cfop = None
