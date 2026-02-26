@@ -183,7 +183,8 @@ export class AgroAmazoniaStack extends cdk.Stack {
       handler: 'processor.handler',
       code: lambda.Code.fromAsset('../backend/lambdas/processor'),
       environment: {
-        TABLE_NAME: documentTable.tableName
+        TABLE_NAME: documentTable.tableName,
+        BEDROCK_MODEL_ID: process.env.BEDROCK_MODEL_ID || 'amazon.nova-pro-v1:0'
       },
       timeout: cdk.Duration.minutes(2),
       memorySize: 256,
@@ -199,7 +200,8 @@ export class AgroAmazoniaStack extends cdk.Stack {
       handler: 'handler.handler',
       code: lambda.Code.fromAsset('../backend/lambdas/validate_rules'),
       environment: {
-        TABLE_NAME: documentTable.tableName
+        TABLE_NAME: documentTable.tableName,
+        BEDROCK_MODEL_ID: process.env.BEDROCK_MODEL_ID || 'amazon.nova-pro-v1:0'
       },
       timeout: cdk.Duration.minutes(5),
       memorySize: 512,
@@ -228,17 +230,18 @@ export class AgroAmazoniaStack extends cdk.Stack {
       functionName: name('lambda', 'report-ocr-failure'),
       runtime: lambda.Runtime.PYTHON_3_11,
       handler: 'handler.lambda_handler',
-      code: lambda.Code.fromAsset('../backend/lambdas/report_ocr_failure', {
+      code: lambda.Code.fromAsset('../backend/lambdas', {
         bundling: {
           image: lambda.Runtime.PYTHON_3_11.bundlingImage,
           command: [
             'bash', '-c',
-            'pip install -r requirements.txt -t /asset-output && cp -au . /asset-output'
+            'cd report_ocr_failure && pip install -r requirements.txt -t /asset-output && cp -au . /asset-output && cp -au ../utils /asset-output/'
           ]
         }
       }),
       environment: {
         TABLE_NAME: documentTable.tableName,
+        BEDROCK_MODEL_ID: process.env.BEDROCK_MODEL_ID || 'amazon.nova-pro-v1:0',
         OCR_FAILURE_API_URL: ocrFailureApiUrl,
         OCR_FAILURE_AUTH_URL: ocrFailureAuthUrl,
         OCR_FAILURE_CLIENT_ID: ocrFailureClientId,
@@ -252,6 +255,10 @@ export class AgroAmazoniaStack extends cdk.Stack {
     });
 
     documentTable.grantReadWriteData(reportOcrFailureLambda);
+    reportOcrFailureLambda.addToRolePolicy(new iam.PolicyStatement({
+      actions: ['bedrock:InvokeModel'],
+      resources: ['*']
+    }));
 
     // Lambda: Send to Protheus (via HTTP direto com Basic Auth)
     const protheusSecretId = this.node.tryGetContext('protheusSecretId') || process.env.PROTHEUS_SECRET_ID || '';
@@ -261,12 +268,12 @@ export class AgroAmazoniaStack extends cdk.Stack {
       functionName: name('lambda', 'send-to-protheus'),
       runtime: lambda.Runtime.PYTHON_3_11,
       handler: 'handler.lambda_handler',
-      code: lambda.Code.fromAsset('../backend/lambdas/send_to_protheus', {
+      code: lambda.Code.fromAsset('../backend/lambdas', {
         bundling: {
           image: lambda.Runtime.PYTHON_3_11.bundlingImage,
           command: [
             'bash', '-c',
-            'pip install -r requirements.txt -t /asset-output && cp -au . /asset-output'
+            'cd send_to_protheus && pip install -r requirements.txt -t /asset-output && cp -au . /asset-output && cp -au ../utils /asset-output/'
           ]
         }
       }),
@@ -317,7 +324,8 @@ export class AgroAmazoniaStack extends cdk.Stack {
       handler: 'handler.lambda_handler',
       code: lambda.Code.fromAsset('../backend/lambdas/update_metrics'),
       environment: {
-        TABLE_NAME: documentTable.tableName
+        TABLE_NAME: documentTable.tableName,
+        BEDROCK_MODEL_ID: process.env.BEDROCK_MODEL_ID || 'amazon.nova-pro-v1:0'
       },
       timeout: cdk.Duration.seconds(30),
       memorySize: 256,
@@ -364,18 +372,19 @@ export class AgroAmazoniaStack extends cdk.Stack {
       functionName: name('lambda', 'send-feedback'),
       runtime: lambda.Runtime.PYTHON_3_11,
       handler: 'handler.lambda_handler',
-      code: lambda.Code.fromAsset('../backend/lambdas/send_feedback', {
+      code: lambda.Code.fromAsset('../backend/lambdas', {
         bundling: {
           image: lambda.Runtime.PYTHON_3_11.bundlingImage,
           command: [
             'bash', '-c',
-            'pip install -r requirements.txt -t /asset-output && cp -au . /asset-output'
+            'cd send_feedback && pip install -r requirements.txt -t /asset-output && cp -au . /asset-output && cp -au ../utils /asset-output/'
           ]
         }
       }),
       environment: {
         TABLE_NAME: documentTable.tableName,
         SERVICENOW_FEEDBACK_API_URL: servicenowFeedbackApiUrl,
+        BEDROCK_MODEL_ID: process.env.BEDROCK_MODEL_ID || 'amazon.nova-pro-v1:0',
         OCR_FAILURE_AUTH_URL: ocrFailureAuthUrl,
         OCR_FAILURE_CLIENT_ID: ocrFailureClientId,
         OCR_FAILURE_CLIENT_SECRET: ocrFailureClientSecret,
@@ -391,6 +400,10 @@ export class AgroAmazoniaStack extends cdk.Stack {
 
     documentTable.grantReadData(sendFeedbackLambda);
     errorTopic.grantPublish(sendFeedbackLambda);
+    sendFeedbackLambda.addToRolePolicy(new iam.PolicyStatement({
+      actions: ['bedrock:InvokeModel'],
+      resources: ['*']
+    }));
 
     // Lambda: Parse XML
     const parseXmlLambda = new lambda.Function(this, 'ParseXmlFunction', {
@@ -417,7 +430,8 @@ export class AgroAmazoniaStack extends cdk.Stack {
       handler: 'handler.handler',
       code: lambda.Code.fromAsset('../backend/lambdas/update_process_status'),
       environment: {
-        TABLE_NAME: documentTable.tableName
+        TABLE_NAME: documentTable.tableName,
+        BEDROCK_MODEL_ID: process.env.BEDROCK_MODEL_ID || 'amazon.nova-pro-v1:0'
       },
       timeout: cdk.Duration.seconds(30),
       memorySize: 128,
@@ -433,7 +447,8 @@ export class AgroAmazoniaStack extends cdk.Stack {
       handler: 'handler.handler',
       code: lambda.Code.fromAsset('../backend/lambdas/s3_upload_handler'),
       environment: {
-        TABLE_NAME: documentTable.tableName
+        TABLE_NAME: documentTable.tableName,
+        BEDROCK_MODEL_ID: process.env.BEDROCK_MODEL_ID || 'amazon.nova-pro-v1:0'
       },
       timeout: cdk.Duration.seconds(30),
       ...vpcConfig

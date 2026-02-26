@@ -1,4 +1,5 @@
 import json
+import os
 import logging
 import boto3
 
@@ -13,6 +14,7 @@ def compare_with_bedrock(value1, value2, field, has_equivalent_code=False):
         field: Nome do campo sendo comparado
         has_equivalent_code: Se True, indica que os códigos numéricos já foram validados como equivalentes
     """
+    # Bedrock Nova Pro está disponível apenas em us-east-1 por enquanto
     bedrock_client = boto3.client('bedrock-runtime', region_name='us-east-1')
     return _compare_with_bedrock_client(bedrock_client, value1, value2, field, has_equivalent_code)
 
@@ -146,8 +148,10 @@ RESULTADO: {{"validado": false}}
 Responda APENAS JSON: {{"validado": true}} ou {{"validado": false}}"""
     
     try:
+        # Obter modelo ID da variável de ambiente
+        model_id = os.environ.get('BEDROCK_MODEL_ID', 'amazon.nova-pro-v1:0')
         response = bedrock_client.invoke_model(
-            modelId='us.amazon.nova-pro-v1:0',
+            modelId=model_id,
             body=json.dumps({
                 'messages': [{
                     'role': 'user',
