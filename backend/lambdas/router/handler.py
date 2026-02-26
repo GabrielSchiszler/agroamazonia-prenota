@@ -259,3 +259,4 @@ def lambda_handler(event, context):
         }
         return add_cors_headers(error_response, origin)
 
+
