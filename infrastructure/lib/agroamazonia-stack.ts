@@ -10,6 +10,7 @@ import * as s3n from 'aws-cdk-lib/aws-s3-notifications';
 import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
 import * as sns from 'aws-cdk-lib/aws-sns';
 import * as cr from 'aws-cdk-lib/custom-resources';
+import * as logs from 'aws-cdk-lib/aws-logs';
 import { Construct } from 'constructs';
 
 interface AgroAmazoniaStackProps extends cdk.StackProps {
@@ -94,7 +95,8 @@ export class AgroAmazoniaStack extends cdk.Stack {
         TABLE_NAME: documentTable.tableName,
         BUCKET_NAME: rawDocumentsBucket.bucketName
       },
-      timeout: cdk.Duration.seconds(30)
+      timeout: cdk.Duration.seconds(30),
+      logRetention: logs.RetentionDays.TWO_WEEKS
     });
 
     documentTable.grantReadWriteData(notifyReceiptLambda);
@@ -112,7 +114,8 @@ export class AgroAmazoniaStack extends cdk.Stack {
         TABLE_NAME: documentTable.tableName
       },
       timeout: cdk.Duration.minutes(2),
-      memorySize: 256
+      memorySize: 256,
+      logRetention: logs.RetentionDays.TWO_WEEKS
     });
 
     documentTable.grantReadWriteData(processorLambda);
@@ -127,7 +130,8 @@ export class AgroAmazoniaStack extends cdk.Stack {
         TABLE_NAME: documentTable.tableName
       },
       timeout: cdk.Duration.minutes(5),
-      memorySize: 512
+      memorySize: 512,
+      logRetention: logs.RetentionDays.TWO_WEEKS
     });
 
     documentTable.grantReadWriteData(validateRulesLambda);
@@ -172,7 +176,8 @@ export class AgroAmazoniaStack extends cdk.Stack {
         OCR_FAILURE_PASSWORD: ocrFailurePassword
       },
       timeout: cdk.Duration.seconds(60),
-      memorySize: 256
+      memorySize: 256,
+      logRetention: logs.RetentionDays.TWO_WEEKS
     });
 
     documentTable.grantReadWriteData(reportOcrFailureLambda);
@@ -217,7 +222,8 @@ export class AgroAmazoniaStack extends cdk.Stack {
         OCR_FAILURE_PASSWORD: ocrFailurePassword
       },
       timeout: cdk.Duration.minutes(2),
-      memorySize: 512
+      memorySize: 512,
+      logRetention: logs.RetentionDays.TWO_WEEKS
     });
 
     documentTable.grantReadWriteData(sendToProtheusLambda);
@@ -236,7 +242,8 @@ export class AgroAmazoniaStack extends cdk.Stack {
         TABLE_NAME: documentTable.tableName
       },
       timeout: cdk.Duration.seconds(30),
-      memorySize: 256
+      memorySize: 256,
+      logRetention: logs.RetentionDays.TWO_WEEKS
     });
 
     documentTable.grantReadWriteData(updateMetricsLambda);
@@ -267,7 +274,8 @@ export class AgroAmazoniaStack extends cdk.Stack {
         OCR_FAILURE_PASSWORD: ocrFailurePassword
       },
       timeout: cdk.Duration.seconds(30),
-      memorySize: 256
+      memorySize: 256,
+      logRetention: logs.RetentionDays.TWO_WEEKS
     });
 
     documentTable.grantReadData(notifySuccessLambda);
@@ -300,7 +308,8 @@ export class AgroAmazoniaStack extends cdk.Stack {
         ENVIRONMENT: this.envName
       },
       timeout: cdk.Duration.seconds(30),
-      memorySize: 256
+      memorySize: 256,
+      logRetention: logs.RetentionDays.TWO_WEEKS
     });
 
     documentTable.grantReadData(sendFeedbackLambda);
@@ -321,7 +330,8 @@ export class AgroAmazoniaStack extends cdk.Stack {
         BUCKET_NAME: rawDocumentsBucket.bucketName
       },
       timeout: cdk.Duration.minutes(2),
-      memorySize: 256
+      memorySize: 256,
+      logRetention: logs.RetentionDays.TWO_WEEKS
     });
 
     documentTable.grantReadWriteData(parseXmlLambda);
@@ -337,7 +347,8 @@ export class AgroAmazoniaStack extends cdk.Stack {
         TABLE_NAME: documentTable.tableName
       },
       timeout: cdk.Duration.seconds(30),
-      memorySize: 128
+      memorySize: 128,
+      logRetention: logs.RetentionDays.TWO_WEEKS
     });
 
     documentTable.grantReadWriteData(updateProcessStatusLambda);
@@ -351,7 +362,8 @@ export class AgroAmazoniaStack extends cdk.Stack {
       environment: {
         TABLE_NAME: documentTable.tableName
       },
-      timeout: cdk.Duration.seconds(30)
+      timeout: cdk.Duration.seconds(30),
+      logRetention: logs.RetentionDays.TWO_WEEKS
     });
 
     documentTable.grantReadWriteData(s3UploadHandler);
@@ -708,7 +720,8 @@ def handler(event, context):
         'TotalKeys': len(current_keys)
     }
 `),
-      timeout: cdk.Duration.seconds(30)
+      timeout: cdk.Duration.seconds(30),
+      logRetention: logs.RetentionDays.TWO_WEEKS
     });
     
     // Permissão para a Lambda acessar o Secrets Manager
@@ -749,7 +762,8 @@ def handler(event, context):
         API_KEYS_SECRET_ARN: apiKeysSecret.secretArn
       },
       timeout: cdk.Duration.seconds(30),
-      memorySize: 512
+      memorySize: 512,
+      logRetention: logs.RetentionDays.TWO_WEEKS
     });
 
     documentTable.grantReadWriteData(apiLambda);
