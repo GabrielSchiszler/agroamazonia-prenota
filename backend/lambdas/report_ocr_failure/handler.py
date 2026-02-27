@@ -6,6 +6,16 @@ import random
 import base64
 import html
 from datetime import datetime
+import sys
+
+# Adicionar o diretório utils ao path para importar a função
+sys.path.insert(0, os.path.dirname(__file__))
+try:
+    from utils.bedrock_error_summary import generate_error_summary_with_bedrock
+except ImportError:
+    # Fallback: tentar importar do diretório pai
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+    from utils.bedrock_error_summary import generate_error_summary_with_bedrock
 
 dynamodb = boto3.resource('dynamodb')
 table = dynamodb.Table(os.environ['TABLE_NAME'])
@@ -395,11 +405,32 @@ def lambda_handler(event, context):
     else:
         descricao_falha = "Erro no processamento OCR"
     
+    # Gerar response_summary usando Bedrock
+    response_summary = None
+    try:
+        # Preparar dados completos do erro para o Bedrock
+        error_data_for_bedrock = {
+            "process_id": process_id,
+            "failed_rules": failed_rules,
+            "error_info": error_info,
+            "detalhes": detalhes
+        }
+        response_summary = generate_error_summary_with_bedrock(error_data_for_bedrock)
+        if response_summary:
+            print(f"[REPORT_OCR] response_summary gerado com sucesso ({len(response_summary)} caracteres)")
+        else:
+            print(f"[REPORT_OCR] WARNING: Não foi possível gerar response_summary")
+    except Exception as e:
+        print(f"[REPORT_OCR] WARNING: Erro ao gerar response_summary: {str(e)}")
+        import traceback
+        traceback.print_exc()
+    
     payload = {
         "idUnico": id_unico,
         "descricaoFalha": descricao_falha,
         "traceAWS": process_id,
-        "detalhes": texto_detalhes  # Texto explicativo completo ao invés de array
+        "detalhes": texto_detalhes,  # Texto explicativo completo ao invés de array
+        "response_summary": response_summary  # Mensagem amigável gerada pelo Bedrock
     }
     
     # Obter token OAuth2
