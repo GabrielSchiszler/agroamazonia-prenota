@@ -8,6 +8,7 @@ import * as iam from 'aws-cdk-lib/aws-iam';
 import * as s3n from 'aws-cdk-lib/aws-s3-notifications';
 import * as sns from 'aws-cdk-lib/aws-sns';
 import * as ec2 from 'aws-cdk-lib/aws-ec2';
+import * as logs from 'aws-cdk-lib/aws-logs';
 import { Construct } from 'constructs';
 
 interface AgroAmazoniaStackProps extends cdk.StackProps {
@@ -168,6 +169,7 @@ export class AgroAmazoniaStack extends cdk.Stack {
         BUCKET_NAME: rawDocumentsBucket.bucketName
       },
       timeout: cdk.Duration.seconds(30),
+      logRetention: logs.RetentionDays.TWO_WEEKS,
       ...vpcConfig
     });
 
@@ -188,6 +190,7 @@ export class AgroAmazoniaStack extends cdk.Stack {
       },
       timeout: cdk.Duration.minutes(2),
       memorySize: 256,
+      logRetention: logs.RetentionDays.TWO_WEEKS,
       ...vpcConfig
     });
 
@@ -205,6 +208,7 @@ export class AgroAmazoniaStack extends cdk.Stack {
       },
       timeout: cdk.Duration.minutes(5),
       memorySize: 512,
+      logRetention: logs.RetentionDays.TWO_WEEKS,
       ...vpcConfig
     });
 
@@ -251,6 +255,7 @@ export class AgroAmazoniaStack extends cdk.Stack {
       },
       timeout: cdk.Duration.seconds(60),
       memorySize: 256,
+      logRetention: logs.RetentionDays.TWO_WEEKS,
       ...vpcConfig
     });
 
@@ -292,6 +297,7 @@ export class AgroAmazoniaStack extends cdk.Stack {
       },
       timeout: cdk.Duration.minutes(2),
       memorySize: 512,
+      logRetention: logs.RetentionDays.TWO_WEEKS,
       ...vpcConfig
     });
 
@@ -329,6 +335,7 @@ export class AgroAmazoniaStack extends cdk.Stack {
       },
       timeout: cdk.Duration.seconds(30),
       memorySize: 256,
+      logRetention: logs.RetentionDays.TWO_WEEKS,
       ...vpcConfig
     });
 
@@ -361,6 +368,7 @@ export class AgroAmazoniaStack extends cdk.Stack {
       },
       timeout: cdk.Duration.seconds(30),
       memorySize: 256,
+      logRetention: logs.RetentionDays.TWO_WEEKS,
       ...vpcConfig
     });
 
@@ -395,6 +403,7 @@ export class AgroAmazoniaStack extends cdk.Stack {
       },
       timeout: cdk.Duration.seconds(30),
       memorySize: 256,
+      logRetention: logs.RetentionDays.TWO_WEEKS,
       ...vpcConfig
     });
 
@@ -417,6 +426,7 @@ export class AgroAmazoniaStack extends cdk.Stack {
       },
       timeout: cdk.Duration.minutes(2),
       memorySize: 256,
+      logRetention: logs.RetentionDays.TWO_WEEKS,
       ...vpcConfig
     });
 
@@ -435,6 +445,7 @@ export class AgroAmazoniaStack extends cdk.Stack {
       },
       timeout: cdk.Duration.seconds(30),
       memorySize: 128,
+      logRetention: logs.RetentionDays.TWO_WEEKS,
       ...vpcConfig
     });
 
@@ -451,6 +462,7 @@ export class AgroAmazoniaStack extends cdk.Stack {
         BEDROCK_MODEL_ID: process.env.BEDROCK_MODEL_ID || 'amazon.nova-pro-v1:0'
       },
       timeout: cdk.Duration.seconds(30),
+      logRetention: logs.RetentionDays.TWO_WEEKS,
       ...vpcConfig
     });
 
@@ -767,6 +779,7 @@ export class AgroAmazoniaStack extends cdk.Stack {
       },
       timeout: cdk.Duration.seconds(30),
       memorySize: 512,
+      logRetention: logs.RetentionDays.TWO_WEEKS,
       ...vpcConfig
     });
 
