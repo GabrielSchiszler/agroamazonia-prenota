@@ -1682,9 +1682,9 @@ def lambda_handler(event, context):
             quantidade = produto_info['quantidade']
             lote = produto_info.get('lote')
             
-            # Usar dados do XML (valor unitário, unidade_trib)
+            # Usar dados do XML (valor unitário, unidade)
             valor_unitario = float(produto_xml.get('valor_unitario', 0))
-            unidade_trib = produto_xml.get('unidade_trib', '').strip()
+            unidade = produto_xml.get('unidade', '').strip()
             
             # Se não encontrou código do produto, tentar buscar novamente
             if not codigo_produto:
@@ -1876,9 +1876,9 @@ def lambda_handler(event, context):
             else:
                 print(f"[8.{idx}.12.1] pedidoDeCompra não incluído no payload (não encontrado ou vazio)")
             
-            # Adicionar unidade_trib se disponível no XML
-            if unidade_trib:
-                item["unidadeMedida"] = unidade_trib
+            # Adicionar unidade se disponível no XML
+            if unidade:
+                item["unidadeMedida"] = unidade
             
             # Adicionar lote se disponível
             if lote:
@@ -1958,10 +1958,10 @@ def lambda_handler(event, context):
                     "pedidoDeCompra": pedido_de_compra
                 }
                 
-                # Adicionar unidade_trib se disponível no XML
-                unidade_trib = produto.get('unidade_trib', '').strip()
-                if unidade_trib:
-                    item["unidadeMedida"] = unidade_trib
+                # Adicionar unidade se disponível no XML
+                unidade = produto.get('unidade', '').strip()
+                if unidade:
+                    item["unidadeMedida"] = unidade
                 
                 payload['itens'].append(item)
                 print(f"[8.{idx}] Produto {idx} adicionado: {codigo}, qtd={item['quantidade']}, valor={item['valorUnitario']}, op={codigo_operacao}")

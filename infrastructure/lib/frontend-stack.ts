@@ -4,6 +4,9 @@ import * as s3deploy from 'aws-cdk-lib/aws-s3-deployment';
 import * as cloudfront from 'aws-cdk-lib/aws-cloudfront';
 import * as origins from 'aws-cdk-lib/aws-cloudfront-origins';
 import * as iam from 'aws-cdk-lib/aws-iam';
+import * as lambda from 'aws-cdk-lib/aws-lambda';
+import * as certificatemanager from 'aws-cdk-lib/aws-certificatemanager';
+import * as wafv2 from 'aws-cdk-lib/aws-wafv2';
 import { Construct } from 'constructs';
 
 interface FrontendStackProps extends cdk.StackProps {
@@ -87,14 +90,34 @@ export class FrontendStack extends cdk.Stack {
     console.log(`  Client Secret: ${oauth2ClientSecret ? '***' : '(não definido)'}`);
     console.log(`  Scope: ${oauth2Scope}`);
 
+    // OAC (Origin Access Control) - nome obtido de variável de ambiente
+    // PRD: oac-bucket-s3-fast-prd
+    // STG: oac-bucket-s3-fast-stg
+    // O OAC já existe, então vamos usar o ID diretamente ao invés de criar
+    const oacName = process.env.OAC_NAME || `oac-bucket-s3-fast-${this.envName}`;
+    const oacId = process.env.OAC_ID; // ID do OAC existente (obrigatório)
+    
+    if (!oacId) {
+      throw new Error(
+        `OAC_ID não fornecido! O OAC '${oacName}' já existe e precisa ser referenciado.\n` +
+        `Forneça o ID do OAC via variável de ambiente: export OAC_ID=<id-do-oac>\n` +
+        `Para obter o ID: aws cloudfront list-origin-access-controls --query "OriginAccessControlList.Items[?Name=='${oacName}'].Id" --output text`
+      );
+    }
+    
+    console.log(`[FrontendStack] OAC Name: ${oacName}`);
+    console.log(`[FrontendStack] OAC ID: ${oacId}`);
+    
+    // Usar o ID do OAC diretamente (não criar um construct, apenas referenciar)
+    // Isso evita tentar criar o OAC que já existe
+
     // S3 Bucket para frontend (website estático)
     // Nota: bucket names devem ser únicos globalmente, então incluímos account
-    // IMPORTANTE: Não usar website hosting quando usar OAI com CloudFront
+    // IMPORTANTE: Usando OAC (Origin Access Control) ao invés de OAI (legacy)
     const accountId = this.account || 'unknown';
     const frontendBucket = new s3.Bucket(this, 'FrontendBucket', {
       bucketName: `bucket-agroamazonia-frontend-${this.envName}-${accountId}`,
-      // Não usar websiteIndexDocument/websiteErrorDocument com OAI
-      publicReadAccess: false, // CloudFront vai servir o conteúdo via OAI
+      publicReadAccess: false, // CloudFront vai servir o conteúdo via OAC
       blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
       // Desabilitar ACLs (obrigatório para buckets criados após abril de 2023)
       objectOwnership: s3.ObjectOwnership.BUCKET_OWNER_ENFORCED,
@@ -110,156 +133,95 @@ export class FrontendStack extends cdk.Stack {
       }]
     });
 
-    // OAI (Origin Access Identity) para CloudFront acessar o bucket privado
-    const originAccessIdentity = new cloudfront.OriginAccessIdentity(this, 'FrontendOAI', {
-      comment: `OAI for AgroAmazonia Frontend - ${this.envName}`
+    // Lambda@Edge Functions para autenticação
+    // Lambda@Edge functions são versões de Lambda functions, não CloudFront Functions
+    // Default behavior: CheckAuthHandler (viewer request) e HttpHeadersHandler (viewer response)
+    const checkAuthHandler = lambda.Version.fromVersionArn(
+      this,
+      'CheckAuthHandler',
+      'arn:aws:lambda:us-east-1:835671581949:function:serverlessrepo-cloudfront-authori-CheckAuthHandler-SR4JfK6RxAmC:5'
+    );
+    
+    const httpHeadersHandler = lambda.Version.fromVersionArn(
+      this,
+      'HttpHeadersHandler',
+      'arn:aws:lambda:us-east-1:835671581949:function:serverlessrepo-cloudfront-autho-HttpHeadersHandler-zzPlMPTQfHDy:1'
+    );
+    
+    // /signout* path: SignOutHandler
+    const signOutHandler = lambda.Version.fromVersionArn(
+      this,
+      'SignOutHandler',
+      'arn:aws:lambda:us-east-1:835671581949:function:serverlessrepo-cloudfront-authoriza-SignOutHandler-s3TOmgrJDctZ:5'
+    );
+    
+    // /refreshauth* path: RefreshAuthHandler
+    const refreshAuthHandler = lambda.Version.fromVersionArn(
+      this,
+      'RefreshAuthHandler',
+      'arn:aws:lambda:us-east-1:835671581949:function:serverlessrepo-cloudfront-autho-RefreshAuthHandler-Cw3LiS0O0IRV:5'
+    );
+    
+    // /parseauth* path: ParseAuthHandler
+    const parseAuthHandler = lambda.Version.fromVersionArn(
+      this,
+      'ParseAuthHandler',
+      'arn:aws:lambda:us-east-1:835671581949:function:serverlessrepo-cloudfront-authori-ParseAuthHandler-gXHsjX3WUIcE:5'
+    );
+
+    // Cache Policy desabilitada (TTL = 0) para todos os behaviors
+    const noCachePolicy = new cloudfront.CachePolicy(this, 'NoCachePolicy', {
+      cachePolicyName: name('cache-policy', 'no-cache'),
+      defaultTtl: cdk.Duration.seconds(0),
+      minTtl: cdk.Duration.seconds(0),
+      maxTtl: cdk.Duration.seconds(0),
+      comment: 'Cache policy desabilitada para todos os paths'
     });
 
-    // Permitir que CloudFront leia o bucket via OAI
-    // O grantRead() adiciona automaticamente a política de bucket necessária
-    frontendBucket.grantRead(originAccessIdentity);
-
-    // IPs permitidos para acesso ao CloudFront (mesmos do bucket S3)
-    const allowedIpRanges = [
-      '10.255.0.0/24',
-      '10.65.0.0/24'
-    ];
-
-    // CloudFront Function para validar IP de origem (GRÁTIS)
-    // Limite: 10.000 req/s por distribuição (suficiente para a maioria dos casos)
-    const ipRestrictionFunction = new cloudfront.Function(this, 'IpRestrictionFunction', {
-      functionName: name('function', 'ip-restriction'),
-      code: cloudfront.FunctionCode.fromInline(`
-function handler(event) {
-
-    var request = event.request;
-    var uri = request.uri;
-
-    // IP correto no CloudFront Functions
-    var clientIp = event.viewer && event.viewer.ip 
-        ? event.viewer.ip 
-        : null;
-
-    // ===============================
-    // DEBUG MODE
-    // ===============================
-    if (uri === '/debug-ip' || uri === '/debug-ip.html') {
-
-        return {
-            statusCode: 200,
-            statusDescription: 'OK',
-            headers: {
-                'content-type': { value: 'application/json' }
-            },
-            body: JSON.stringify({
-                clientIp: clientIp || 'NOT_AVAILABLE',
-                ipType: clientIp 
-                    ? (clientIp.indexOf(':') !== -1 ? 'IPv6' : 'IPv4')
-                    : 'UNKNOWN'
-            }, null, 2)
-        };
+    // Importar WAF existente (waf-cloudfront)
+    // WAF para CloudFront DEVE estar:
+    // - Escopo: CLOUDFRONT (não REGIONAL)
+    // - Região: us-east-1 (obrigatório para CloudFront)
+    // O campo webAclId espera o ARN completo, não apenas o ID
+    const webAclArn = process.env.WAF_ARN;
+    
+    if (webAclArn) {
+      if (!webAclArn.startsWith('arn:aws:wafv2:')) {
+        throw new Error(`WAF_ARN inválido! Deve ser um ARN completo começando com 'arn:aws:wafv2:'. Recebido: ${webAclArn}`);
+      }
+      console.log(`[FrontendStack] WAF ARN: ${webAclArn}`);
+      console.log(`[FrontendStack] ⚠️  Certifique-se de que o WAF está no escopo CLOUDFRONT na região us-east-1`);
+    } else {
+      console.warn(`[FrontendStack] ⚠️  WAF_ARN não fornecido. WAF não será associado ao CloudFront.`);
+      console.warn(`[FrontendStack] ⚠️  Para associar o WAF, forneça via: export WAF_ARN=<arn-completo>`);
+      console.warn(`[FrontendStack] ⚠️  IMPORTANTE: O WAF deve estar no escopo CLOUDFRONT na região us-east-1`);
+      console.warn(`[FrontendStack] ⚠️  Exemplo: export WAF_ARN=arn:aws:wafv2:us-east-1:835671581949:global/webacl/waf-cloudfront/9385afad-40cd-4aa5-a944-2a6c72ed3cbd`);
     }
 
-    // Se IP não disponível → bloquear
-    if (!clientIp) {
-        return {
-            statusCode: 403,
-            statusDescription: 'Forbidden',
-            body: 'IP not detected.'
-        };
-    }
-
-    // Se for IPv6 → bloquear (ou ajuste se quiser permitir)
-    if (clientIp.indexOf(':') !== -1) {
-        return {
-            statusCode: 403,
-            statusDescription: 'Forbidden',
-            body: 'IPv6 not allowed.'
-        };
-    }
-
-    // ===============================
-    // RANGES PERMITIDOS
-    // ===============================
-    var allowedRanges = [
-        { network: '10.255.0.0', mask: 24 },
-        { network: '10.65.0.0', mask: 24 }
-    ];
-
-    function ipToNumber(ip) {
-        var parts = ip.split('.');
-        if (parts.length !== 4) return null;
-
-        var p0 = parseInt(parts[0], 10);
-        var p1 = parseInt(parts[1], 10);
-        var p2 = parseInt(parts[2], 10);
-        var p3 = parseInt(parts[3], 10);
-
-        if (
-            p0 < 0 || p0 > 255 ||
-            p1 < 0 || p1 > 255 ||
-            p2 < 0 || p2 > 255 ||
-            p3 < 0 || p3 > 255
-        ) return null;
-
-        // >>> 0 força unsigned
-        return (((p0 << 24) >>> 0) +
-                ((p1 << 16) >>> 0) +
-                ((p2 << 8) >>> 0) +
-                (p3 >>> 0)) >>> 0;
-    }
-
-    function isInRange(ip, network, mask) {
-        var ipNum = ipToNumber(ip);
-        var networkNum = ipToNumber(network);
-
-        if (ipNum === null || networkNum === null) return false;
-
-        var maskNum = (0xFFFFFFFF << (32 - mask)) >>> 0;
-
-        return (ipNum & maskNum) === (networkNum & maskNum);
-    }
-
-    for (var i = 0; i < allowedRanges.length; i++) {
-        if (isInRange(clientIp, allowedRanges[i].network, allowedRanges[i].mask)) {
-            return request; // permitido
-        }
-    }
-
-    // ===============================
-    // BLOQUEAR
-    // ===============================
-    return {
-        statusCode: 403,
-        statusDescription: 'Forbidden',
-        headers: {
-            'content-type': { value: 'text/plain' }
-        },
-        body: 'Access denied. Your IP (' + clientIp + ') is not allowed.'
-    };
-}
-      `)
-    });
-
-    // CloudFront Distribution
-    // Nota: CloudFront Distribution não suporta nome customizado diretamente
-    // O CDK gera um nome único automaticamente baseado no construct ID
+    // CloudFront Distribution com OAC, Lambda@Edge, WAF e domínio customizado
+    // Nota: A distribuição existente pode ter OAI configurado, então precisamos
+    // garantir que apenas OAC seja usado (não ambos)
     const distribution = new cloudfront.Distribution(this, 'FrontendDistribution', {
       defaultBehavior: {
         origin: new origins.S3Origin(frontendBucket, {
-          originAccessIdentity: originAccessIdentity
+          originAccessControlId: oacId!
         }),
         viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
         allowedMethods: cloudfront.AllowedMethods.ALLOW_GET_HEAD,
         cachedMethods: cloudfront.CachedMethods.CACHE_GET_HEAD,
         compress: true,
-        cachePolicy: cloudfront.CachePolicy.CACHING_OPTIMIZED,
-        // CloudFront Function para validar IP de origem
-        functionAssociations: [{
-          function: ipRestrictionFunction,
-          eventType: cloudfront.FunctionEventType.VIEWER_REQUEST
-        }],
-        // Invalidar cache para arquivos HTML e JS
+        cachePolicy: noCachePolicy, // Cache desabilitado
+        // Lambda@Edge: CheckAuthHandler (viewer request) e HttpHeadersHandler (viewer response)
+        edgeLambdas: [
+          {
+            functionVersion: checkAuthHandler,
+            eventType: cloudfront.LambdaEdgeEventType.VIEWER_REQUEST
+          },
+          {
+            functionVersion: httpHeadersHandler,
+            eventType: cloudfront.LambdaEdgeEventType.VIEWER_RESPONSE
+          }
+        ],
         responseHeadersPolicy: new cloudfront.ResponseHeadersPolicy(this, 'FrontendHeadersPolicy', {
           responseHeadersPolicyName: name('response-headers-policy', 'agroamazonia-frontend'),
           comment: `Headers policy for AgroAmazonia Frontend - ${this.envName}`,
@@ -283,76 +245,95 @@ function handler(event) {
           }
         })
       },
-      // Comportamento para arquivos estáticos (cache longo)
+      // Comportamentos adicionais para paths específicos
+      // IMPORTANTE: A ordem importa! Paths mais específicos devem vir primeiro
       additionalBehaviors: {
-        '/assets/*': {
+        // Paths de autenticação (ordem de prioridade: parseauth > refreshauth > signout)
+        '/parseauth*': {
           origin: new origins.S3Origin(frontendBucket, {
-            originAccessIdentity: originAccessIdentity
+            originAccessControlId: oacId!
           }),
           viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
           allowedMethods: cloudfront.AllowedMethods.ALLOW_GET_HEAD,
           cachedMethods: cloudfront.CachedMethods.CACHE_GET_HEAD,
           compress: true,
-          // CloudFront Function para validar IP de origem
-          functionAssociations: [{
-            function: ipRestrictionFunction,
-            eventType: cloudfront.FunctionEventType.VIEWER_REQUEST
-          }],
-          // Cache longo para assets (CSS, JS, imagens)
-          cachePolicy: new cloudfront.CachePolicy(this, 'AssetsCachePolicy', {
-            cachePolicyName: name('cache-policy', 'assets-long-cache'),
-            defaultTtl: cdk.Duration.days(30),
-            minTtl: cdk.Duration.days(30),
-            maxTtl: cdk.Duration.days(365),
-            enableAcceptEncodingGzip: true,
-            enableAcceptEncodingBrotli: true
-          })
+          cachePolicy: noCachePolicy, // Cache desabilitado
+          edgeLambdas: [
+            {
+              functionVersion: parseAuthHandler,
+              eventType: cloudfront.LambdaEdgeEventType.VIEWER_REQUEST
+            },
+            {
+              functionVersion: httpHeadersHandler,
+              eventType: cloudfront.LambdaEdgeEventType.VIEWER_RESPONSE
+            }
+          ]
+        },
+        '/refreshauth*': {
+          origin: new origins.S3Origin(frontendBucket, {
+            originAccessControlId: oacId!
+          }),
+          viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+          allowedMethods: cloudfront.AllowedMethods.ALLOW_GET_HEAD,
+          cachedMethods: cloudfront.CachedMethods.CACHE_GET_HEAD,
+          compress: true,
+          cachePolicy: noCachePolicy, // Cache desabilitado
+          edgeLambdas: [
+            {
+              functionVersion: refreshAuthHandler,
+              eventType: cloudfront.LambdaEdgeEventType.VIEWER_REQUEST
+            }
+          ]
+        },
+        '/signout*': {
+          origin: new origins.S3Origin(frontendBucket, {
+            originAccessControlId: oacId!
+          }),
+          viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+          allowedMethods: cloudfront.AllowedMethods.ALLOW_GET_HEAD,
+          cachedMethods: cloudfront.CachedMethods.CACHE_GET_HEAD,
+          compress: true,
+          cachePolicy: noCachePolicy, // Cache desabilitado
+          edgeLambdas: [
+            {
+              functionVersion: signOutHandler,
+              eventType: cloudfront.LambdaEdgeEventType.VIEWER_REQUEST
+            }
+          ]
+        },
+        // Behaviors antigos: assets, HTML e JS (sem Lambda@Edge)
+        '/assets/*': {
+          origin: new origins.S3Origin(frontendBucket, {
+            originAccessControlId: oacId!
+          }),
+          viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+          allowedMethods: cloudfront.AllowedMethods.ALLOW_GET_HEAD,
+          cachedMethods: cloudfront.CachedMethods.CACHE_GET_HEAD,
+          compress: true,
+          cachePolicy: noCachePolicy // Cache desabilitado
+          // Sem Lambda@Edge (viewer request/response)
         },
         '*.html': {
           origin: new origins.S3Origin(frontendBucket, {
-            originAccessIdentity: originAccessIdentity
+            originAccessControlId: oacId!
           }),
           viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
           allowedMethods: cloudfront.AllowedMethods.ALLOW_GET_HEAD,
           cachedMethods: cloudfront.CachedMethods.CACHE_GET_HEAD,
           compress: true,
-          // CloudFront Function para validar IP de origem
-          functionAssociations: [{
-            function: ipRestrictionFunction,
-            eventType: cloudfront.FunctionEventType.VIEWER_REQUEST
-          }],
-          // Cache curto para HTML (para facilitar invalidação)
-          // Nota: Quando TTL = 0 (cache desabilitado), não podemos habilitar compressão
-          cachePolicy: new cloudfront.CachePolicy(this, 'HtmlCachePolicy', {
-            cachePolicyName: name('cache-policy', 'html-no-cache'),
-            defaultTtl: cdk.Duration.seconds(0), // Sem cache por padrão
-            minTtl: cdk.Duration.seconds(0),
-            maxTtl: cdk.Duration.seconds(0)
-            // enableAcceptEncodingGzip e enableAcceptEncodingBrotli não podem ser usados com TTL = 0
-          })
+          cachePolicy: noCachePolicy // Cache desabilitado
+          // Sem Lambda@Edge (viewer request/response)
         },
         '*.js': {
           origin: new origins.S3Origin(frontendBucket, {
-            originAccessIdentity: originAccessIdentity
+            originAccessControlId: oacId!
           }),
           viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
           allowedMethods: cloudfront.AllowedMethods.ALLOW_GET_HEAD,
           cachedMethods: cloudfront.CachedMethods.CACHE_GET_HEAD,
           compress: true,
-          // CloudFront Function para validar IP de origem
-          functionAssociations: [{
-            function: ipRestrictionFunction,
-            eventType: cloudfront.FunctionEventType.VIEWER_REQUEST
-          }],
-          // Cache curto para JS (para facilitar invalidação)
-          // Nota: Quando TTL = 0 (cache desabilitado), não podemos habilitar compressão
-          cachePolicy: new cloudfront.CachePolicy(this, 'JsCachePolicy', {
-            cachePolicyName: name('cache-policy', 'js-short-cache'),
-            defaultTtl: cdk.Duration.seconds(0), // Sem cache por padrão
-            minTtl: cdk.Duration.seconds(0),
-            maxTtl: cdk.Duration.seconds(0)
-            // enableAcceptEncodingGzip e enableAcceptEncodingBrotli não podem ser usados com TTL = 0
-          })
+          cachePolicy: noCachePolicy // Cache desabilitado
+          // Sem Lambda@Edge (viewer request/response)
         }
       },
       errorResponses: [
@@ -369,9 +350,65 @@ function handler(event) {
           ttl: cdk.Duration.seconds(0)
         }
       ],
+      // Domínio customizado e certificado SSL
+      domainNames: this.envName === 'prd' 
+        ? ['fast-dash-prd.agroamazonia.com']
+        : this.envName === 'stg'
+        ? ['fast-dash-hml.agroamazonia.com']
+        : [],
+      certificate: this.envName === 'prd' || this.envName === 'stg'
+        ? certificatemanager.Certificate.fromCertificateArn(
+            this,
+            'CloudFrontCertificate',
+            'arn:aws:acm:us-east-1:835671581949:certificate/2d797bdd-f51d-4fdb-8ae3-ebc6d1db10d2'
+          )
+        : undefined,
+      minimumProtocolVersion: cloudfront.SecurityPolicyProtocol.TLS_V1_2_2021,
       priceClass: cloudfront.PriceClass.PRICE_CLASS_100, // Apenas EUA e Europa
-      comment: `AgroAmazonia Frontend Distribution - ${this.envName}`
+      comment: `frontend-s3-${this.envName}`,
+      ...(webAclArn ? { webAclId: webAclArn } : {})
     });
+    
+    // Forçar atualização do WAF usando Cfn construct (garante que o WAF seja aplicado mesmo se removido manualmente)
+    const cfnDistribution = distribution.node.defaultChild as cloudfront.CfnDistribution;
+    if (webAclArn) {
+      // Forçar atualização do WAF via override para garantir que seja aplicado
+      // O campo WebACLId espera o ARN completo
+      // Usar addPropertyOverride para garantir que o valor seja sempre aplicado
+      cfnDistribution.addPropertyOverride('DistributionConfig.WebACLId', webAclArn);
+      console.log(`[FrontendStack] WAF forçado via override: ${webAclArn}`);
+    }
+    
+    // Forçar remoção do OAI (legacy) da distribuição existente usando Cfn construct
+    // Isso é necessário quando migrando de OAI para OAC
+    // O CloudFormation não permite ter ambos (OAI e OAC) ao mesmo tempo
+    // IMPORTANTE: S3OriginConfig ainda precisa existir, mas sem OriginAccessIdentity
+    
+    // Remover OriginAccessIdentity do S3OriginConfig e garantir OAC para todos os origins
+    // Origins 0-5: behaviors adicionais (parseauth, refreshauth, signout, assets, html, js)
+    for (let i = 0; i <= 5; i++) {
+      cfnDistribution.addOverride(`Properties.DistributionConfig.Origins.${i}.S3OriginConfig.OriginAccessIdentity`, undefined);
+      cfnDistribution.addOverride(`Properties.DistributionConfig.Origins.${i}.OriginAccessControlId`, oacId!);
+    }
+    
+    // Origin 6: default behavior (último na ordem)
+    cfnDistribution.addOverride('Properties.DistributionConfig.Origins.6.S3OriginConfig.OriginAccessIdentity', undefined);
+    cfnDistribution.addOverride('Properties.DistributionConfig.Origins.6.OriginAccessControlId', oacId!);
+    
+    // Adicionar política do bucket para permitir acesso do OAC
+    // Nota: A política precisa ser adicionada após criar a distribuição para ter o ARN correto
+    frontendBucket.addToResourcePolicy(new iam.PolicyStatement({
+      sid: 'AllowCloudFrontOAC',
+      effect: iam.Effect.ALLOW,
+      principals: [new iam.ServicePrincipal('cloudfront.amazonaws.com')],
+      actions: ['s3:GetObject'],
+      resources: [frontendBucket.arnForObjects('*')],
+      conditions: {
+        StringEquals: {
+          'AWS:SourceArn': distribution.distributionArn
+        }
+      }
+    }));
 
     // Criar arquivo config.js dinâmico com a URL da API, API Key e OAuth2 Config
     // Este arquivo será gerado durante o deploy e sobrescreverá o config.js estático
@@ -399,6 +436,8 @@ window.ENV = {
     // 2. Fazer upload de todos os arquivos do diretório frontend
     // 3. Criar arquivo config.js dinâmico com a URL da API (sobrescreve o estático)
     // 4. Invalidar o cache do CloudFront após o deploy
+    // Nota: Atualizado para CDK 2.241.0 com urllib3 >= 2.6.3 (CVE-2025-66418, CVE-2026-21441)
+    // ephemeralStorageSize força atualização do Lambda sem afetar o bucket S3
     const deployment = new s3deploy.BucketDeployment(this, 'FrontendDeployment', {
       sources: [
         s3deploy.Source.asset('../frontend'),
@@ -411,6 +450,7 @@ window.ENV = {
       prune: true, // Remover arquivos que não estão mais no source
       retainOnDelete: false, // Não reter arquivos ao deletar stack
       memoryLimit: 512,
+      ephemeralStorageSize: cdk.Size.mebibytes(512), // Força atualização do Lambda (não afeta o bucket S3)
       // Invalidar cache após deploy
       cacheControl: [
         s3deploy.CacheControl.setPublic(),

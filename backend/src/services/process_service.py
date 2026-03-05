@@ -39,50 +39,104 @@ class ProcessService:
     def generate_presigned_url(self, process_id: str, file_name: str, file_type: str, doc_type: str = 'ADDITIONAL', metadados: Dict[str, Any] = None) -> Dict[str, Any]:
         import re
         
-        # Log do process_id recebido
-        logger.info(f"[generate_presigned_url] process_id recebido: {process_id} (tipo: {type(process_id)}, length: {len(process_id)})")
+        logger.info(f"[generate_presigned_url] Iniciando geração de URL pré-assinada")
+        logger.info(f"[generate_presigned_url] Parâmetros recebidos:")
+        logger.info(f"  - process_id: {process_id} (tipo: {type(process_id)}, length: {len(process_id) if process_id else 0})")
+        logger.info(f"  - file_name: {file_name} (tipo: {type(file_name)}, length: {len(file_name) if file_name else 0})")
+        logger.info(f"  - file_type: {file_type} (tipo: {type(file_type)})")
+        logger.info(f"  - doc_type: {doc_type} (tipo: {type(doc_type)})")
+        logger.info(f"  - metadados: {metadados} (tipo: {type(metadados)})")
         
-        # Criar processo se não existir
-        pk = f'PROCESS#{process_id}'
-        items = self.repository.query_by_pk_and_sk_prefix(pk, 'METADATA')
-        
-        if not items:
-            timestamp = int(datetime.now().timestamp())
-            logger.info(f"[generate_presigned_url] Criando novo processo com process_id: {process_id}")
-            self.repository.put_item('PROCESS', f'PROCESS#{process_id}', {
-                'PROCESS_ID': process_id,
-                'TIMESTAMP': timestamp
-            })
-            self.repository.put_item(pk, 'METADATA', {
-                'STATUS': 'CREATED',
-                'TIMESTAMP': timestamp
-            })
-            logger.info(f"[generate_presigned_url] Processo criado com process_id salvo: {process_id}")
-        
-        safe_name = re.sub(r'[^a-zA-Z0-9._-]', '_', file_name)
-        file_key = f"processes/{process_id}/{'danfe' if doc_type == 'DANFE' else 'docs'}/{safe_name}"
-        
-        url = self.s3_client.generate_presigned_url(
-            'put_object',
-            Params={'Bucket': self.bucket_name, 'Key': file_key, 'ContentType': file_type},
-            ExpiresIn=3600
-        )
-        
-        # Preparar dados do arquivo
-        file_data = {
-            'FILE_NAME': safe_name,
-            'FILE_KEY': file_key,
-            'DOC_TYPE': doc_type,
-            'STATUS': 'PENDING'
-        }
-        
-        # Adicionar metadados se fornecidos
-        if metadados:
-            file_data['METADADOS'] = json.dumps(metadados)
-        
-        self.repository.put_item(pk, f'FILE#{safe_name}', file_data)
-        
-        return {'upload_url': url, 'file_key': file_key, 'file_name': safe_name, 'content_type': file_type, 'doc_type': doc_type}
+        try:
+            # Criar processo se não existir
+            pk = f'PROCESS#{process_id}'
+            logger.info(f"[generate_presigned_url] Verificando se processo existe: {pk}")
+            items = self.repository.query_by_pk_and_sk_prefix(pk, 'METADATA')
+            logger.info(f"[generate_presigned_url] Resultado da query: {len(items) if items else 0} itens encontrados")
+            
+            if not items:
+                timestamp = int(datetime.now().timestamp())
+                logger.info(f"[generate_presigned_url] Criando novo processo com process_id: {process_id}, timestamp: {timestamp}")
+                try:
+                    self.repository.put_item('PROCESS', f'PROCESS#{process_id}', {
+                        'PROCESS_ID': process_id,
+                        'TIMESTAMP': timestamp
+                    })
+                    logger.info(f"[generate_presigned_url] Item PROCESS criado com sucesso")
+                    
+                    self.repository.put_item(pk, 'METADATA', {
+                        'STATUS': 'CREATED',
+                        'TIMESTAMP': timestamp
+                    })
+                    logger.info(f"[generate_presigned_url] Item METADATA criado com sucesso")
+                except Exception as e:
+                    logger.error(f"[generate_presigned_url] Erro ao criar processo no DynamoDB: {str(e)}")
+                    logger.exception("Traceback completo:")
+                    raise
+            else:
+                logger.info(f"[generate_presigned_url] Processo já existe, não será criado novamente")
+            
+            logger.info(f"[generate_presigned_url] Processando nome do arquivo: {file_name}")
+            safe_name = re.sub(r'[^a-zA-Z0-9._-]', '_', file_name)
+            logger.info(f"[generate_presigned_url] Nome seguro gerado: {safe_name}")
+            
+            file_key = f"processes/{process_id}/{'danfe' if doc_type == 'DANFE' else 'docs'}/{safe_name}"
+            logger.info(f"[generate_presigned_url] file_key gerado: {file_key}")
+            logger.info(f"[generate_presigned_url] bucket_name: {self.bucket_name}")
+            
+            logger.info(f"[generate_presigned_url] Gerando URL pré-assinada do S3...")
+            try:
+                url = self.s3_client.generate_presigned_url(
+                    'put_object',
+                    Params={'Bucket': self.bucket_name, 'Key': file_key, 'ContentType': file_type},
+                    ExpiresIn=3600
+                )
+                logger.info(f"[generate_presigned_url] URL pré-assinada gerada com sucesso (length: {len(url) if url else 0})")
+                logger.info(f"[generate_presigned_url] URL (primeiros 100 chars): {url[:100] if url else 'None'}...")
+            except Exception as e:
+                logger.error(f"[generate_presigned_url] Erro ao gerar URL pré-assinada do S3: {str(e)}")
+                logger.exception("Traceback completo:")
+                raise
+            
+            # Preparar dados do arquivo
+            file_data = {
+                'FILE_NAME': safe_name,
+                'FILE_KEY': file_key,
+                'DOC_TYPE': doc_type,
+                'STATUS': 'PENDING'
+            }
+            
+            # Adicionar metadados se fornecidos
+            if metadados:
+                logger.info(f"[generate_presigned_url] Adicionando metadados ao file_data")
+                file_data['METADADOS'] = json.dumps(metadados)
+                logger.info(f"[generate_presigned_url] Metadados serializados: {file_data['METADADOS']}")
+            
+            logger.info(f"[generate_presigned_url] Salvando file_data no DynamoDB: {file_data}")
+            try:
+                self.repository.put_item(pk, f'FILE#{safe_name}', file_data)
+                logger.info(f"[generate_presigned_url] File data salvo no DynamoDB com sucesso")
+            except Exception as e:
+                logger.error(f"[generate_presigned_url] Erro ao salvar file_data no DynamoDB: {str(e)}")
+                logger.exception("Traceback completo:")
+                raise
+            
+            result = {
+                'upload_url': url,
+                'file_key': file_key,
+                'file_name': safe_name,
+                'content_type': file_type,
+                'doc_type': doc_type
+            }
+            logger.info(f"[generate_presigned_url] Resultado final gerado: {result}")
+            logger.info(f"[generate_presigned_url] Geração de URL pré-assinada concluída com sucesso")
+            return result
+            
+        except Exception as e:
+            logger.error(f"[generate_presigned_url] Erro durante geração de URL pré-assinada: {str(e)}")
+            logger.error(f"[generate_presigned_url] Tipo do erro: {type(e).__name__}")
+            logger.exception("[generate_presigned_url] Traceback completo:")
+            raise
     
     def link_pedido_compra_metadata(self, process_id: str, metadados: Dict[str, Any]) -> Dict[str, Any]:
         """

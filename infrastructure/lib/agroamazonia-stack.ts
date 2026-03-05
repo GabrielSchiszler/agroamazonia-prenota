@@ -44,13 +44,18 @@ export class AgroAmazoniaStack extends cdk.Stack {
       availabilityZone: 'sa-east-1a'
     });
 
+    const privateSubnet2 = ec2.Subnet.fromSubnetAttributes(this, 'PrivateSubnet2', {
+      subnetId: 'subnet-0897daaebdab91405',
+      availabilityZone: 'sa-east-1b'
+    });
+
     // Security Group existente para as Lambdas na VPC
-    const lambdaSg = ec2.SecurityGroup.fromSecurityGroupId(this, 'LambdaSecurityGroup', 'sg-048ca965b1065aa57');
+    const lambdaSg = ec2.SecurityGroup.fromSecurityGroupId(this, 'LambdaSecurityGroup', 'sg-00197d66a726cc77b');
 
     // Configuração comum de VPC para todas as Lambdas
     const vpcConfig = {
       vpc,
-      vpcSubnets: { subnets: [privateSubnet] },
+      vpcSubnets: { subnets: [privateSubnet, privateSubnet2] },
       securityGroups: [lambdaSg]
     };
 
@@ -153,15 +158,14 @@ export class AgroAmazoniaStack extends cdk.Stack {
       sortKey: { name: 'SK', type: dynamodb.AttributeType.STRING },
       billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
       pointInTimeRecovery: true,
-      removalPolicy: cdk.RemovalPolicy.RETAIN
+      removalPolicy: cdk.RemovalPolicy.RETAIN,
+      deletionProtection: true
     });
-
-
 
     // Lambda: Notificação de Recebimento
     const notifyReceiptLambda = new lambda.Function(this, 'NotifyReceiptFunction', {
       functionName: name('lambda', 'notify-receipt'),
-      runtime: lambda.Runtime.PYTHON_3_11,
+      runtime: lambda.Runtime.PYTHON_3_12,
       handler: 'notify_receipt.handler',
       code: lambda.Code.fromAsset('../backend/lambdas/notify_receipt'),
       environment: {
@@ -181,7 +185,7 @@ export class AgroAmazoniaStack extends cdk.Stack {
     // Lambda: Processor
     const processorLambda = new lambda.Function(this, 'ProcessorFunction', {
       functionName: name('lambda', 'processor'),
-      runtime: lambda.Runtime.PYTHON_3_11,
+      runtime: lambda.Runtime.PYTHON_3_12,
       handler: 'processor.handler',
       code: lambda.Code.fromAsset('../backend/lambdas/processor'),
       environment: {
@@ -199,7 +203,7 @@ export class AgroAmazoniaStack extends cdk.Stack {
     // Lambda: Validate Rules
     const validateRulesLambda = new lambda.Function(this, 'ValidateRulesFunction', {
       functionName: name('lambda', 'validate-rules'),
-      runtime: lambda.Runtime.PYTHON_3_11,
+      runtime: lambda.Runtime.PYTHON_3_12,
       handler: 'handler.handler',
       code: lambda.Code.fromAsset('../backend/lambdas/validate_rules'),
       environment: {
@@ -232,11 +236,11 @@ export class AgroAmazoniaStack extends cdk.Stack {
 
     const reportOcrFailureLambda = new lambda.Function(this, 'ReportOcrFailureFunction', {
       functionName: name('lambda', 'report-ocr-failure'),
-      runtime: lambda.Runtime.PYTHON_3_11,
+      runtime: lambda.Runtime.PYTHON_3_12,
       handler: 'handler.lambda_handler',
       code: lambda.Code.fromAsset('../backend/lambdas', {
         bundling: {
-          image: lambda.Runtime.PYTHON_3_11.bundlingImage,
+          image: lambda.Runtime.PYTHON_3_12.bundlingImage,
           command: [
             'bash', '-c',
             'cd report_ocr_failure && pip install -r requirements.txt -t /asset-output && cp -au . /asset-output && cp -au ../utils /asset-output/'
@@ -271,11 +275,11 @@ export class AgroAmazoniaStack extends cdk.Stack {
 
     const sendToProtheusLambda = new lambda.Function(this, 'SendToProtheusFunction', {
       functionName: name('lambda', 'send-to-protheus'),
-      runtime: lambda.Runtime.PYTHON_3_11,
+      runtime: lambda.Runtime.PYTHON_3_12,
       handler: 'handler.lambda_handler',
       code: lambda.Code.fromAsset('../backend/lambdas', {
         bundling: {
-          image: lambda.Runtime.PYTHON_3_11.bundlingImage,
+          image: lambda.Runtime.PYTHON_3_12.bundlingImage,
           command: [
             'bash', '-c',
             'cd send_to_protheus && pip install -r requirements.txt -t /asset-output && cp -au . /asset-output && cp -au ../utils /asset-output/'
@@ -326,7 +330,7 @@ export class AgroAmazoniaStack extends cdk.Stack {
     // Lambda: Update Metrics
     const updateMetricsLambda = new lambda.Function(this, 'UpdateMetricsFunction', {
       functionName: name('lambda', 'update-metrics'),
-      runtime: lambda.Runtime.PYTHON_3_11,
+      runtime: lambda.Runtime.PYTHON_3_12,
       handler: 'handler.lambda_handler',
       code: lambda.Code.fromAsset('../backend/lambdas/update_metrics'),
       environment: {
@@ -344,11 +348,11 @@ export class AgroAmazoniaStack extends cdk.Stack {
     // Lambda: Notify Success - Busca dados, envia feedback para API e SNS
     const notifySuccessLambda = new lambda.Function(this, 'NotifySuccessFunction', {
       functionName: name('lambda', 'notify-success'),
-      runtime: lambda.Runtime.PYTHON_3_11,
+      runtime: lambda.Runtime.PYTHON_3_12,
       handler: 'handler.lambda_handler',
       code: lambda.Code.fromAsset('../backend/lambdas/notify_success', {
         bundling: {
-          image: lambda.Runtime.PYTHON_3_11.bundlingImage,
+          image: lambda.Runtime.PYTHON_3_12.bundlingImage,
           command: [
             'bash', '-c',
             'pip install -r requirements.txt -t /asset-output && cp -au . /asset-output'
@@ -378,11 +382,11 @@ export class AgroAmazoniaStack extends cdk.Stack {
     // Lambda: Send Feedback to ServiceNow e SNS
     const sendFeedbackLambda = new lambda.Function(this, 'SendFeedbackFunction', {
       functionName: name('lambda', 'send-feedback'),
-      runtime: lambda.Runtime.PYTHON_3_11,
+      runtime: lambda.Runtime.PYTHON_3_12,
       handler: 'handler.lambda_handler',
       code: lambda.Code.fromAsset('../backend/lambdas', {
         bundling: {
-          image: lambda.Runtime.PYTHON_3_11.bundlingImage,
+          image: lambda.Runtime.PYTHON_3_12.bundlingImage,
           command: [
             'bash', '-c',
             'cd send_feedback && pip install -r requirements.txt -t /asset-output && cp -au . /asset-output && cp -au ../utils /asset-output/'
@@ -417,7 +421,7 @@ export class AgroAmazoniaStack extends cdk.Stack {
     // Lambda: Parse XML
     const parseXmlLambda = new lambda.Function(this, 'ParseXmlFunction', {
       functionName: name('lambda', 'parse-xml'),
-      runtime: lambda.Runtime.PYTHON_3_11,
+      runtime: lambda.Runtime.PYTHON_3_12,
       handler: 'handler.handler',
       code: lambda.Code.fromAsset('../backend/lambdas/parse_xml'),
       environment: {
@@ -436,7 +440,7 @@ export class AgroAmazoniaStack extends cdk.Stack {
     // Lambda: Update Process Status (para atualizar status quando houver erro)
     const updateProcessStatusLambda = new lambda.Function(this, 'UpdateProcessStatusFunction', {
       functionName: name('lambda', 'update-process-status'),
-      runtime: lambda.Runtime.PYTHON_3_11,
+      runtime: lambda.Runtime.PYTHON_3_12,
       handler: 'handler.handler',
       code: lambda.Code.fromAsset('../backend/lambdas/update_process_status'),
       environment: {
@@ -454,7 +458,7 @@ export class AgroAmazoniaStack extends cdk.Stack {
     // Lambda: S3 Upload Handler
     const s3UploadHandler = new lambda.Function(this, 'S3UploadHandler', {
       functionName: name('lambda', 's3-upload-handler'),
-      runtime: lambda.Runtime.PYTHON_3_11,
+      runtime: lambda.Runtime.PYTHON_3_12,
       handler: 'handler.handler',
       code: lambda.Code.fromAsset('../backend/lambdas/s3_upload_handler'),
       environment: {
@@ -761,11 +765,11 @@ export class AgroAmazoniaStack extends cdk.Stack {
     // Lambda: API FastAPI
     const apiLambda = new lambda.Function(this, 'ApiFunction', {
       functionName: name('lambda', 'api'),
-      runtime: lambda.Runtime.PYTHON_3_11,
+      runtime: lambda.Runtime.PYTHON_3_12,
       handler: 'src.main.handler',
       code: lambda.Code.fromAsset('../backend', {
         bundling: {
-          image: lambda.Runtime.PYTHON_3_11.bundlingImage,
+          image: lambda.Runtime.PYTHON_3_12.bundlingImage,
           command: [
             'bash', '-c',
             'pip install -r requirements.txt -t /asset-output && cp -au src /asset-output/'
