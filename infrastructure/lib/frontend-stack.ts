@@ -6,6 +6,7 @@ import * as origins from 'aws-cdk-lib/aws-cloudfront-origins';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import * as lambda from 'aws-cdk-lib/aws-lambda';
 import * as certificatemanager from 'aws-cdk-lib/aws-certificatemanager';
+import * as wafv2 from 'aws-cdk-lib/aws-wafv2';
 import { Construct } from 'constructs';
 
 interface FrontendStackProps extends cdk.StackProps {
@@ -177,7 +178,27 @@ export class FrontendStack extends cdk.Stack {
       comment: 'Cache policy desabilitada para todos os paths'
     });
 
-    // CloudFront Distribution com OAC, Lambda@Edge e domínio customizado
+    // Importar WAF existente (waf-cloudfront)
+    // WAF para CloudFront DEVE estar:
+    // - Escopo: CLOUDFRONT (não REGIONAL)
+    // - Região: us-east-1 (obrigatório para CloudFront)
+    // O campo webAclId espera o ARN completo, não apenas o ID
+    const webAclArn = process.env.WAF_ARN;
+    
+    if (webAclArn) {
+      if (!webAclArn.startsWith('arn:aws:wafv2:')) {
+        throw new Error(`WAF_ARN inválido! Deve ser um ARN completo começando com 'arn:aws:wafv2:'. Recebido: ${webAclArn}`);
+      }
+      console.log(`[FrontendStack] WAF ARN: ${webAclArn}`);
+      console.log(`[FrontendStack] ⚠️  Certifique-se de que o WAF está no escopo CLOUDFRONT na região us-east-1`);
+    } else {
+      console.warn(`[FrontendStack] ⚠️  WAF_ARN não fornecido. WAF não será associado ao CloudFront.`);
+      console.warn(`[FrontendStack] ⚠️  Para associar o WAF, forneça via: export WAF_ARN=<arn-completo>`);
+      console.warn(`[FrontendStack] ⚠️  IMPORTANTE: O WAF deve estar no escopo CLOUDFRONT na região us-east-1`);
+      console.warn(`[FrontendStack] ⚠️  Exemplo: export WAF_ARN=arn:aws:wafv2:us-east-1:835671581949:global/webacl/waf-cloudfront/9385afad-40cd-4aa5-a944-2a6c72ed3cbd`);
+    }
+
+    // CloudFront Distribution com OAC, Lambda@Edge, WAF e domínio customizado
     // Nota: A distribuição existente pode ter OAI configurado, então precisamos
     // garantir que apenas OAC seja usado (não ambos)
     const distribution = new cloudfront.Distribution(this, 'FrontendDistribution', {
@@ -225,104 +246,9 @@ export class FrontendStack extends cdk.Stack {
         })
       },
       // Comportamentos adicionais para paths específicos
+      // IMPORTANTE: A ordem importa! Paths mais específicos devem vir primeiro
       additionalBehaviors: {
-        // Behaviors antigos: assets, HTML e JS
-        '/assets/*': {
-          origin: new origins.S3Origin(frontendBucket, {
-            originAccessControlId: oacId!
-          }),
-          viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
-          allowedMethods: cloudfront.AllowedMethods.ALLOW_GET_HEAD,
-          cachedMethods: cloudfront.CachedMethods.CACHE_GET_HEAD,
-          compress: true,
-          cachePolicy: noCachePolicy, // Cache desabilitado
-          // Lambda@Edge do default behavior (CheckAuthHandler e HttpHeadersHandler)
-          edgeLambdas: [
-            {
-              functionVersion: checkAuthHandler,
-              eventType: cloudfront.LambdaEdgeEventType.VIEWER_REQUEST
-            },
-            {
-              functionVersion: httpHeadersHandler,
-              eventType: cloudfront.LambdaEdgeEventType.VIEWER_RESPONSE
-            }
-          ]
-        },
-        '*.html': {
-          origin: new origins.S3Origin(frontendBucket, {
-            originAccessControlId: oacId!
-          }),
-          viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
-          allowedMethods: cloudfront.AllowedMethods.ALLOW_GET_HEAD,
-          cachedMethods: cloudfront.CachedMethods.CACHE_GET_HEAD,
-          compress: true,
-          cachePolicy: noCachePolicy, // Cache desabilitado
-          // Lambda@Edge do default behavior (CheckAuthHandler e HttpHeadersHandler)
-          edgeLambdas: [
-            {
-              functionVersion: checkAuthHandler,
-              eventType: cloudfront.LambdaEdgeEventType.VIEWER_REQUEST
-            },
-            {
-              functionVersion: httpHeadersHandler,
-              eventType: cloudfront.LambdaEdgeEventType.VIEWER_RESPONSE
-            }
-          ]
-        },
-        '*.js': {
-          origin: new origins.S3Origin(frontendBucket, {
-            originAccessControlId: oacId!
-          }),
-          viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
-          allowedMethods: cloudfront.AllowedMethods.ALLOW_GET_HEAD,
-          cachedMethods: cloudfront.CachedMethods.CACHE_GET_HEAD,
-          compress: true,
-          cachePolicy: noCachePolicy, // Cache desabilitado
-          // Lambda@Edge do default behavior (CheckAuthHandler e HttpHeadersHandler)
-          edgeLambdas: [
-            {
-              functionVersion: checkAuthHandler,
-              eventType: cloudfront.LambdaEdgeEventType.VIEWER_REQUEST
-            },
-            {
-              functionVersion: httpHeadersHandler,
-              eventType: cloudfront.LambdaEdgeEventType.VIEWER_RESPONSE
-            }
-          ]
-        },
-        // Novos behaviors para autenticação
-        '/signout*': {
-          origin: new origins.S3Origin(frontendBucket, {
-            originAccessControlId: oacId!
-          }),
-          viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
-          allowedMethods: cloudfront.AllowedMethods.ALLOW_GET_HEAD,
-          cachedMethods: cloudfront.CachedMethods.CACHE_GET_HEAD,
-          compress: true,
-          cachePolicy: noCachePolicy, // Cache desabilitado
-          edgeLambdas: [
-            {
-              functionVersion: signOutHandler,
-              eventType: cloudfront.LambdaEdgeEventType.VIEWER_REQUEST
-            }
-          ]
-        },
-        '/refreshauth*': {
-          origin: new origins.S3Origin(frontendBucket, {
-            originAccessControlId: oacId!
-          }),
-          viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
-          allowedMethods: cloudfront.AllowedMethods.ALLOW_GET_HEAD,
-          cachedMethods: cloudfront.CachedMethods.CACHE_GET_HEAD,
-          compress: true,
-          cachePolicy: noCachePolicy, // Cache desabilitado
-          edgeLambdas: [
-            {
-              functionVersion: refreshAuthHandler,
-              eventType: cloudfront.LambdaEdgeEventType.VIEWER_REQUEST
-            }
-          ]
-        },
+        // Paths de autenticação (ordem de prioridade: parseauth > refreshauth > signout)
         '/parseauth*': {
           origin: new origins.S3Origin(frontendBucket, {
             originAccessControlId: oacId!
@@ -342,6 +268,72 @@ export class FrontendStack extends cdk.Stack {
               eventType: cloudfront.LambdaEdgeEventType.VIEWER_RESPONSE
             }
           ]
+        },
+        '/refreshauth*': {
+          origin: new origins.S3Origin(frontendBucket, {
+            originAccessControlId: oacId!
+          }),
+          viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+          allowedMethods: cloudfront.AllowedMethods.ALLOW_GET_HEAD,
+          cachedMethods: cloudfront.CachedMethods.CACHE_GET_HEAD,
+          compress: true,
+          cachePolicy: noCachePolicy, // Cache desabilitado
+          edgeLambdas: [
+            {
+              functionVersion: refreshAuthHandler,
+              eventType: cloudfront.LambdaEdgeEventType.VIEWER_REQUEST
+            }
+          ]
+        },
+        '/signout*': {
+          origin: new origins.S3Origin(frontendBucket, {
+            originAccessControlId: oacId!
+          }),
+          viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+          allowedMethods: cloudfront.AllowedMethods.ALLOW_GET_HEAD,
+          cachedMethods: cloudfront.CachedMethods.CACHE_GET_HEAD,
+          compress: true,
+          cachePolicy: noCachePolicy, // Cache desabilitado
+          edgeLambdas: [
+            {
+              functionVersion: signOutHandler,
+              eventType: cloudfront.LambdaEdgeEventType.VIEWER_REQUEST
+            }
+          ]
+        },
+        // Behaviors antigos: assets, HTML e JS (sem Lambda@Edge)
+        '/assets/*': {
+          origin: new origins.S3Origin(frontendBucket, {
+            originAccessControlId: oacId!
+          }),
+          viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+          allowedMethods: cloudfront.AllowedMethods.ALLOW_GET_HEAD,
+          cachedMethods: cloudfront.CachedMethods.CACHE_GET_HEAD,
+          compress: true,
+          cachePolicy: noCachePolicy // Cache desabilitado
+          // Sem Lambda@Edge (viewer request/response)
+        },
+        '*.html': {
+          origin: new origins.S3Origin(frontendBucket, {
+            originAccessControlId: oacId!
+          }),
+          viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+          allowedMethods: cloudfront.AllowedMethods.ALLOW_GET_HEAD,
+          cachedMethods: cloudfront.CachedMethods.CACHE_GET_HEAD,
+          compress: true,
+          cachePolicy: noCachePolicy // Cache desabilitado
+          // Sem Lambda@Edge (viewer request/response)
+        },
+        '*.js': {
+          origin: new origins.S3Origin(frontendBucket, {
+            originAccessControlId: oacId!
+          }),
+          viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+          allowedMethods: cloudfront.AllowedMethods.ALLOW_GET_HEAD,
+          cachedMethods: cloudfront.CachedMethods.CACHE_GET_HEAD,
+          compress: true,
+          cachePolicy: noCachePolicy // Cache desabilitado
+          // Sem Lambda@Edge (viewer request/response)
         }
       },
       errorResponses: [
@@ -373,27 +365,35 @@ export class FrontendStack extends cdk.Stack {
         : undefined,
       minimumProtocolVersion: cloudfront.SecurityPolicyProtocol.TLS_V1_2_2021,
       priceClass: cloudfront.PriceClass.PRICE_CLASS_100, // Apenas EUA e Europa
-      comment: `AgroAmazonia Frontend Distribution - ${this.envName}`
+      comment: `frontend-s3-${this.envName}`,
+      ...(webAclArn ? { webAclId: webAclArn } : {})
     });
+    
+    // Forçar atualização do WAF usando Cfn construct (garante que o WAF seja aplicado mesmo se removido manualmente)
+    const cfnDistribution = distribution.node.defaultChild as cloudfront.CfnDistribution;
+    if (webAclArn) {
+      // Forçar atualização do WAF via override para garantir que seja aplicado
+      // O campo WebACLId espera o ARN completo
+      // Usar addPropertyOverride para garantir que o valor seja sempre aplicado
+      cfnDistribution.addPropertyOverride('DistributionConfig.WebACLId', webAclArn);
+      console.log(`[FrontendStack] WAF forçado via override: ${webAclArn}`);
+    }
     
     // Forçar remoção do OAI (legacy) da distribuição existente usando Cfn construct
     // Isso é necessário quando migrando de OAI para OAC
     // O CloudFormation não permite ter ambos (OAI e OAC) ao mesmo tempo
     // IMPORTANTE: S3OriginConfig ainda precisa existir, mas sem OriginAccessIdentity
-    const cfnDistribution = distribution.node.defaultChild as cloudfront.CfnDistribution;
     
     // Remover OriginAccessIdentity do S3OriginConfig e garantir OAC para todos os origins
-    // Origin 0: default behavior
-    cfnDistribution.addOverride('Properties.DistributionConfig.Origins.0.S3OriginConfig.OriginAccessIdentity', undefined);
-    cfnDistribution.addOverride('Properties.DistributionConfig.Origins.0.OriginAccessControlId', oacId!);
-    
-    // Origins 1-6: behaviors adicionais
-    // 1-3: /assets/*, *.html, *.js (antigos)
-    // 4-6: /signout*, /refreshauth*, /parseauth* (novos)
-    for (let i = 1; i <= 6; i++) {
+    // Origins 0-5: behaviors adicionais (parseauth, refreshauth, signout, assets, html, js)
+    for (let i = 0; i <= 5; i++) {
       cfnDistribution.addOverride(`Properties.DistributionConfig.Origins.${i}.S3OriginConfig.OriginAccessIdentity`, undefined);
       cfnDistribution.addOverride(`Properties.DistributionConfig.Origins.${i}.OriginAccessControlId`, oacId!);
     }
+    
+    // Origin 6: default behavior (último na ordem)
+    cfnDistribution.addOverride('Properties.DistributionConfig.Origins.6.S3OriginConfig.OriginAccessIdentity', undefined);
+    cfnDistribution.addOverride('Properties.DistributionConfig.Origins.6.OriginAccessControlId', oacId!);
     
     // Adicionar política do bucket para permitir acesso do OAC
     // Nota: A política precisa ser adicionada após criar a distribuição para ter o ARN correto

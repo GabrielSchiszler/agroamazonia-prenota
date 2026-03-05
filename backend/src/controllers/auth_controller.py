@@ -157,17 +157,29 @@ async def get_token(
     }
     ```
     """
+    logger.info("=" * 80)
+    logger.info("[get_token] Requisição recebida para obter token OAuth2")
+    logger.info(f"[get_token] secret_id: {secret_id} (tipo: {type(secret_id)})")
+    logger.info(f"[get_token] service: {service} (tipo: {type(service)})")
+    
     try:
+        logger.info("[get_token] Chamando get_oauth2_token_from_secret...")
         token_data = get_oauth2_token_from_secret(secret_id)
         
-        logger.info(f"Token obtido com sucesso para secret_id={secret_id}, service={service}")
+        logger.info(f"[get_token] Token obtido com sucesso para secret_id={secret_id}, service={service}")
+        logger.info(f"[get_token] token_type: {token_data.get('token_type')}")
+        logger.info(f"[get_token] expires_in: {token_data.get('expires_in')}")
+        logger.info("=" * 80)
         
         return TokenResponse(**token_data)
         
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Erro inesperado: {str(e)}", exc_info=True)
+        logger.error(f"[get_token] Erro inesperado: {str(e)}")
+        logger.error(f"[get_token] Tipo do erro: {type(e).__name__}")
+        logger.exception("[get_token] Traceback completo:")
+        logger.info("=" * 80)
         raise HTTPException(
             status_code=500,
             detail=f"Erro ao processar requisição: {str(e)}"
@@ -218,16 +230,24 @@ async def get_protheus_basic_auth(
     }
     ```
     """
+    logger.info("=" * 80)
+    logger.info("[get_protheus_basic_auth] Requisição recebida para obter Basic Auth do Protheus")
+    logger.info(f"[get_protheus_basic_auth] secret_id: {secret_id} (tipo: {type(secret_id)})")
+    
     try:
         # Se secret_id não foi informado, usar variável de ambiente
         if not secret_id:
             secret_id = os.environ.get('PROTHEUS_SECRET_ID')
+            logger.info(f"[get_protheus_basic_auth] secret_id obtido da variável de ambiente: {secret_id}")
             if not secret_id:
+                logger.error("[get_protheus_basic_auth] secret_id não informado e PROTHEUS_SECRET_ID não configurado")
+                logger.info("=" * 80)
                 raise HTTPException(
                     status_code=400,
                     detail="secret_id não informado e PROTHEUS_SECRET_ID não configurado"
                 )
         
+        logger.info("[get_protheus_basic_auth] Buscando credenciais do Secrets Manager...")
         # Buscar credenciais do Secrets Manager
         credentials = get_secret(secret_id)
         
@@ -236,23 +256,30 @@ async def get_protheus_basic_auth(
         password = credentials.get('password') or credentials.get('pass')
         
         if not username or not password:
+            logger.error("[get_protheus_basic_auth] Secret não contém username/password válidos")
+            logger.info("=" * 80)
             raise HTTPException(
                 status_code=500,
                 detail="Secret deve conter 'username'/'password' (ou 'user'/'pass')"
             )
         
+        logger.info(f"[get_protheus_basic_auth] Credenciais obtidas (username: {username})")
         # Gerar Basic Auth header (mesma forma que send_to_protheus faz)
         basic_auth = base64.b64encode(f"{username}:{password}".encode("utf-8")).decode("ascii")
         authorization_header = f"Basic {basic_auth}"
         
-        logger.info(f"Basic Auth gerado com sucesso para secret_id={secret_id} (username: {username})")
+        logger.info(f"[get_protheus_basic_auth] Basic Auth gerado com sucesso para secret_id={secret_id}")
+        logger.info("=" * 80)
         
         return BasicAuthResponse(authorization_header=authorization_header)
         
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Erro ao gerar Basic Auth: {str(e)}", exc_info=True)
+        logger.error(f"[get_protheus_basic_auth] Erro inesperado: {str(e)}")
+        logger.error(f"[get_protheus_basic_auth] Tipo do erro: {type(e).__name__}")
+        logger.exception("[get_protheus_basic_auth] Traceback completo:")
+        logger.info("=" * 80)
         raise HTTPException(
             status_code=500,
             detail=f"Erro ao gerar Basic Auth: {str(e)}"
@@ -310,11 +337,23 @@ async def protheus_proxy(
     });
     ```
     """
+    logger.info("=" * 80)
+    logger.info("[protheus_proxy] Requisição recebida para proxy do Protheus")
+    logger.info(f"[protheus_proxy] method: {request.method} (tipo: {type(request.method)})")
+    logger.info(f"[protheus_proxy] path: {request.path} (tipo: {type(request.path)})")
+    logger.info(f"[protheus_proxy] tenant_id: {request.tenant_id} (tipo: {type(request.tenant_id)})")
+    logger.info(f"[protheus_proxy] secret_id: {secret_id} (tipo: {type(secret_id)})")
+    logger.info(f"[protheus_proxy] protheus_url: {protheus_url} (tipo: {type(protheus_url)})")
+    logger.info(f"[protheus_proxy] Request completo: {request.model_dump()}")
+    
     try:
         # Obter configurações
         if not secret_id:
             secret_id = os.environ.get('PROTHEUS_SECRET_ID')
+            logger.info(f"[protheus_proxy] secret_id obtido da variável de ambiente: {secret_id}")
             if not secret_id:
+                logger.error("[protheus_proxy] secret_id não informado e PROTHEUS_SECRET_ID não configurado")
+                logger.info("=" * 80)
                 raise HTTPException(
                     status_code=400,
                     detail="secret_id não informado e PROTHEUS_SECRET_ID não configurado"
@@ -322,23 +361,30 @@ async def protheus_proxy(
         
         if not protheus_url:
             protheus_url = os.environ.get('PROTHEUS_API_URL')
+            logger.info(f"[protheus_proxy] protheus_url obtido da variável de ambiente: {protheus_url}")
             if not protheus_url:
+                logger.error("[protheus_proxy] protheus_url não informado e PROTHEUS_API_URL não configurado")
+                logger.info("=" * 80)
                 raise HTTPException(
                     status_code=400,
                     detail="protheus_url não informado e PROTHEUS_API_URL não configurado"
                 )
         
+        logger.info(f"[protheus_proxy] Buscando credenciais do Secrets Manager (secret_id: {secret_id})...")
         # Buscar credenciais do Secrets Manager
         credentials = get_secret(secret_id)
         username = credentials.get('username') or credentials.get('user')
         password = credentials.get('password') or credentials.get('pass')
         
         if not username or not password:
+            logger.error("[protheus_proxy] Secret não contém username/password válidos")
+            logger.info("=" * 80)
             raise HTTPException(
                 status_code=500,
                 detail="Secret deve conter 'username'/'password' (ou 'user'/'pass')"
             )
         
+        logger.info(f"[protheus_proxy] Credenciais obtidas (username: {username})")
         # Gerar Basic Auth header (mesma forma que send_to_protheus faz)
         basic_auth = base64.b64encode(f"{username}:{password}".encode("utf-8")).decode("ascii")
         
@@ -367,7 +413,7 @@ async def protheus_proxy(
         method = request.method.upper()
         timeout = int(os.environ.get('PROTHEUS_TIMEOUT', '100'))
         
-        logger.info(f"Fazendo requisição {method} para {full_url} (timeout: {timeout}s)")
+        logger.info(f"[protheus_proxy] Fazendo requisição {method} para {full_url} (timeout: {timeout}s)")
         
         try:
             if method == 'GET':
@@ -387,6 +433,9 @@ async def protheus_proxy(
             except:
                 response_body = {'raw_response': resp.text}
             
+            logger.info(f"[protheus_proxy] Requisição ao Protheus concluída com sucesso! Status: {resp.status_code}")
+            logger.info("=" * 80)
+            
             return {
                 'status_code': resp.status_code,
                 'headers': dict(resp.headers),
@@ -394,11 +443,16 @@ async def protheus_proxy(
             }
             
         except requests.exceptions.Timeout:
+            logger.error(f"[protheus_proxy] Timeout ao conectar ao Protheus (após {timeout}s)")
+            logger.info("=" * 80)
             raise HTTPException(
                 status_code=504,
                 detail=f"Timeout ao conectar ao Protheus (após {timeout}s)"
             )
         except requests.exceptions.ConnectionError as e:
+            logger.error(f"[protheus_proxy] Erro de conexão ao Protheus: {str(e)}")
+            logger.exception("[protheus_proxy] Traceback completo:")
+            logger.info("=" * 80)
             raise HTTPException(
                 status_code=502,
                 detail=f"Erro de conexão ao Protheus: {str(e)}"
@@ -409,6 +463,10 @@ async def protheus_proxy(
             except:
                 error_body = {'raw_response': e.response.text if e.response else str(e)}
             
+            logger.error(f"[protheus_proxy] Erro HTTP do Protheus: {e.response.status_code if e.response else 'N/A'}")
+            logger.error(f"[protheus_proxy] Response body: {error_body}")
+            logger.info("=" * 80)
+            
             raise HTTPException(
                 status_code=e.response.status_code if e.response else 502,
                 detail={
@@ -418,6 +476,9 @@ async def protheus_proxy(
                 }
             )
         except requests.exceptions.RequestException as e:
+            logger.error(f"[protheus_proxy] Erro na requisição ao Protheus: {str(e)}")
+            logger.exception("[protheus_proxy] Traceback completo:")
+            logger.info("=" * 80)
             raise HTTPException(
                 status_code=502,
                 detail=f"Erro na requisição ao Protheus: {str(e)}"
@@ -426,7 +487,10 @@ async def protheus_proxy(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Erro no proxy do Protheus: {str(e)}", exc_info=True)
+        logger.error(f"[protheus_proxy] Erro inesperado: {str(e)}")
+        logger.error(f"[protheus_proxy] Tipo do erro: {type(e).__name__}")
+        logger.exception("[protheus_proxy] Traceback completo:")
+        logger.info("=" * 80)
         raise HTTPException(
             status_code=500,
             detail=f"Erro no proxy do Protheus: {str(e)}"

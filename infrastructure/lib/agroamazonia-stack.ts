@@ -44,13 +44,18 @@ export class AgroAmazoniaStack extends cdk.Stack {
       availabilityZone: 'sa-east-1a'
     });
 
+    const privateSubnet2 = ec2.Subnet.fromSubnetAttributes(this, 'PrivateSubnet2', {
+      subnetId: 'subnet-0897daaebdab91405',
+      availabilityZone: 'sa-east-1b'
+    });
+
     // Security Group existente para as Lambdas na VPC
-    const lambdaSg = ec2.SecurityGroup.fromSecurityGroupId(this, 'LambdaSecurityGroup', 'sg-048ca965b1065aa57');
+    const lambdaSg = ec2.SecurityGroup.fromSecurityGroupId(this, 'LambdaSecurityGroup', 'sg-00197d66a726cc77b');
 
     // Configuração comum de VPC para todas as Lambdas
     const vpcConfig = {
       vpc,
-      vpcSubnets: { subnets: [privateSubnet] },
+      vpcSubnets: { subnets: [privateSubnet, privateSubnet2] },
       securityGroups: [lambdaSg]
     };
 
