@@ -611,6 +611,10 @@ INSTRUÇÕES:
 4. Datas:
    - Retorne datas em YYYY-MM-DD.
    - Se o texto trouxer DD/MM/YYYY, converta.
+   - VALIDADE EM MM/YY: Se a validade estiver no formato MM/YY (ex: "04/27", "12/25"), interprete como o ÚLTIMO DIA do mês informado.
+     Exemplo: 04/27 = 30/04/2027 (último dia de abril de 2027).
+     NÃO inverta os campos (04/27 NÃO é 27/04/2024).
+     NÃO assuma dia 01. SEMPRE use o último dia do mês.
    - Se a validade estiver em meses (ex: "18 MESES"), só retorne dataValidade se existir dataFabricacao para calcular; caso contrário, NÃO inclua o lote.
 5. Se houver múltiplos lotes, retorne TODOS os lotes válidos.
 6. Se não houver lote válido com (numero + dataFabricacao + dataValidade), retorne lista vazia.
@@ -620,6 +624,7 @@ INSTRUÇÕES:
    - "LOTE:331/25 FABRIC:06/12/2025" → numero: "331/25", dataFabricacao: "2025-12-06"
    - "LOTE:331/25 FABRIC:06/12/2025 VALID:18 MESES" → numero: "331/25", dataFabricacao: "2025-12-06", dataValidade: calcular 18 meses a partir da fabricação
    - "LOTE:331/25 VALID:2026-12-06" → numero: "331/25", dataValidade: "2026-12-06"
+   - "LOTE:ABC VALID:04/27" → numero: "ABC", dataValidade: "2027-04-30" (MM/YY = último dia do mês; 04/27 NÃO é 27/04)
    - "LOTE 12345 QTD: 20.0" → numero: "12345", quantidade: 20.0
 
 4. Se houver múltiplos lotes no mesmo texto, extraia TODOS.
@@ -652,6 +657,7 @@ EXEMPLOS DE EXTRAÇÃO:
 - "LOTE:331/25 FABRIC:06/12/2025 VALID:18 MESES" → {{"numero": "331/25", "dataFabricacao": "2025-12-06", "dataValidade": "2027-06-06", "quantidade": null}}
 - "LOTE:123 QTD: 20.0" → {{"numero": "123", "quantidade": 20.0, "dataFabricacao": null, "dataValidade": null}}
 - "LOTE:ABC/2025 FABRIC:15/01/2025 VALID:12 MESES" → {{"numero": "ABC/2025", "dataFabricacao": "2025-01-15", "dataValidade": "2026-01-15", "quantidade": null}}
+- "LOTE:X VALID:04/27" → {{"numero": "X", "dataValidade": "2027-04-30", "dataFabricacao": null, "quantidade": null}} (04/27 = último dia de abril/2027, NÃO 27/04)
 
 Retorne APENAS o JSON.
 '''
