@@ -11,10 +11,12 @@ import sys
 sys.path.insert(0, os.path.dirname(__file__))
 try:
     from utils.bedrock_error_summary import generate_error_summary_with_bedrock
+    from utils.bedrock_success_summary import generate_success_feedback_summary_with_bedrock
 except ImportError:
     # Fallback: tentar importar do diretório pai
     sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
     from utils.bedrock_error_summary import generate_error_summary_with_bedrock
+    from utils.bedrock_success_summary import generate_success_feedback_summary_with_bedrock
 
 dynamodb = boto3.resource('dynamodb')
 table = dynamodb.Table(os.environ['TABLE_NAME'])
@@ -445,30 +447,33 @@ def lambda_handler(event, context):
                     if key not in organized_details:
                         organized_details[key] = value
         
-        # Gerar response_summary usando Bedrock apenas quando for falha
+        # Mesmo objeto para Bedrock: erro usa bedrock_error_summary; sucesso usa bedrock_success_summary
+        feedback_data_for_bedrock = {
+            "process_id": process_id,
+            "success": success,
+            "details": organized_details,
+        }
         response_summary = None
-        if not success:
-            try:
-                # Preparar dados completos do erro para o Bedrock
-                error_data_for_bedrock = {
-                    "process_id": process_id,
-                    "success": success,
-                    "details": organized_details
-                }
-                response_summary = generate_error_summary_with_bedrock(error_data_for_bedrock)
-                if response_summary:
-                    print(f"[FEEDBACK] response_summary gerado com sucesso ({len(response_summary)} caracteres)")
-                else:
-                    print(f"[FEEDBACK] WARNING: Não foi possível gerar response_summary")
-            except Exception as e:
-                print(f"[FEEDBACK] WARNING: Erro ao gerar response_summary: {str(e)}")
-                import traceback
-                traceback.print_exc()
-        
+        try:
+            if success:
+                response_summary = generate_success_feedback_summary_with_bedrock(
+                    feedback_data_for_bedrock
+                )
+            else:
+                response_summary = generate_error_summary_with_bedrock(feedback_data_for_bedrock)
+            if response_summary:
+                print(f"[FEEDBACK] response_summary gerado com sucesso ({len(response_summary)} caracteres)")
+            else:
+                print(f"[FEEDBACK] WARNING: Não foi possível gerar response_summary")
+        except Exception as e:
+            print(f"[FEEDBACK] WARNING: Erro ao gerar response_summary: {str(e)}")
+            import traceback
+            traceback.print_exc()
+
         payload = {
             "success": success,
             "details": organized_details,
-            "response_summary": response_summary if not success else None  # Adicionar campo apenas em falhas
+            "response_summary": response_summary,
         }
         
         headers = {
