@@ -1,10 +1,18 @@
 import json
 import os
+import sys
 import boto3
 import logging
 import requests
 import base64
 from datetime import datetime
+
+sys.path.insert(0, os.path.dirname(__file__))
+try:
+    from utils.bedrock_success_summary import generate_success_feedback_summary_with_bedrock
+except ImportError:
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+    from utils.bedrock_success_summary import generate_success_feedback_summary_with_bedrock
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
@@ -43,8 +51,8 @@ def get_oauth2_token():
         logger.warning(f"Failed to obtain OAuth2 token: {str(e)}")
         return None
 
-def send_feedback_to_api(process_id, success, details):
-    """Envia feedback para API do ServiceNow"""
+def send_feedback_to_api(process_id, success, details, response_summary=None):
+    """Envia feedback para API do ServiceNow (mesmo formato que send_feedback Lambda)."""
     feedback_url = os.environ.get('SERVICENOW_FEEDBACK_API_URL')
     if not feedback_url:
         return False
@@ -55,7 +63,11 @@ def send_feedback_to_api(process_id, success, details):
             return False
         
         full_url = f"{feedback_url.rstrip('/')}/{process_id}"
-        payload = {"success": success, "details": details}
+        payload = {
+            "success": success,
+            "details": details,
+            "response_summary": response_summary,
+        }
         headers = {
             'Content-Type': 'application/json',
             'Authorization': f'Bearer {access_token}'
@@ -213,15 +225,35 @@ def lambda_handler(event, context):
                     'body': protheus_response
                 }
         
-        # Construir payload no formato da API (mesmo formato que será enviado para SNS)
+        feedback_data_for_bedrock = {
+            "process_id": process_id,
+            "success": True,
+            "details": organized_details,
+        }
+        response_summary = None
+        try:
+            response_summary = generate_success_feedback_summary_with_bedrock(
+                feedback_data_for_bedrock
+            )
+            if response_summary:
+                logger.info(
+                    "response_summary gerado (%s caracteres)", len(response_summary)
+                )
+            else:
+                logger.warning("Bedrock não retornou response_summary para sucesso")
+        except Exception as e:
+            logger.warning("Erro ao gerar response_summary: %s", str(e))
+
+        # Mesmo payload para API e SNS (alinha com send_feedback)
         api_payload = {
             "success": True,
-            "details": organized_details
+            "details": organized_details,
+            "response_summary": response_summary,
         }
-        
+
         # Enviar feedback para API
         logger.info("Enviando feedback de sucesso para API do ServiceNow...")
-        send_feedback_to_api(process_id, True, organized_details)
+        send_feedback_to_api(process_id, True, organized_details, response_summary)
         
         # Enviar o mesmo payload para SNS
         topic_arn = os.environ.get('SNS_TOPIC_ARN')

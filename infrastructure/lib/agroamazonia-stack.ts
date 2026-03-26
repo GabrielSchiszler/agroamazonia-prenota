@@ -345,17 +345,17 @@ export class AgroAmazoniaStack extends cdk.Stack {
 
     documentTable.grantReadWriteData(updateMetricsLambda);
 
-    // Lambda: Notify Success - Busca dados, envia feedback para API e SNS
+    // Lambda: Notify Success - Busca dados, Bedrock summary, feedback API e SNS (mesmo payload que send_feedback)
     const notifySuccessLambda = new lambda.Function(this, 'NotifySuccessFunction', {
       functionName: name('lambda', 'notify-success'),
       runtime: lambda.Runtime.PYTHON_3_12,
       handler: 'handler.lambda_handler',
-      code: lambda.Code.fromAsset('../backend/lambdas/notify_success', {
+      code: lambda.Code.fromAsset('../backend/lambdas', {
         bundling: {
           image: lambda.Runtime.PYTHON_3_12.bundlingImage,
           command: [
             'bash', '-c',
-            'pip install -r requirements.txt -t /asset-output && cp -au . /asset-output'
+            'cd notify_success && pip install -r requirements.txt -t /asset-output && cp -au . /asset-output && cp -au ../utils /asset-output/'
           ]
         }
       }),
@@ -364,13 +364,14 @@ export class AgroAmazoniaStack extends cdk.Stack {
         SNS_TOPIC_ARN: errorTopic.topicArn,
         ENVIRONMENT: this.envName,
         SERVICENOW_FEEDBACK_API_URL: servicenowFeedbackApiUrl,
+        BEDROCK_MODEL_ID: process.env.BEDROCK_MODEL_ID || 'amazon.nova-pro-v1:0',
         OCR_FAILURE_AUTH_URL: ocrFailureAuthUrl,
         OCR_FAILURE_CLIENT_ID: ocrFailureClientId,
         OCR_FAILURE_CLIENT_SECRET: ocrFailureClientSecret,
         OCR_FAILURE_USERNAME: ocrFailureUsername,
         OCR_FAILURE_PASSWORD: ocrFailurePassword
       },
-      timeout: cdk.Duration.seconds(30),
+      timeout: cdk.Duration.seconds(60),
       memorySize: 256,
       logRetention: logs.RetentionDays.TWO_WEEKS,
       ...vpcConfig
@@ -378,6 +379,10 @@ export class AgroAmazoniaStack extends cdk.Stack {
 
     documentTable.grantReadData(notifySuccessLambda);
     errorTopic.grantPublish(notifySuccessLambda);
+    notifySuccessLambda.addToRolePolicy(new iam.PolicyStatement({
+      actions: ['bedrock:InvokeModel'],
+      resources: ['*']
+    }));
 
     // Lambda: Send Feedback to ServiceNow e SNS
     const sendFeedbackLambda = new lambda.Function(this, 'SendFeedbackFunction', {
