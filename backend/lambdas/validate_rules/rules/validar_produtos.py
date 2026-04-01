@@ -318,6 +318,143 @@ def quantities_match(danfe_qtd, danfe_unit, doc_qtd, doc_unit):
     diff = abs(danfe_qtd - doc_qtd)
     return diff < 0.01
 
+
+def extract_lote_signature(danfe_prod):
+    """Assinatura de lote(s) a partir de rastro estruturado do XML (nLote). None se não houver."""
+    r = danfe_prod.get('rastro')
+    if not r or not isinstance(r, list):
+        return None
+    lots = tuple(
+        sorted(
+            str(x.get('lote') or '').strip()
+            for x in r
+            if isinstance(x, dict) and x.get('lote')
+        )
+    )
+    return lots if lots else None
+
+
+def danfe_products_equivalent(p1, p2):
+    """Mesmo produto entre duas linhas do DANFE/XML (código normalizado ou descrição)."""
+    c1 = normalize_codigo(p1.get('codigo', ''))
+    c2 = normalize_codigo(p2.get('codigo', ''))
+    if c1 and c2 and c1 == c2:
+        return True
+    n1 = (p1.get('descricao') or p1.get('nome') or p1.get('produto') or '').strip().upper()
+    n2 = (p2.get('descricao') or p2.get('nome') or p2.get('produto') or '').strip().upper()
+    if not n1 or not n2:
+        return False
+    if n1 == n2:
+        return True
+    return n1 in n2 or n2 in n1
+
+
+def try_resolve_multi_lot_single_pedido_line(
+    danfe_idx, danfe_prod, items_detail, danfe_produtos, doc_produtos, logger
+):
+    """
+    Quando o pedido tem uma única linha e o XML tem N linhas do mesmo produto com lotes distintos
+    (rastro/nLote), permite reutilizar doc_position=1 após o primeiro match 1:1.
+    Retorna (doc_idx, doc_prod, has_equivalent_code) ou None.
+    """
+    if len(doc_produtos) != 1:
+        return None
+
+    lot_sig = extract_lote_signature(danfe_prod)
+    if lot_sig is None:
+        return None
+
+    doc_idx = 0
+    doc_pos_1based = doc_idx + 1
+    match_refs = [
+        it
+        for it in items_detail
+        if it.get('status') == 'MATCH'
+        and it.get('doc_position') == doc_pos_1based
+        and it.get('danfe_position') is not None
+    ]
+    if not match_refs:
+        return None
+
+    ref_it = min(match_refs, key=lambda x: x['danfe_position'])
+    ref_pos = ref_it['danfe_position'] - 1
+    ref_prod = danfe_produtos[ref_pos]
+    if not danfe_products_equivalent(danfe_prod, ref_prod):
+        return None
+
+    used_lots = set()
+    for it in match_refs:
+        dp = danfe_produtos[it['danfe_position'] - 1]
+        ls = extract_lote_signature(dp)
+        if ls is not None:
+            used_lots.add(ls)
+
+    if lot_sig in used_lots:
+        logger.info(
+            f"[validar_produtos] N:1 ignorado: lote {lot_sig} já usado para doc linha {doc_pos_1based}"
+        )
+        return None
+
+    logger.info(
+        f"[validar_produtos] N:1 pedido único: DANFE item {danfe_idx + 1} → doc linha {doc_pos_1based}, lote {lot_sig}"
+    )
+    doc_prod = doc_produtos[doc_idx]
+    dc = normalize_codigo(danfe_prod.get('codigo', ''))
+    dpc = normalize_codigo(doc_prod.get('codigoProduto') or doc_prod.get('codigo', ''))
+    has_equivalent_code = bool(dc and dpc and dc == dpc)
+    return doc_idx, doc_prod, has_equivalent_code
+
+
+def _append_matched_line_detail(
+    items_detail, danfe_idx, doc_idx, danfe_prod, doc_prod, has_equivalent_code, logger
+):
+    """Acrescenta item MATCH/MISMATCH de comparação nome; retorna True se nome deu MISMATCH."""
+    fields = {}
+    danfe_nome = (
+        danfe_prod.get('produto', '').strip()
+        or danfe_prod.get('nome', '').strip()
+        or danfe_prod.get('descricao', '').strip()
+    )
+    doc_nome = (
+        doc_prod.get('produto')
+        or doc_prod.get('nomeProduto')
+        or doc_prod.get('nome')
+        or doc_prod.get('descricaoProduto')
+        or doc_prod.get('descricao', '')
+    ).strip()
+
+    from .utils import compare_with_bedrock
+
+    nome_status = compare_with_bedrock(
+        danfe_nome, doc_nome, 'nome do produto', has_equivalent_code=has_equivalent_code
+    )
+
+    if nome_status not in ['MATCH', 'MISMATCH']:
+        danfe_words = set(w.upper() for w in danfe_nome.split() if len(w) > 2)
+        doc_words = set(w.upper() for w in doc_nome.split() if len(w) > 2)
+        common_words = danfe_words & doc_words
+        if len(common_words) >= 2:
+            nome_status = 'MATCH'
+        elif danfe_nome.upper() in doc_nome.upper() or doc_nome.upper() in danfe_nome.upper():
+            nome_status = 'MATCH'
+        else:
+            nome_status = 'MISMATCH'
+
+    fields['nome'] = {'danfe': danfe_nome, 'doc': doc_nome, 'status': nome_status}
+    item_has_mismatch = nome_status == 'MISMATCH'
+
+    items_detail.append(
+        {
+            'item': danfe_idx + 1,
+            'danfe_position': danfe_idx + 1,
+            'doc_position': doc_idx + 1,
+            'fields': fields,
+            'status': 'MISMATCH' if item_has_mismatch else 'MATCH',
+        }
+    )
+    return item_has_mismatch
+
+
 def validate_products_comparison(danfe_produtos, doc_produtos, doc_file, source_type, doc_root=None):
     """Valida e compara produtos, retorna resultado da validação
     
@@ -336,64 +473,49 @@ def validate_products_comparison(danfe_produtos, doc_produtos, doc_file, source_
     unmatched_danfe = []
     all_match = True
     
-    # Tentar parear cada produto DANFE com DOC
+    # Tentar parear cada produto DANFE com DOC (1:1; used_indices consome linha do pedido)
     for danfe_idx, danfe_prod in enumerate(danfe_produtos):
-        doc_idx, doc_prod, has_equivalent_code = find_matching_product(danfe_prod, doc_produtos, used_indices)
-        
+        doc_idx, doc_prod, has_equivalent_code = find_matching_product(
+            danfe_prod, doc_produtos, used_indices
+        )
+
         if doc_prod is not None:
             used_indices.add(doc_idx)
-            # Match encontrado - validar nome e quantidade
-            fields = {}
-            
-            # Nome - sempre usar Bedrock para comparação semântica flexível
-            danfe_nome = danfe_prod.get('produto', '').strip() or danfe_prod.get('nome', '').strip() or danfe_prod.get('descricao', '').strip()
-            # Buscar nome do produto no documento (prioridade: produto > nomeProduto > nome > descricaoProduto > descricao)
-            doc_nome = (doc_prod.get('produto') or 
-                       doc_prod.get('nomeProduto') or 
-                       doc_prod.get('nome') or 
-                       doc_prod.get('descricaoProduto') or 
-                       doc_prod.get('descricao', '')).strip()
-            
-            # Sempre usar Bedrock para comparação semântica (mais flexível)
-            # Passar informação sobre código numérico equivalente se houver
-            from .utils import compare_with_bedrock
-            nome_status = compare_with_bedrock(danfe_nome, doc_nome, 'nome do produto', has_equivalent_code=has_equivalent_code)
-            
-            # Se Bedrock não conseguir determinar, tentar match parcial como fallback
-            if nome_status not in ['MATCH', 'MISMATCH']:
-                # Fallback: verificar se há palavras-chave em comum
-                danfe_words = set(w.upper() for w in danfe_nome.split() if len(w) > 2)
-                doc_words = set(w.upper() for w in doc_nome.split() if len(w) > 2)
-                common_words = danfe_words & doc_words
-                if len(common_words) >= 2:
-                    nome_status = 'MATCH'
-                elif danfe_nome.upper() in doc_nome.upper() or doc_nome.upper() in danfe_nome.upper():
-                    nome_status = 'MATCH'
-                else:
-                    nome_status = 'MISMATCH'
-            
-            fields['nome'] = {
-                'danfe': danfe_nome,
-                'doc': doc_nome,
-                'status': nome_status
-            }
-            
-            # Item só é MISMATCH se o nome for totalmente divergente (Bedrock retornou MISMATCH)
-            item_has_mismatch = (nome_status == 'MISMATCH')
-            if item_has_mismatch:
+            if _append_matched_line_detail(
+                items_detail,
+                danfe_idx,
+                doc_idx,
+                danfe_prod,
+                doc_prod,
+                has_equivalent_code,
+                logger,
+            ):
                 all_match = False
-            
-            items_detail.append({
-                'item': danfe_idx + 1,
-                'danfe_position': danfe_idx + 1,
-                'doc_position': doc_idx + 1,
-                'fields': fields,
-                'status': 'MISMATCH' if item_has_mismatch else 'MATCH'
-            })
         else:
             unmatched_danfe.append((danfe_idx, danfe_prod))
             all_match = False
-    
+
+    # Segunda passagem: mesmo produto, vários lotes no XML, uma linha no pedido
+    still_unmatched = []
+    for danfe_idx, danfe_prod in unmatched_danfe:
+        resolved = try_resolve_multi_lot_single_pedido_line(
+            danfe_idx,
+            danfe_prod,
+            items_detail,
+            danfe_produtos,
+            doc_produtos,
+            logger,
+        )
+        if resolved:
+            doc_idx, doc_prod, has_eq = resolved
+            if _append_matched_line_detail(
+                items_detail, danfe_idx, doc_idx, danfe_prod, doc_prod, has_eq, logger
+            ):
+                all_match = False
+        else:
+            still_unmatched.append((danfe_idx, danfe_prod))
+    unmatched_danfe = still_unmatched
+
     # Produtos do DANFE não pareados = MISMATCH
     for danfe_idx, danfe_prod in unmatched_danfe:
         danfe_nome = danfe_prod.get('nome', '').strip() or danfe_prod.get('descricao', '').strip()
@@ -443,6 +565,12 @@ def validate_products_comparison(danfe_produtos, doc_produtos, doc_file, source_
             'status': 'MISMATCH'
         })
     
+    # Recalcular all_match: todas as linhas do DANFE devem ter MATCH de nome
+    danfe_rows = [it for it in items_detail if it.get('danfe_position') is not None]
+    all_match = len(danfe_rows) == len(danfe_produtos) and all(
+        r.get('status') == 'MATCH' for r in danfe_rows
+    )
+
     # Ordenar por posição DANFE primeiro, depois por posição DOC
     items_detail.sort(key=lambda x: (x['danfe_position'] if x['danfe_position'] is not None else 9999, x['doc_position'] if x['doc_position'] is not None else 9999))
     
