@@ -1,7 +1,7 @@
 import logging
 logger = logging.getLogger()
 
-from .utils import compare_with_bedrock
+from .utils import compare_with_bedrock, bedrock_compare_status
 
 def normalize_numero(val):
     if not val:
@@ -31,23 +31,35 @@ def validate(danfe_data, ocr_docs):
         
         normalized_doc = normalize_numero(doc_numero) if doc_numero else ''
         
+        bedrock_payload = None
         if not doc_numero:
-            status = 'MISMATCH'
+            status = "MISMATCH"
             all_match = False
-            logger.warning(f"[validar_numero_nota] Doc {doc_file} - Número da nota não encontrado no JSON do pedido de compra")
+            logger.warning(
+                f"[validar_numero_nota] Doc {doc_file} - Número da nota não encontrado no JSON do pedido de compra"
+            )
         elif normalized_danfe == normalized_doc:
-            status = 'MATCH'
+            status = "MATCH"
         else:
-            bedrock_result = compare_with_bedrock(normalized_danfe, normalized_doc, 'número da nota')
-            status = bedrock_result
-            if status == 'MISMATCH':
+            bedrock_payload = compare_with_bedrock(
+                normalized_danfe, normalized_doc, "número da nota"
+            )
+            status = bedrock_compare_status(bedrock_payload)
+            if status == "MISMATCH":
                 all_match = False
-        
-        comparisons.append({
-            'doc_file': doc_file,
-            'doc_value': doc_numero or 'NÃO ENCONTRADO NO JSON DO PEDIDO DE COMPRA',
-            'status': status
-        })
+
+        row = {
+            "doc_file": doc_file,
+            "doc_value": doc_numero
+            or "NÃO ENCONTRADO NO JSON DO PEDIDO DE COMPRA",
+            "status": status,
+        }
+        if (
+            isinstance(bedrock_payload, dict)
+            and bedrock_payload.get("bedrock") is not None
+        ):
+            row["bedrock_analise"] = bedrock_payload["bedrock"]
+        comparisons.append(row)
     
     return {
         'rule': 'validar_numero_nota',

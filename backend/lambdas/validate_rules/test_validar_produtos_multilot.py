@@ -89,7 +89,10 @@ def _load_produtos_from_nfe_xml():
 class TestMultiLoteUmPedido(unittest.TestCase):
     @patch("rules.utils.compare_with_bedrock")
     def test_tres_linhas_xml_um_pedido_tres_match(self, mock_bedrock):
-        mock_bedrock.return_value = "MATCH"
+        mock_bedrock.return_value = {
+            "status": "MATCH",
+            "bedrock": {"explicacao": "mock"},
+        }
         logging.basicConfig(level=logging.INFO)
 
         from rules.validar_produtos import validate_products_comparison
@@ -116,7 +119,10 @@ class TestMultiLoteUmPedido(unittest.TestCase):
 
     @patch("rules.utils.compare_with_bedrock")
     def test_lote_duplicado_nao_reusa(self, mock_bedrock):
-        mock_bedrock.return_value = "MATCH"
+        mock_bedrock.return_value = {
+            "status": "MATCH",
+            "bedrock": {"explicacao": "mock"},
+        }
         logging.basicConfig(level=logging.INFO)
         from rules.validar_produtos import validate_products_comparison
 
@@ -136,7 +142,10 @@ class TestNfeOpteraduoXmlReal(unittest.TestCase):
 
     @patch("rules.utils.compare_with_bedrock")
     def test_tres_itens_xml_um_item_pedido_aacbkv(self, mock_bedrock):
-        mock_bedrock.return_value = "MATCH"
+        mock_bedrock.return_value = {
+            "status": "MATCH",
+            "bedrock": {"explicacao": "mock"},
+        }
         logging.basicConfig(level=logging.INFO)
 
         from rules.validar_produtos import (

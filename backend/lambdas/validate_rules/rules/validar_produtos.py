@@ -249,11 +249,20 @@ def find_matching_product(danfe_prod, doc_produtos, used_indices):
                    doc_prod.get('descricao', '')).strip()
         
         # Usar Bedrock para validar se são o mesmo produto
-        from .utils import compare_with_bedrock
-        bedrock_result = compare_with_bedrock(danfe_nome, doc_nome, 'nome do produto')
-        
-        if bedrock_result == 'MATCH':
-            logger.info(f"  ✓ MATCH via Bedrock no índice {i} (DANFE: '{danfe_nome}', DOC: '{doc_nome}')")
+        from .utils import compare_with_bedrock, bedrock_compare_status
+
+        bedrock_result = compare_with_bedrock(danfe_nome, doc_nome, "nome do produto")
+
+        if bedrock_compare_status(bedrock_result) == "MATCH":
+            ex = (
+                (bedrock_result.get("bedrock") or {}).get("explicacao", "")
+                if isinstance(bedrock_result, dict)
+                else ""
+            )
+            logger.info(
+                f"  ✓ MATCH via Bedrock no índice {i} (DANFE: '{danfe_nome}', DOC: '{doc_nome}')"
+                + (f" — {ex}" if ex else "")
+            )
             return i, doc_prod, False
     
     logger.warning(f"  ✗ Nenhum match encontrado para produto (nome: '{danfe_nome}')")
@@ -423,13 +432,20 @@ def _append_matched_line_detail(
         or doc_prod.get('descricao', '')
     ).strip()
 
-    from .utils import compare_with_bedrock
+    from .utils import compare_with_bedrock, bedrock_compare_status
 
-    nome_status = compare_with_bedrock(
-        danfe_nome, doc_nome, 'nome do produto', has_equivalent_code=has_equivalent_code
+    nome_cmp = compare_with_bedrock(
+        danfe_nome,
+        doc_nome,
+        "nome do produto",
+        has_equivalent_code=has_equivalent_code,
+    )
+    nome_status = bedrock_compare_status(nome_cmp)
+    bedrock_meta = (
+        nome_cmp.get("bedrock") if isinstance(nome_cmp, dict) else None
     )
 
-    if nome_status not in ['MATCH', 'MISMATCH']:
+    if nome_status not in ["MATCH", "MISMATCH"]:
         danfe_words = set(w.upper() for w in danfe_nome.split() if len(w) > 2)
         doc_words = set(w.upper() for w in doc_nome.split() if len(w) > 2)
         common_words = danfe_words & doc_words
@@ -440,8 +456,14 @@ def _append_matched_line_detail(
         else:
             nome_status = 'MISMATCH'
 
-    fields['nome'] = {'danfe': danfe_nome, 'doc': doc_nome, 'status': nome_status}
-    item_has_mismatch = nome_status == 'MISMATCH'
+    fields["nome"] = {
+        "danfe": danfe_nome,
+        "doc": doc_nome,
+        "status": nome_status,
+    }
+    if bedrock_meta:
+        fields["nome"]["bedrock_analise"] = bedrock_meta
+    item_has_mismatch = nome_status == "MISMATCH"
 
     items_detail.append(
         {
