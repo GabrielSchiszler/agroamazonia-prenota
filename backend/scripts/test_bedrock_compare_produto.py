@@ -3,8 +3,8 @@
 Chama o mesmo compare_with_bedrock() da regra validar_produtos e imprime o JSON
 retornado pelo modelo (status + bedrock_analise: explicacao, nome_base, etc.).
 
-Padrão: par VESSARYA (caso discutido).
-Outro exemplo útil: OPTERADUO DANFE x pedido.
+Padrão: par EXPEDITION (pedido/DANFE — caso prd 26a269164744cb14019fa562036d4313).
+Outros exemplos: VESSARYA, OPTERADUO.
 
 Requisitos:
   - Credenciais AWS com bedrock:InvokeModel em us-east-1 (o cliente é fixo em us-east-1).
@@ -34,9 +34,9 @@ from pathlib import Path
 _SCRIPT_DIR = Path(__file__).resolve().parent
 _VALIDATE_RULES = _SCRIPT_DIR.parent / "lambdas" / "validate_rules"
 
-# Nomes padrão (mesmo cenário VESSARYA / pedido x DANFE)
-DEFAULT_P1 = "VESSARYA GL 10 LT"
-DEFAULT_P2 = "VESSARYA BOMBONA 10L FUNGICIDA"
+# Nomes padrão (pedido x DANFE — GL vs bombona, mesmo produto)
+DEFAULT_P1 = "EXPEDITION GL 10 LT"
+DEFAULT_P2 = "EXPEDITION BOMBONA 10L INSETICIDA"
 
 
 def main() -> int:
