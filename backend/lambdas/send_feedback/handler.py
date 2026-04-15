@@ -12,11 +12,13 @@ sys.path.insert(0, os.path.dirname(__file__))
 try:
     from utils.bedrock_error_summary import generate_error_summary_with_bedrock
     from utils.bedrock_success_summary import generate_success_feedback_summary_with_bedrock
+    from utils.ritm_metadata import load_ritm_for_process
 except ImportError:
     # Fallback: tentar importar do diretório pai
     sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
     from utils.bedrock_error_summary import generate_error_summary_with_bedrock
     from utils.bedrock_success_summary import generate_success_feedback_summary_with_bedrock
+    from utils.ritm_metadata import load_ritm_for_process
 
 dynamodb = boto3.resource('dynamodb')
 table = dynamodb.Table(os.environ['TABLE_NAME'])
@@ -447,12 +449,22 @@ def lambda_handler(event, context):
                     if key not in organized_details:
                         organized_details[key] = value
         
+        _ritm = None
+        try:
+            _ritm = load_ritm_for_process(table, process_id)
+            if _ritm is not None:
+                print(f"[FEEDBACK] ritm do requestBody (raiz do payload, como response_summary)")
+        except Exception as _ritm_err:
+            print(f"[FEEDBACK] ritm opcional não incluído: {_ritm_err}")
+        
         # Mesmo objeto para Bedrock: erro usa bedrock_error_summary; sucesso usa bedrock_success_summary
         feedback_data_for_bedrock = {
             "process_id": process_id,
             "success": success,
             "details": organized_details,
         }
+        if _ritm is not None:
+            feedback_data_for_bedrock["ritm"] = _ritm
         response_summary = None
         try:
             if success:
@@ -475,6 +487,8 @@ def lambda_handler(event, context):
             "details": organized_details,
             "response_summary": response_summary,
         }
+        if _ritm is not None:
+            payload["ritm"] = _ritm
         
         headers = {
             'Content-Type': 'application/json',

@@ -13,10 +13,12 @@ import sys
 sys.path.insert(0, os.path.dirname(__file__))
 try:
     from utils.bedrock_error_summary import generate_error_summary_with_bedrock
+    from utils.ritm_metadata import get_ritm_from_request_body
 except ImportError:
     # Fallback: tentar importar do diretório pai
     sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
     from utils.bedrock_error_summary import generate_error_summary_with_bedrock
+    from utils.ritm_metadata import get_ritm_from_request_body
 
 # Usar região da variável de ambiente para serviços locais (DynamoDB, Secrets Manager)
 aws_region = os.environ.get('AWS_REGION') or os.environ.get('AWS_DEFAULT_REGION')
@@ -256,6 +258,14 @@ def report_protheus_failure_to_sctask(process_id, error_details):
             "detalhes": detalhes_texto,  # Texto único, não array
             "response_summary": response_summary  # Mensagem amigável gerada pelo Bedrock
         }
+        try:
+            from utils.ritm_metadata import load_ritm_for_process
+            _ritm = load_ritm_for_process(table, process_id)
+            if _ritm is not None:
+                payload["ritm"] = _ritm
+                print(f"[SCTASK] ritm do requestBody incluído no payload")
+        except Exception as _e:
+            print(f"[SCTASK] ritm opcional não incluído: {_e}")
         
         # Obter token OAuth2
         access_token = get_ocr_failure_oauth2_token()
@@ -1465,6 +1475,11 @@ def lambda_handler(event, context):
         if ie_emitente:
             payload["ieEmitente"] = ie_emitente
             print(f"[7.1.1.1] IE do emitente incluído: {ie_emitente}")
+    
+    ritm_val = get_ritm_from_request_body(request_body_data)
+    if ritm_val is not None:
+        payload["ritm"] = ritm_val
+        print(f"[7.1.0] Campo ritm do requestBody incluído no payload Protheus")
     
     print(f"\n[7.1] Payload base montado")
     if cnpj_emitente:

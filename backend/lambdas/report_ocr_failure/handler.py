@@ -13,10 +13,12 @@ import sys
 sys.path.insert(0, os.path.dirname(__file__))
 try:
     from utils.bedrock_error_summary import generate_error_summary_with_bedrock
+    from utils.ritm_metadata import load_ritm_for_process
 except ImportError:
     # Fallback: tentar importar do diretório pai
     sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
     from utils.bedrock_error_summary import generate_error_summary_with_bedrock
+    from utils.ritm_metadata import load_ritm_for_process
 
 dynamodb = boto3.resource('dynamodb')
 table = dynamodb.Table(os.environ['TABLE_NAME'])
@@ -426,6 +428,14 @@ def lambda_handler(event, context):
         import traceback
         traceback.print_exc()
     
+    ritm_val = None
+    try:
+        ritm_val = load_ritm_for_process(table, process_id)
+        if ritm_val is not None:
+            print(f"[REPORT_OCR] ritm do requestBody incluído no payload da API de falha OCR")
+    except Exception as ritm_err:
+        print(f"[REPORT_OCR] ritm opcional não incluído: {ritm_err}")
+    
     payload = {
         "idUnico": id_unico,
         "descricaoFalha": descricao_falha,
@@ -433,6 +443,8 @@ def lambda_handler(event, context):
         "detalhes": texto_detalhes,  # Texto explicativo completo ao invés de array
         "response_summary": response_summary  # Mensagem amigável gerada pelo Bedrock
     }
+    if ritm_val is not None:
+        payload["ritm"] = ritm_val
     
     # Obter token OAuth2
     access_token = get_oauth2_token()

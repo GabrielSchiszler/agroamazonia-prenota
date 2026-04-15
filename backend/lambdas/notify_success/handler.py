@@ -10,9 +10,11 @@ from datetime import datetime
 sys.path.insert(0, os.path.dirname(__file__))
 try:
     from utils.bedrock_success_summary import generate_success_feedback_summary_with_bedrock
+    from utils.ritm_metadata import ritm_from_items_by_sk
 except ImportError:
     sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
     from utils.bedrock_success_summary import generate_success_feedback_summary_with_bedrock
+    from utils.ritm_metadata import ritm_from_items_by_sk
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
@@ -51,7 +53,7 @@ def get_oauth2_token():
         logger.warning(f"Failed to obtain OAuth2 token: {str(e)}")
         return None
 
-def send_feedback_to_api(process_id, success, details, response_summary=None):
+def send_feedback_to_api(process_id, success, details, response_summary=None, ritm=None):
     """Envia feedback para API do ServiceNow (mesmo formato que send_feedback Lambda)."""
     feedback_url = os.environ.get('SERVICENOW_FEEDBACK_API_URL')
     if not feedback_url:
@@ -68,6 +70,8 @@ def send_feedback_to_api(process_id, success, details, response_summary=None):
             "details": details,
             "response_summary": response_summary,
         }
+        if ritm is not None:
+            payload["ritm"] = ritm
         headers = {
             'Content-Type': 'application/json',
             'Authorization': f'Bearer {access_token}'
@@ -225,11 +229,21 @@ def lambda_handler(event, context):
                     'body': protheus_response
                 }
         
+        _ritm = None
+        try:
+            _ritm = ritm_from_items_by_sk(items)
+            if _ritm is not None:
+                logger.info("Campo ritm do requestBody na raiz do payload (como response_summary)")
+        except Exception as ritm_err:
+            logger.warning("ritm opcional não incluído: %s", str(ritm_err))
+        
         feedback_data_for_bedrock = {
             "process_id": process_id,
             "success": True,
             "details": organized_details,
         }
+        if _ritm is not None:
+            feedback_data_for_bedrock["ritm"] = _ritm
         response_summary = None
         try:
             response_summary = generate_success_feedback_summary_with_bedrock(
@@ -250,10 +264,12 @@ def lambda_handler(event, context):
             "details": organized_details,
             "response_summary": response_summary,
         }
+        if _ritm is not None:
+            api_payload["ritm"] = _ritm
 
         # Enviar feedback para API
         logger.info("Enviando feedback de sucesso para API do ServiceNow...")
-        send_feedback_to_api(process_id, True, organized_details, response_summary)
+        send_feedback_to_api(process_id, True, organized_details, response_summary, ritm=_ritm)
         
         # Enviar o mesmo payload para SNS
         topic_arn = os.environ.get('SNS_TOPIC_ARN')
