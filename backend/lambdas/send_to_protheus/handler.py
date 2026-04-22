@@ -13,12 +13,16 @@ import sys
 sys.path.insert(0, os.path.dirname(__file__))
 try:
     from utils.bedrock_error_summary import generate_error_summary_with_bedrock
+    from utils.pedido_request_body import uso_e_consumo_active
     from utils.ritm_metadata import get_ritm_from_request_body
+    from utils.primary_xml import pick_best_parsed_xml_item
 except ImportError:
     # Fallback: tentar importar do diretório pai
     sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
     from utils.bedrock_error_summary import generate_error_summary_with_bedrock
+    from utils.pedido_request_body import uso_e_consumo_active
     from utils.ritm_metadata import get_ritm_from_request_body
+    from utils.primary_xml import pick_best_parsed_xml_item
 
 # Usar região da variável de ambiente para serviços locais (DynamoDB, Secrets Manager)
 aws_region = os.environ.get('AWS_REGION') or os.environ.get('AWS_DEFAULT_REGION')
@@ -30,6 +34,130 @@ if not aws_region:
         aws_region = session.region_name or 'sa-east-1'
     except:
         aws_region = 'sa-east-1'
+
+
+def _norm_codigo_produto(val) -> str:
+    s = str(val or "").strip()
+    if s.isdigit():
+        return s.lstrip("0") or "0"
+    return s
+
+
+def _find_rb_item_uso_consumo(request_body_data, codigo_produto, merge_index: int):
+    """Item do pedido correspondente ao produto (código ou id) ou pela posição."""
+    if not request_body_data or not isinstance(request_body_data.get("itens"), list):
+        return None
+    itens = request_body_data["itens"]
+    if not itens:
+        return None
+    cn = _norm_codigo_produto(codigo_produto)
+    for it in itens:
+        if not isinstance(it, dict):
+            continue
+        if _norm_codigo_produto(it.get("codigoProduto")) == cn:
+            return it
+        if it.get("id") is not None and _norm_codigo_produto(it.get("id")) == cn:
+            return it
+    if 0 <= merge_index < len(itens) and isinstance(itens[merge_index], dict):
+        return itens[merge_index]
+    return None
+
+
+def _merge_uso_consumo_protheus_item(item: dict, item_rb):
+    """Preenche codigoProduto com id do metadado (quando existir) e codigoOperacao; sem campo produto no payload Protheus."""
+    if not item_rb:
+        return item
+    iid = item_rb.get("id")
+    if iid is not None and str(iid).strip() != "":
+        item["codigoProduto"] = str(iid).strip()
+    item.pop("produto", None)
+    co = item_rb.get("codigoOperacao")
+    if co is not None and str(co).strip() != "":
+        item["codigoOperacao"] = str(co).strip()
+    return item
+
+
+def _safe_float(val, default=0.0):
+    if val is None or val == "":
+        return default
+    try:
+        return float(str(val).strip().replace(",", "."))
+    except (ValueError, TypeError):
+        return default
+
+
+def _valor_total_documento_nota_ou_boleto(xml_data, ocr_data, bedrock_extraction):
+    """
+    Valor total da NF (vNF) ou referência de cobrança/boleto; depois soma itens IA (Bedrock/OCR).
+    Prioridade: XML totais → fatura/duplicatas → pagamento → extração (BEDROCK / documento_entrada_protheus no OCR).
+    """
+    xd = xml_data if isinstance(xml_data, dict) else {}
+    totais = xd.get("totais") or {}
+    v = _safe_float(totais.get("valor_nota"))
+    if v > 0:
+        return v
+    v = _safe_float(totais.get("valor_produtos"))
+    if v > 0:
+        return v
+    cob = xd.get("cobranca") or {}
+    fat = cob.get("fatura") if isinstance(cob.get("fatura"), dict) else {}
+    if fat:
+        v = _safe_float(fat.get("valor_liquido"))
+        if v > 0:
+            return v
+        v = _safe_float(fat.get("valor_original"))
+        if v > 0:
+            return v
+    dups = cob.get("duplicatas") if isinstance(cob.get("duplicatas"), list) else None
+    if dups:
+        s = sum(_safe_float(d.get("valor")) for d in dups if isinstance(d, dict))
+        if s > 0:
+            return s
+    pag = xd.get("pagamento") or {}
+    v = _safe_float(pag.get("valor"))
+    if v > 0:
+        return v
+
+    ai = bedrock_extraction if isinstance(bedrock_extraction, dict) else {}
+    if not ai and isinstance(ocr_data, dict):
+        ai = ocr_data.get("documento_entrada_protheus") or {}
+    itens_ai = ai.get("itens") if isinstance(ai.get("itens"), list) else []
+    acc = 0.0
+    for it in itens_ai:
+        if not isinstance(it, dict):
+            continue
+        q = _safe_float(it.get("quantidade"), 0.0)
+        vu = _safe_float(it.get("valorUnitario"), 0.0)
+        if q > 0 and vu > 0:
+            acc += q * vu
+        elif vu > 0:
+            acc += vu
+    if acc > 0:
+        return acc
+    return 0.0
+
+
+def _valor_unitario_payload(produto_xml, quantidade, valor_total_doc, n_linhas):
+    """
+    valorUnitario no Protheus: prioriza total da nota/documento quando há uma única linha no payload;
+    senão valor de linha do XML (vProd/qCom ou vUnCom).
+    """
+    q = float(quantidade or 0)
+    v_doc = float(valor_total_doc or 0)
+    px = produto_xml if isinstance(produto_xml, dict) else {}
+    v_un = _safe_float(px.get("valor_unitario"))
+    v_prod_tot = _safe_float(px.get("valor_total"))
+
+    if v_doc > 0 and n_linhas == 1:
+        return v_doc
+    if v_prod_tot > 0 and q > 0:
+        return v_prod_tot / q
+    if v_un > 0:
+        return v_un
+    if v_doc > 0 and q > 0:
+        return v_doc / q
+    return 0.0
+
 
 dynamodb = boto3.resource('dynamodb', region_name=aws_region)
 table = dynamodb.Table(os.environ['TABLE_NAME'])
@@ -535,11 +663,20 @@ def map_moeda(modelo=None, moeda_informada=None):
     """
     Mapeia moeda conforme regra de negócio.
     NF-e nacional → "BRL"
+    Aceita códigos numéricos do metadado (ex.: 1=BRL, 2=USD, 3=EUR, alinhado ao schema Bedrock).
     """
-    # Se já foi informada uma moeda, usar ela
-    if moeda_informada:
+    if moeda_informada is not None and str(moeda_informada).strip() != "":
+        if isinstance(moeda_informada, (int, float)) and not isinstance(moeda_informada, bool):
+            code = int(moeda_informada)
+            num_map = {1: "BRL", 2: "USD", 3: "EUR", 4: "GBP"}
+            if code in num_map:
+                return num_map[code]
         moeda_str = str(moeda_informada).strip().upper()
-        if moeda_str in ['BRL', 'USD', 'EUR', 'GBP']:
+        if moeda_str.isdigit():
+            num_map = {1: "BRL", 2: "USD", 3: "EUR", 4: "GBP"}
+            if int(moeda_str) in num_map:
+                return num_map[int(moeda_str)]
+        if moeda_str in ["BRL", "USD", "EUR", "GBP"]:
             return moeda_str
     
     # Regra de negócio: NF-e nacional → "BRL"
@@ -1146,19 +1283,17 @@ def lambda_handler(event, context):
                 input_json_str = metadata.get(key)
                 print(f"[3.5.1] INPUT_JSON encontrado na chave '{key}'")
                 break
-        
+        if input_json_str is not None:
             try:
                 if isinstance(input_json_str, str):
-                    input_json = json.loads(input_json_str)
+                    stripped = input_json_str.strip()
+                    input_json = json.loads(stripped) if stripped else None
                 else:
                     input_json = input_json_str
-                
                 print(f"[3.5.2] Input JSON parseado com sucesso")
                 print(f"[3.5.3] Tipo do input_json: {type(input_json)}")
                 print(f"[3.5.4] Keys do input_json: {list(input_json.keys()) if isinstance(input_json, dict) else 'N/A'}")
-                
-                # Extrair tenantId do header
-                if input_json.get('header'):
+                if isinstance(input_json, dict) and input_json.get('header'):
                     header = input_json.get('header', {})
                     tenant_id = header.get('tenantId') or header.get('tenant_id') or header.get('TENANT_ID')
                     if tenant_id:
@@ -1261,15 +1396,11 @@ def lambda_handler(event, context):
     else:
         print(f"[3.5] Nenhum registro de validação encontrado")
     
-    # Buscar PARSED_XML
-    parsed_xml = None
-    for sk, item in items.items():
-        if sk.startswith('PARSED_XML'):
-            parsed_xml = item
-            print(f"\n[4] PARSED_XML encontrado com SK: {sk}")
-            break
-    
-    if not parsed_xml:
+    # Buscar PARSED_XML principal (NF-e; IS_PRIMARY ou melhor score entre vários XMLs)
+    parsed_xml = pick_best_parsed_xml_item(list(items.values()))
+    if parsed_xml:
+        print(f"\n[4] PARSED_XML principal com SK: {parsed_xml.get('SK')}")
+    else:
         print("[4] AVISO: PARSED_XML não encontrado!")
         parsed_xml = {}
     
@@ -1284,6 +1415,18 @@ def lambda_handler(event, context):
     if not parsed_ocr:
         print("[5] AVISO: PARSED_OCR não encontrado!")
         parsed_ocr = {}
+    
+    # Buscar BEDROCK_EXTRACTION (campos extraídos por IA — fase 6 multi-anexo)
+    bedrock_extraction = {}
+    bedrock_item = items.get('BEDROCK_EXTRACTION')
+    if bedrock_item and bedrock_item.get('EXTRACTED_FIELDS'):
+        try:
+            bedrock_extraction = json.loads(bedrock_item['EXTRACTED_FIELDS'])
+            print(f"\n[5.1] BEDROCK_EXTRACTION encontrado com {len(bedrock_extraction)} campos")
+        except Exception as be_err:
+            print(f"[5.1] AVISO: erro ao parsear BEDROCK_EXTRACTION: {be_err}")
+    else:
+        print("[5.1] BEDROCK_EXTRACTION não encontrado (fluxo padrão sem IA)")
     
     # Extrair dados parseados
     print(f"\n[6] Extraindo dados parseados...")
@@ -1339,6 +1482,23 @@ def lambda_handler(event, context):
         print(f"[7.0.1] input_json disponível: {bool(input_json)}")
         print(f"[7.0.2] pedido_compra_json disponível: {bool(pedido_compra_json)}")
         print(f"[7.0.3] json_source disponível: {bool(json_source)}")
+
+    if not isinstance(request_body_data, dict):
+        request_body_data = {}
+
+    process_type = metadata.get("PROCESS_TYPE") or "AGROQUIMICOS"
+    if isinstance(process_type, str):
+        process_type = process_type.strip()
+    uso_merge = process_type == "USOCONSUMO"
+    if not uso_merge and isinstance(json_source, dict):
+        try:
+            uso_merge = bool(uso_e_consumo_active(json_source))
+        except Exception:
+            uso_merge = False
+    print(f"[7.0.9] process_type={process_type} merge_produtos_uso_consumo={uso_merge}")
+
+    valor_total_doc = _valor_total_documento_nota_ou_boleto(xml_data, ocr_data, bedrock_extraction)
+    print(f"[7.0.10] Valor total documento (XML NF / cobrança / IA): {valor_total_doc}")
     
     # Extrair dados do XML (fallback se não tiver requestBody)
     emitente = xml_data.get('emitente', {})
@@ -1355,6 +1515,8 @@ def lambda_handler(event, context):
     data_emissao_xml = xml_data.get('data_emissao', '')
     chave_acesso_xml = xml_data.get('chave_acesso', '')
     modalidade_frete = transporte.get('modalidade_frete', '')
+    # Número do documento (NF-e no XML); fluxo só-PDF/Bedrock preenche depois em [7.1.IA]
+    numero_documento = (xml_data.get('numero_nota') or '').strip()
     
     # Aplicar regras de mapeamento
     tipo_documento = map_tipo_documento(modelo)
@@ -1364,11 +1526,58 @@ def lambda_handler(event, context):
     chave_acesso = map_chave_acesso(chave_acesso_xml)
     tipo_frete = map_tipo_frete(modalidade_frete)
     
-    # Moeda e taxa de câmbio
-    moeda_informada = request_body_data.get('moeda') or ocr_data.get('moeda')
+    # Moeda e taxa de câmbio (metadado requestBody tem prioridade sobre OCR)
+    moeda_informada = None
+    if isinstance(request_body_data, dict):
+        if request_body_data.get("moeda") is not None and str(request_body_data.get("moeda")).strip() != "":
+            moeda_informada = request_body_data.get("moeda")
+    if moeda_informada is None and isinstance(ocr_data, dict):
+        moeda_informada = ocr_data.get("moeda")
     moeda = map_moeda(modelo, moeda_informada)
-    taxa_cambio = map_taxa_cambio(moeda)
+    taxa_informada_meta = None
+    if isinstance(request_body_data, dict) and request_body_data.get("taxaCambio") is not None:
+        try:
+            taxa_informada_meta = float(request_body_data.get("taxaCambio"))
+        except (TypeError, ValueError):
+            taxa_informada_meta = None
+    taxa_cambio = map_taxa_cambio(moeda, taxa_informada_meta)
     
+    # Bedrock enrichment: fill gaps from AI-extracted fields (fase 6 multi-anexo)
+    if bedrock_extraction:
+        if not modelo and bedrock_extraction.get('tipoDeDocumento'):
+            tipo_documento = bedrock_extraction['tipoDeDocumento']
+            print(f"[7.1.IA] tipoDeDocumento preenchido via Bedrock: {tipo_documento}")
+        if not numero_documento and bedrock_extraction.get('documento'):
+            numero_documento = bedrock_extraction['documento']
+            print(f"[7.1.IA] documento preenchido via Bedrock: {numero_documento}")
+        if not serie_xml and bedrock_extraction.get('serie'):
+            serie = bedrock_extraction['serie']
+            print(f"[7.1.IA] serie preenchida via Bedrock: {serie}")
+        if not data_emissao_xml and bedrock_extraction.get('dataEmissao'):
+            data_emissao = bedrock_extraction['dataEmissao']
+            print(f"[7.1.IA] dataEmissao preenchida via Bedrock: {data_emissao}")
+        if not chave_acesso_xml and bedrock_extraction.get('chaveAcesso'):
+            chave_acesso = bedrock_extraction['chaveAcesso']
+            print(f"[7.1.IA] chaveAcesso preenchida via Bedrock")
+        if not modalidade_frete and bedrock_extraction.get('tipoFrete'):
+            tipo_frete = bedrock_extraction['tipoFrete']
+            print(f"[7.1.IA] tipoFrete preenchido via Bedrock: {tipo_frete}")
+        meta_tem_moeda = (
+            isinstance(request_body_data, dict)
+            and request_body_data.get("moeda") is not None
+            and str(request_body_data.get("moeda")).strip() != ""
+        )
+        if not meta_tem_moeda and bedrock_extraction.get("moeda") is not None:
+            moeda = map_moeda(modelo, bedrock_extraction.get("moeda"))
+            tx_bd = None
+            if bedrock_extraction.get("taxaCambio") is not None:
+                try:
+                    tx_bd = float(bedrock_extraction["taxaCambio"])
+                except (TypeError, ValueError):
+                    tx_bd = None
+            taxa_cambio = map_taxa_cambio(moeda, tx_bd)
+            print(f"[7.1.IA] moeda preenchida via Bedrock: {moeda}")
+
     print(f"[7.2] Campos mapeados:")
     print(f"  tipoDeDocumento: {tipo_documento} (modelo: {modelo})")
     print(f"  especie: {especie} (modelo: {modelo})")
@@ -1379,15 +1588,7 @@ def lambda_handler(event, context):
     print(f"  moeda: {moeda} (modelo: {modelo}, informada: {moeda_informada})")
     print(f"  taxaCambio: {taxa_cambio}")
     
-    # Montar payload com APENAS os campos especificados
-    # Extrair número do documento do campo codigo_nf do XML e garantir que tenha pelo menos 9 dígitos (com zeros à esquerda)
-    numero_documento = xml_data.get('numero_nota', '').strip()
-    if not numero_documento:
-        # Fallback para numero_nota se codigo_nf não existir
-        numero_documento = xml_data.get('numero_nota', '').strip()
- 
-   
-    
+    # Montar payload com APENAS os campos especificados (numero_documento já vem do XML + Bedrock acima)
     # Extrair CNPJ ou CPF do emitente - APENAS do XML
     print(f"\n[7.3] Extraindo CNPJ/CPF do emitente (APENAS do XML)...")
     cnpj_emitente = None
@@ -1480,6 +1681,16 @@ def lambda_handler(event, context):
     if ritm_val is not None:
         payload["ritm"] = ritm_val
         print(f"[7.1.0] Campo ritm do requestBody incluído no payload Protheus")
+
+    if isinstance(request_body_data, dict):
+        cc = request_body_data.get("centroDeCusto") or request_body_data.get("centro_custo")
+        if cc is not None and str(cc).strip() != "":
+            payload["centroDeCusto"] = str(cc).strip()
+            print(f"[7.1.0.cc] centroDeCusto do metadado incluído no payload")
+        nat = request_body_data.get("natureza")
+        if nat is not None and str(nat).strip() != "":
+            payload["natureza"] = str(nat).strip()
+            print(f"[7.1.0.nat] natureza do metadado incluída no payload")
     
     print(f"\n[7.1] Payload base montado")
     if cnpj_emitente:
@@ -1678,6 +1889,8 @@ def lambda_handler(event, context):
     # Processar produtos com lotes (fazer split se necessário)
     print(f"\n[8.3] Processando produtos com extração de lotes...")
     produtos_processados = process_produtos_with_lotes(produtos_filtrados, xml_data, request_body_data)
+    n_linhas_payload = len(produtos_processados)
+    print(f"[8.3.0] Linhas de item no payload (após lotes): {n_linhas_payload}")
     
     # LOG DETALHADO: Mostrar produtos_processados após processar lotes
     print(f"[8.3.1] DEBUG: produtos_processados após processar lotes ({len(produtos_processados)} produtos):")
@@ -1703,8 +1916,13 @@ def lambda_handler(event, context):
             quantidade = produto_info['quantidade']
             lote = produto_info.get('lote')
             
-            # Usar dados do XML (valor unitário, unidade)
-            valor_unitario = float(produto_xml.get('valor_unitario', 0))
+            # Valor unitário Protheus: total da NF/boleto (prioridade) ou linha XML / IA
+            valor_unitario = _valor_unitario_payload(
+                produto_xml,
+                float(quantidade or 0),
+                valor_total_doc,
+                n_linhas_payload,
+            )
             unidade = produto_xml.get('unidade', '').strip()
             
             # Se não encontrou código do produto, tentar buscar novamente
@@ -1740,17 +1958,26 @@ def lambda_handler(event, context):
             # Variável para armazenar codigoOperacao vindo do pedido de compra (prioridade sobre CFOP mapping)
             codigo_operacao_from_metadata = None
             
-            # Tentar buscar codigoOperacao do item no requestBody pelo código do produto
+            # codigoOperacao do item do pedido (requestBody): match por codigoProduto ou id
             if request_body_data and request_body_data.get('itens'):
                 for item_rb_check in request_body_data['itens']:
                     codigo_rb_check = item_rb_check.get('codigoProduto', '').strip()
+                    id_rb = item_rb_check.get('id')
+                    id_rb_s = str(id_rb).strip() if id_rb is not None else ''
+                    codigo_prod_s = str(codigo_produto or '').strip()
+                    match = False
                     if codigo_produto and codigo_rb_check:
                         codigo_rb_norm = codigo_rb_check.lstrip('0') or '0'
-                        codigo_prod_norm = codigo_produto.lstrip('0') or '0'
-                        if codigo_rb_norm == codigo_prod_norm and item_rb_check.get('codigoOperacao'):
-                            codigo_operacao_from_metadata = item_rb_check['codigoOperacao']
-                            print(f"[8.{idx}.8.1] codigoOperacao encontrado no requestBody por código: {codigo_operacao_from_metadata}")
-                            break
+                        codigo_prod_norm = str(codigo_produto).lstrip('0') or '0'
+                        if codigo_rb_norm == codigo_prod_norm:
+                            match = True
+                    if not match and codigo_prod_s and id_rb_s:
+                        if _norm_codigo_produto(id_rb_s) == _norm_codigo_produto(codigo_prod_s):
+                            match = True
+                    if match and item_rb_check.get('codigoOperacao'):
+                        codigo_operacao_from_metadata = item_rb_check['codigoOperacao']
+                        print(f"[8.{idx}.8.1] codigoOperacao do requestBody (item): {codigo_operacao_from_metadata}")
+                        break
             
             # Se não encontrou pedidoDeCompra, tentar buscar novamente
             if not pedido_de_compra or not pedido_de_compra.get('pedidoErp'):
@@ -1870,17 +2097,17 @@ def lambda_handler(event, context):
                 print(f"  - Código do produto XML: {codigo_produto}")
                 print(f"  - Continuando processamento sem pedidoDeCompra...")
             
-            # Buscar codigoOperacao: prioridade 1 = pedido de compra, prioridade 2 = CFOP mapping
+            # codigoOperacao: repasse do item do pedido; se ausente, CFOP_MAPPING da validação
             codigo_operacao = ''
             if codigo_operacao_from_metadata:
-                codigo_operacao = codigo_operacao_from_metadata
-                print(f"[8.{idx}.12.op] Usando codigoOperacao do pedido de compra: {codigo_operacao}")
+                codigo_operacao = str(codigo_operacao_from_metadata).strip()
+                print(f"[8.{idx}.12.op] codigoOperacao do item (pedido): {codigo_operacao}")
             elif cfop_mapping and cfop_mapping.get('chave'):
-                codigo_operacao = cfop_mapping.get('chave', '')
-                print(f"[8.{idx}.12.op] Usando codigoOperacao do CFOP mapping (chave): {codigo_operacao}")
+                codigo_operacao = str(cfop_mapping.get('chave', '') or '').strip()
+                print(f"[8.{idx}.12.op] codigoOperacao do CFOP mapping (chave): {codigo_operacao}")
             elif cfop_mapping and cfop_mapping.get('operacao'):
-                codigo_operacao = cfop_mapping.get('operacao', '')
-                print(f"[8.{idx}.12.op] Usando codigoOperacao do CFOP mapping (operacao): {codigo_operacao}")
+                codigo_operacao = str(cfop_mapping.get('operacao', '') or '').strip()
+                print(f"[8.{idx}.12.op] codigoOperacao do CFOP mapping (operacao): {codigo_operacao}")
             
             # Montar item do payload
             item = {
@@ -1909,6 +2136,17 @@ def lambda_handler(event, context):
                     "dataFabricacao": lote.get('dataFabricacao')
                 }
                 print(f"[8.{idx}.13] Lote adicionado: {lote['numero']}")
+
+            if uso_merge:
+                rb_uc = _find_rb_item_uso_consumo(
+                    request_body_data, codigo_produto, len(payload["itens"])
+                )
+                if rb_uc:
+                    item = _merge_uso_consumo_protheus_item(item, rb_uc)
+                    print(
+                        f"[8.{idx}.13.UC] Uso e consumo: codigoProduto={item.get('codigoProduto')!r} "
+                        f"codigoOperacao={item.get('codigoOperacao')!r}"
+                    )
             
             payload['itens'].append(item)
             lote_info = f", lote={lote['numero']}" if lote else ""
@@ -1926,6 +2164,7 @@ def lambda_handler(event, context):
     if not produtos_filtrados and produtos_para_processar:
         print(f"[8.3] AVISO: Nenhum produto deu match, mas há {len(produtos_para_processar)} produtos disponíveis")
         print(f"[8.3.1] Processando todos os produtos (comportamento antigo)")
+        n_fallback_lines = len(produtos_para_processar)
         
         for idx, produto in enumerate(produtos_para_processar, 1):
             try:
@@ -1935,35 +2174,35 @@ def lambda_handler(event, context):
                 if codigo.isdigit():
                     codigo = codigo.lstrip('0') or '0'
                 
-                # Buscar codigoOperacao: prioridade 1 = pedido de compra, prioridade 2 = CFOP mapping, prioridade 3 = CFOP XML
-                cfop_original = produto.get('cfop', '')
+                # codigoOperacao: repasse do item do pedido; se ausente, CFOP_MAPPING da validação
                 codigo_operacao = ''
-                
-                # Prioridade 1: codigoOperacao do requestBody (pedido de compra)
                 if request_body_data and request_body_data.get('itens'):
                     for item_rb_check in request_body_data['itens']:
                         codigo_rb_check = item_rb_check.get('codigoProduto', '').strip()
+                        id_rb = item_rb_check.get('id')
+                        id_rb_s = str(id_rb).strip() if id_rb is not None else ''
+                        codigo_s = str(codigo or '').strip()
+                        match_fb = False
                         if codigo and codigo_rb_check:
                             codigo_rb_norm = codigo_rb_check.lstrip('0') or '0'
                             codigo_norm = codigo.lstrip('0') or '0'
-                            if codigo_rb_norm == codigo_norm and item_rb_check.get('codigoOperacao'):
-                                codigo_operacao = item_rb_check['codigoOperacao']
-                                print(f"[8.{idx}] Produto {idx}: codigoOperacao do pedido de compra: {codigo_operacao}")
-                                break
+                            if codigo_rb_norm == codigo_norm:
+                                match_fb = True
+                        if not match_fb and codigo_s and id_rb_s:
+                            if _norm_codigo_produto(id_rb_s) == _norm_codigo_produto(codigo_s):
+                                match_fb = True
+                        if match_fb and item_rb_check.get('codigoOperacao'):
+                            codigo_operacao = str(item_rb_check['codigoOperacao']).strip()
+                            print(f"[8.{idx}] codigoOperacao do item (pedido): {codigo_operacao}")
+                            break
                 
                 if not codigo_operacao:
                     if cfop_mapping and cfop_mapping.get('chave'):
-                        # Prioridade 2: Chave encontrada na validação
-                        codigo_operacao = cfop_mapping.get('chave', '')
-                        print(f"[8.{idx}] Produto {idx}: CFOP={cfop_original} → Chave encontrada na validação: {codigo_operacao}")
+                        codigo_operacao = str(cfop_mapping.get('chave', '') or '').strip()
+                        print(f"[8.{idx}] codigoOperacao do CFOP mapping (chave): {codigo_operacao}")
                     elif cfop_mapping and cfop_mapping.get('operacao'):
-                        # Prioridade 3: Operação do mapping (mesmo valor da chave)
-                        codigo_operacao = cfop_mapping.get('operacao', '')
-                        print(f"[8.{idx}] Produto {idx}: CFOP={cfop_original} → Usando operação do mapping: {codigo_operacao}")
-                    else:
-                        # Fallback: Usar CFOP original do XML (caso não tenha passado pela validação)
-                        codigo_operacao = cfop_original
-                        print(f"[8.{idx}] Produto {idx}: CFOP={cfop_original} → Nenhuma chave encontrada, usando CFOP original como fallback")
+                        codigo_operacao = str(cfop_mapping.get('operacao', '') or '').strip()
+                        print(f"[8.{idx}] codigoOperacao do CFOP mapping (operacao): {codigo_operacao}")
                 
                 # Montar pedidoDeCompra
                 pedido_de_compra = {
@@ -1971,10 +2210,18 @@ def lambda_handler(event, context):
                     "itemPedidoErp": produto.get('item_pedido', '')
                 }
                 
+                qtd_fb = float(produto.get('quantidade', 0))
+                vu_fb = _valor_unitario_payload(
+                    produto,
+                    qtd_fb,
+                    valor_total_doc,
+                    n_fallback_lines,
+                )
+                
                 item = {
                     "codigoProduto": codigo,
-                    "quantidade": float(produto.get('quantidade', 0)),
-                    "valorUnitario": float(produto.get('valor_unitario', 0)),
+                    "quantidade": qtd_fb,
+                    "valorUnitario": vu_fb,
                     "codigoOperacao": codigo_operacao,
                     "pedidoDeCompra": pedido_de_compra
                 }
@@ -1983,9 +2230,19 @@ def lambda_handler(event, context):
                 unidade = produto.get('unidade', '').strip()
                 if unidade:
                     item["unidadeMedida"] = unidade
+
+                if uso_merge:
+                    rb_uc = _find_rb_item_uso_consumo(
+                        request_body_data, codigo, idx - 1
+                    )
+                    if rb_uc:
+                        item = _merge_uso_consumo_protheus_item(item, rb_uc)
                 
                 payload['itens'].append(item)
-                print(f"[8.{idx}] Produto {idx} adicionado: {codigo}, qtd={item['quantidade']}, valor={item['valorUnitario']}, op={codigo_operacao}")
+                print(
+                    f"[8.{idx}] Produto {idx} adicionado: {codigo}, qtd={item['quantidade']}, "
+                    f"valor={item['valorUnitario']}, op={item.get('codigoOperacao', '')}"
+                )
                 
             except (ValueError, TypeError) as e:
                 print(f"[8.{idx}] ERRO ao converter valores numéricos: {e}")

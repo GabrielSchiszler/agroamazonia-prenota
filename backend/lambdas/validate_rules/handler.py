@@ -5,6 +5,8 @@ import logging
 from datetime import datetime
 from decimal import Decimal
 
+from utils.primary_xml import pick_best_parsed_xml_item
+
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
@@ -118,15 +120,15 @@ def handler(event, context):
                     import traceback
                     traceback.print_exc()
     
-    for item in items:
-        if 'PARSED_XML=' in item['SK']:
-            parsed = json.loads(item.get('PARSED_DATA', '{}'))
-            danfe_data = {'file_name': item['FILE_NAME'], 'data': parsed}
-        # Removido: não processa mais OCR de documentos adicionais
-        # elif 'PARSED_OCR=' in item['SK']:
-        #     parsed = json.loads(item.get('PARSED_DATA', '{}'))
-        #     docs_data.append({'file_name': item['FILE_NAME'], 'data': parsed})
-    
+    best_xml = pick_best_parsed_xml_item(items)
+    if best_xml and best_xml.get('PARSED_DATA'):
+        try:
+            parsed = json.loads(best_xml.get('PARSED_DATA', '{}'))
+            danfe_data = {'file_name': best_xml['FILE_NAME'], 'data': parsed}
+            logger.info(f"[handler] PARSED_XML principal: {best_xml.get('SK')}")
+        except Exception as e:
+            logger.warning(f"[handler] Falha ao parsear PARSED_DATA do XML principal: {e}")
+
     if not danfe_data:
         logger.warning("DANFE XML not found, skipping validation")
         return {
@@ -280,6 +282,42 @@ def handler(event, context):
     except Exception as e:
         logger.warning(f"[handler] Erro ao verificar codigoOperacao nos metadados: {str(e)}")
 
+    cfop_validate_context = {}
+    try:
+        from utils.pedido_request_body import (
+            any_pedido_de_compra_in_itens,
+            natureza_from_pedido,
+            uso_e_consumo_active,
+        )
+
+        met_pedido = None
+        if pedido_compra_item:
+            raw_m = pedido_compra_item.get("METADADOS", "")
+            if raw_m:
+                met_pedido = json.loads(raw_m) if isinstance(raw_m, str) else raw_m
+        # Mesmo formato do pedido pode estar só no INPUT_JSON do METADATA
+        pedido_fonte = met_pedido if isinstance(met_pedido, dict) else None
+        if pedido_fonte is None and isinstance(input_json, dict):
+            pedido_fonte = input_json
+        if isinstance(pedido_fonte, dict):
+            cfop_validate_context = {
+                "process_type": process_type,
+                "uso_e_consumo": uso_e_consumo_active(pedido_fonte),
+                "has_pedido_de_compra": any_pedido_de_compra_in_itens(pedido_fonte),
+                "natureza": natureza_from_pedido(pedido_fonte),
+            }
+            logger.info(f"[handler] Contexto validar_cfop_chave: {cfop_validate_context}")
+        elif metadata_item:
+            cfop_validate_context = {
+                "process_type": process_type,
+                "uso_e_consumo": False,
+                "has_pedido_de_compra": False,
+                "natureza": "",
+            }
+            logger.info(f"[handler] Contexto validar_cfop_chave (sem JSON pedido): {cfop_validate_context}")
+    except Exception as e:
+        logger.warning(f"[handler] Não foi possível montar contexto CFOP: {e}")
+
     for rule in rules:
         rule_name = rule['rule_name']
         logger.info(f"Executing rule: {rule_name}")
@@ -307,7 +345,10 @@ def handler(event, context):
                 })
                 continue
             
-            result = module.validate(danfe_parsed, ocr_docs)
+            if rule_name == "validar_cfop_chave":
+                result = module.validate(danfe_parsed, ocr_docs, cfop_validate_context)
+            else:
+                result = module.validate(danfe_parsed, ocr_docs)
             logger.info(f"Rule {rule_name} result: {json.dumps(result, default=str)}")
             results.append(result)
             

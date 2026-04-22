@@ -2,135 +2,22 @@ import logging
 import os
 import boto3
 
+from utils.cfop_table import (
+    disambiguate_cfop_mappings,
+    get_all_cfop_mappings_direct,
+    normalize_cfop,
+)
+
 logger = logging.getLogger()
 
-def normalize_cfop(cfop):
-    """Normaliza o CFOP removendo espaços e caracteres especiais"""
-    if not cfop:
-        return ""
-    return str(cfop).strip()
 
-def get_all_cfop_mappings_direct(table, cfop):
-    """Busca TODOS os mapeamentos CFOP diretamente no DynamoDB usando boto3
-    Retorna lista de mapeamentos encontrados (pode ter 0, 1 ou mais)
-    """
-    try:
-        # Buscar registro CFOP#{cfop}
-        pk = "CFOP_OPERATION"
-        sk = f"CFOP#{cfop}"
-        
-        logger.info(f"[validar_cfop_chave] Buscando CFOP no DynamoDB - PK: {pk}, SK: {sk}, Tabela: {table.table_name}")
-        
-        try:
-            response = table.get_item(Key={'PK': pk, 'SK': sk})
-        except Exception as get_item_err:
-            logger.error(f"[validar_cfop_chave] Erro ao fazer get_item: {str(get_item_err)}")
-            logger.error(f"[validar_cfop_chave] Tipo do erro: {type(get_item_err).__name__}")
-            # Se for ResourceNotFoundException, pode ser que a tabela não exista ou o item não exista
-            if 'ResourceNotFoundException' in str(type(get_item_err).__name__) or 'ResourceNotFoundException' in str(get_item_err):
-                logger.error(f"[validar_cfop_chave] Tabela ou item não encontrado. Verificando se a tabela existe...")
-                # Tentar fazer uma query para verificar se a tabela existe
-                try:
-                    test_query = table.query(
-                        KeyConditionExpression='PK = :pk',
-                        ExpressionAttributeValues={':pk': pk},
-                        Limit=1
-                    )
-                    logger.info(f"[validar_cfop_chave] Query de teste retornou {len(test_query.get('Items', []))} item(ns)")
-                except Exception as query_err:
-                    logger.error(f"[validar_cfop_chave] Erro ao fazer query de teste: {str(query_err)}")
-            raise
-        
-        logger.info(f"[validar_cfop_chave] Resposta do DynamoDB - Item encontrado: {'Item' in response}")
-        
-        if 'Item' not in response:
-            logger.info(f"[validar_cfop_chave] CFOP {cfop} não encontrado no DynamoDB (PK: {pk}, SK: {sk})")
-            # Tentar buscar com query para verificar se existe algum registro similar
-            try:
-                query_response = table.query(
-                    KeyConditionExpression='PK = :pk AND begins_with(SK, :sk_prefix)',
-                    ExpressionAttributeValues={
-                        ':pk': pk,
-                        ':sk_prefix': f'CFOP#{cfop}'
-                    }
-                )
-                logger.info(f"[validar_cfop_chave] Query alternativa encontrou {len(query_response.get('Items', []))} item(ns)")
-                if query_response.get('Items'):
-                    logger.info(f"[validar_cfop_chave] Itens encontrados na query: {[item.get('SK') for item in query_response.get('Items', [])]}")
-            except Exception as query_err:
-                logger.warning(f"[validar_cfop_chave] Erro ao fazer query alternativa: {str(query_err)}")
-            return []
-        
-        cfop_item = response['Item']
-        
-        # Buscar TODOS os mapping_ids (pode ter MAPPING_ID ou MAPPING_IDS)
-        # Não verificar se CFOP está ativo aqui - vamos buscar os mapeamentos e filtrar apenas os ativos
-        mapping_ids = []
-        if cfop_item.get('MAPPING_ID'):
-            mapping_ids.append(cfop_item.get('MAPPING_ID'))
-        if cfop_item.get('MAPPING_IDS'):
-            mapping_ids.extend(cfop_item.get('MAPPING_IDS', []))
-        
-        # Remover duplicatas
-        mapping_ids = list(set(mapping_ids))
-        
-        if not mapping_ids:
-            logger.info(f"[validar_cfop_chave] CFOP {cfop} encontrado mas sem mapping_ids")
-            return []
-        
-        logger.info(f"[validar_cfop_chave] CFOP {cfop} encontrado com {len(mapping_ids)} mapeamento(s): {mapping_ids}")
-        
-        # Buscar todos os registros principais e filtrar APENAS OS ATIVOS
-        mappings = []
-        mappings_inativos = []
-        for mapping_id in mapping_ids:
-            mapping_sk = f"MAPPING#{mapping_id}"
-            mapping_response = table.get_item(Key={'PK': pk, 'SK': mapping_sk})
-            
-            if 'Item' not in mapping_response:
-                logger.warning(f"[validar_cfop_chave] Mapeamento {mapping_id} não encontrado no DynamoDB")
-                continue
-            
-            mapping_item = mapping_response['Item']
-            
-            # Verificar se o registro principal está ativo
-            is_ativo = mapping_item.get('ATIVO', True)
-            
-            mapping_data = {
-                'id': mapping_id,
-                'chave': mapping_item.get('CHAVE', ''),
-                'descricao': mapping_item.get('DESCRICAO', ''),
-                'cfop': mapping_item.get('CFOP', ''),
-                'operacao': mapping_item.get('OPERACAO', ''),
-                'regra': mapping_item.get('REGRA', ''),
-                'observacao': mapping_item.get('OBSERVACAO', ''),
-                'pedido_compra': mapping_item.get('PEDIDO_COMPRA', False),
-                'ativo': is_ativo
-            }
-            
-            # Adicionar apenas mapeamentos ATIVOS à lista de retorno
-            if is_ativo:
-                mappings.append(mapping_data)
-                logger.info(f"[validar_cfop_chave] Mapeamento {mapping_id} (chave: {mapping_data['chave']}) está ATIVO - incluído")
-            else:
-                mappings_inativos.append(mapping_data)
-                logger.info(f"[validar_cfop_chave] Mapeamento {mapping_id} (chave: {mapping_data['chave']}) está INATIVO - ignorado")
-        
-        # Log resumo
-        if mappings_inativos:
-            logger.info(f"[validar_cfop_chave] CFOP {cfop}: {len(mappings)} mapeamento(s) ATIVO(S) encontrado(s), {len(mappings_inativos)} inativo(s) ignorado(s)")
-        else:
-            logger.info(f"[validar_cfop_chave] CFOP {cfop}: {len(mappings)} mapeamento(s) ATIVO(S) encontrado(s)")
-        
-        return mappings
-    except Exception as e:
-        logger.error(f"[validar_cfop_chave] Erro ao buscar CFOP no DynamoDB: {str(e)}")
-        return []
-
-def validate(danfe_data, ocr_docs):
+def validate(danfe_data, ocr_docs, context=None):
     """
     Valida se o CFOP do DANFE está mapeado na tabela Chave x CFOP
     e retorna a chave correspondente.
+
+    context (opcional): process_type, uso_e_consumo, has_pedido_de_compra, natureza — para
+    desambiguar quando existem vários mapeamentos ativos para o mesmo CFOP.
     """
     logger.info(f"[validar_cfop_chave.py] Starting validation with {len(ocr_docs)} docs")
     
@@ -194,7 +81,15 @@ def validate(danfe_data, ocr_docs):
     
     # Buscar TODOS os mapeamentos correspondentes no DynamoDB
     cfop_mappings = get_all_cfop_mappings_direct(table, danfe_cfop_normalized)
-    
+    if len(cfop_mappings) > 1:
+        before = len(cfop_mappings)
+        cfop_mappings = disambiguate_cfop_mappings(cfop_mappings, context)
+        logger.info(
+            "[validar_cfop_chave] Mapeamentos após disambiguação: %d (antes: %d)",
+            len(cfop_mappings),
+            before,
+        )
+
     comparisons = []
     all_match = True
     corrections = []

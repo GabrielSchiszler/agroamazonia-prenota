@@ -185,6 +185,7 @@ class ProcessResponse(BaseModel):
     files: Dict[str, List[Dict[str, Any]]]
     parsing_results: List[Dict[str, Any]] = []
     created_at: str
+    error_info: Optional[Dict[str, Any]] = None
     
     class Config:
         schema_extra = {
@@ -216,6 +217,50 @@ class ProcessResponse(BaseModel):
                 "created_at": "1733068800"
             }
         }
+
+MAX_FILES_PER_PROCESS = 10
+ALLOWED_CONTENT_TYPES = {
+    "application/xml", "text/xml",
+    "application/pdf",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "image/png", "image/jpeg", "image/tiff",
+}
+
+
+class BatchFileItem(BaseModel):
+    file_name: str = Field(..., description="Nome do arquivo")
+    file_type: str = Field(
+        ...,
+        description="Content-Type do arquivo (application/xml, application/pdf, ...)",
+    )
+    doc_type: str = Field(
+        default="ADDITIONAL",
+        description="DANFE ou ADDITIONAL",
+    )
+
+
+class BatchPresignedUrlRequest(BaseModel):
+    process_id: str = Field(..., description="ID do processo (UUID)")
+    files: List[BatchFileItem] = Field(
+        ...,
+        min_length=1,
+        max_length=MAX_FILES_PER_PROCESS,
+        description=f"Lista de arquivos (máx {MAX_FILES_PER_PROCESS})",
+    )
+
+
+class BatchPresignedUrlResponseItem(BaseModel):
+    file_name: str
+    upload_url: str
+    file_key: str
+    content_type: str
+    doc_type: str
+
+
+class BatchPresignedUrlResponse(BaseModel):
+    process_id: str
+    files: List[BatchPresignedUrlResponseItem]
+
 
 class UpdateFileMetadataRequest(BaseModel):
     process_id: str = Field(..., description="ID do processo")

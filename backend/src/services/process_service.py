@@ -9,6 +9,27 @@ from src.repositories.dynamodb_repository import DynamoDBRepository
 
 logger = logging.getLogger(__name__)
 
+
+def _truthy_pedido_flag(value: Any) -> bool:
+    """True se o valor indica flag ligada — mesma regra que isCommodities (bool True ou string 'true')."""
+    if value is True:
+        return True
+    if isinstance(value, str) and value.strip().lower() == "true":
+        return True
+    return False
+
+
+def _get_pedido_field(pedido_compra: dict, request_body: dict, field: str) -> Any:
+    """Ordem: requestBody → header → raiz do JSON do pedido (metadados ERP)."""
+    header = pedido_compra.get("header")
+    if not isinstance(header, dict):
+        header = {}
+    if field in request_body:
+        return request_body[field]
+    if field in header:
+        return header[field]
+    return pedido_compra.get(field)
+
 class ProcessService:
     def __init__(self):
         self.repository = DynamoDBRepository()
@@ -138,6 +159,93 @@ class ProcessService:
             logger.exception("[generate_presigned_url] Traceback completo:")
             raise
     
+    def generate_presigned_urls_batch(
+        self,
+        process_id: str,
+        files: list[Dict[str, str]],
+    ) -> Dict[str, Any]:
+        """Generate presigned URLs for multiple files in a single logical operation.
+
+        Each entry in *files* must have keys: file_name, file_type, doc_type.
+        Validates MIME types and per-process attachment limit before generating any URL.
+        """
+        import re
+        from src.models.api import MAX_FILES_PER_PROCESS, ALLOWED_CONTENT_TYPES
+
+        if len(files) > MAX_FILES_PER_PROCESS:
+            raise ValueError(
+                f"Máximo de {MAX_FILES_PER_PROCESS} arquivos por processo; "
+                f"recebidos: {len(files)}"
+            )
+
+        for f in files:
+            if f["file_type"] not in ALLOWED_CONTENT_TYPES:
+                raise ValueError(
+                    f"Tipo {f['file_type']} não permitido para {f['file_name']}. "
+                    f"Permitidos: {', '.join(sorted(ALLOWED_CONTENT_TYPES))}"
+                )
+
+        pk = f"PROCESS#{process_id}"
+        items = self.repository.query_by_pk_and_sk_prefix(pk, "METADATA")
+        if not items:
+            timestamp = int(datetime.now().timestamp())
+            self.repository.put_item("PROCESS", f"PROCESS#{process_id}", {
+                "PROCESS_ID": process_id,
+                "TIMESTAMP": timestamp,
+            })
+            self.repository.put_item(pk, "METADATA", {
+                "STATUS": "CREATED",
+                "TIMESTAMP": timestamp,
+            })
+
+        existing = self.repository.query_by_pk_and_sk_prefix(pk, "FILE#")
+        existing_count = len(existing)
+        if existing_count + len(files) > MAX_FILES_PER_PROCESS:
+            raise ValueError(
+                f"Processo já tem {existing_count} arquivo(s); "
+                f"limite total é {MAX_FILES_PER_PROCESS}"
+            )
+
+        results: list[Dict[str, str]] = []
+        for f in files:
+            safe_name = re.sub(r"[^a-zA-Z0-9._-]", "_", f["file_name"])
+            doc_type = f.get("doc_type", "ADDITIONAL")
+            folder = "danfe" if doc_type == "DANFE" else "docs"
+            file_key = f"processes/{process_id}/{folder}/{safe_name}"
+
+            url = self.s3_client.generate_presigned_url(
+                "put_object",
+                Params={
+                    "Bucket": self.bucket_name,
+                    "Key": file_key,
+                    "ContentType": f["file_type"],
+                },
+                ExpiresIn=3600,
+            )
+
+            file_data = {
+                "FILE_NAME": safe_name,
+                "FILE_KEY": file_key,
+                "DOC_TYPE": doc_type,
+                "STATUS": "PENDING",
+                "CONTENT_TYPE": f["file_type"],
+            }
+            self.repository.put_item(pk, f"FILE#{safe_name}", file_data)
+
+            results.append({
+                "file_name": safe_name,
+                "upload_url": url,
+                "file_key": file_key,
+                "content_type": f["file_type"],
+                "doc_type": doc_type,
+            })
+
+        logger.info(
+            "[generate_presigned_urls_batch] %d URLs geradas para processo %s",
+            len(results), process_id,
+        )
+        return {"process_id": process_id, "files": results}
+
     def link_pedido_compra_metadata(self, process_id: str, metadados: Dict[str, Any]) -> Dict[str, Any]:
         """
         Vincula metadados do pedido de compra ao processo (sem arquivo físico).
@@ -227,36 +335,59 @@ class ProcessService:
         
         files = [item for item in items if item['SK'].startswith('FILE#')]
         danfe_files = [f for f in files if f.get('DOC_TYPE') == 'DANFE']
+        all_files = files
         
-        # Verificar se há metadados de pedido de compra (obrigatório)
-        pedido_compra_item = next((item for item in items if item.get('SK') == 'PEDIDO_COMPRA_METADATA'), None)
+        pedido_compra_item = next(
+            (item for item in items if item.get('SK') == 'PEDIDO_COMPRA_METADATA'), None
+        )
         
-        if not danfe_files:
-            raise ValueError("DANFE obrigatório não encontrado")
+        # At least one attachment is required (DANFE or any other file)
+        if not all_files:
+            raise ValueError("Nenhum arquivo anexado ao processo")
         
-        # Metadados do pedido de compra são obrigatórios
-        if not pedido_compra_item:
-            raise ValueError("Metadados do pedido de compra são obrigatórios")
+        # process_type: pedido requestBody — usoEConsumo → USOCONSUMO; isCommodities → BARTER;
+        # senão AGROQUIMICOS; sem PEDIDO_COMPRA_METADATA → DOCUMENTO_ENTRADA
+        process_type = 'AGROQUIMICOS'
         
-        # Determinar process_type baseado nos metadados do pedido de compra
-        # Se isCommodities == true, é BARTER; caso contrário, é AGROQUIMICOS
-        process_type = 'AGROQUIMICOS'  # Default
-        
-        try:
-            metadados_str = pedido_compra_item.get('METADADOS', '{}')
-            pedido_compra = json.loads(metadados_str) if isinstance(metadados_str, str) else metadados_str
-            
-            # Verificar isCommodities no requestBody
-            request_body = pedido_compra.get('requestBody', {})
-            is_commodities = request_body.get('isCommodities', False)
-            
-            if is_commodities is True or str(is_commodities).lower() == 'true':
-                process_type = 'BARTER'
-                logger.info(f"Processo {process_id}: isCommodities=true, definindo process_type=BARTER")
-            else:
-                logger.info(f"Processo {process_id}: isCommodities={is_commodities}, mantendo process_type=AGROQUIMICOS")
-        except Exception as e:
-            logger.warning(f"Erro ao verificar isCommodities: {e}. Usando process_type=AGROQUIMICOS")
+        if pedido_compra_item:
+            try:
+                metadados_str = pedido_compra_item.get('METADADOS', '{}')
+                pedido_compra = json.loads(metadados_str) if isinstance(metadados_str, str) else metadados_str
+                
+                request_body = pedido_compra.get('requestBody') or {}
+                if not isinstance(request_body, dict):
+                    request_body = {}
+
+                uso_raw = _get_pedido_field(pedido_compra, request_body, "usoEConsumo")
+                if _truthy_pedido_flag(uso_raw):
+                    process_type = 'USOCONSUMO'
+                    logger.info(
+                        f"Processo {process_id}: usoEConsumo ativo, definindo process_type=USOCONSUMO"
+                    )
+                else:
+                    commodities_raw = _get_pedido_field(
+                        pedido_compra, request_body, "isCommodities"
+                    )
+                    if _truthy_pedido_flag(commodities_raw):
+                        process_type = 'BARTER'
+                        logger.info(
+                            f"Processo {process_id}: isCommodities ativo, definindo process_type=BARTER"
+                        )
+                    else:
+                        logger.info(
+                            f"Processo {process_id}: isCommodities={commodities_raw}, "
+                            "mantendo process_type=AGROQUIMICOS"
+                        )
+            except Exception as e:
+                logger.warning(
+                    f"Erro ao derivar process_type (usoEConsumo/isCommodities): {e}. "
+                    "Usando process_type=AGROQUIMICOS"
+                )
+        else:
+            process_type = 'DOCUMENTO_ENTRADA'
+            logger.info(
+                f"Processo {process_id}: sem PEDIDO_COMPRA_METADATA — process_type=DOCUMENTO_ENTRADA"
+            )
         
         self.repository.update_item(pk, 'METADATA', {'PROCESS_TYPE': process_type})
         
@@ -333,6 +464,49 @@ class ProcessService:
                 except Exception as e:
                     logger.error(f"Error parsing OCR data: {e}")
         
+        # Textract per-file results (multi-anexo)
+        textract_items = [item for item in items if item.get('SK', '').startswith('TEXTRACT#')]
+        for item in textract_items:
+            try:
+                tables = json.loads(item.get('TABLES_DATA', '[]'))
+            except Exception:
+                tables = []
+            parsing_results.append({
+                'source': 'TEXTRACT',
+                'file_name': item.get('FILE_NAME', ''),
+                'parsed_data': {
+                    'raw_text': item.get('RAW_TEXT', ''),
+                    'tables': tables,
+                    'job_id': item.get('JOB_ID', ''),
+                }
+            })
+        
+        # MERGED_EXTRACTION (canonical JSON from all sources)
+        merged_item = next((item for item in items if item.get('SK') == 'MERGED_EXTRACTION'), None)
+        if merged_item and merged_item.get('MERGED_DATA'):
+            try:
+                merged_data = json.loads(merged_item['MERGED_DATA'])
+                parsing_results.append({
+                    'source': 'MERGED',
+                    'file_name': 'merged_extraction',
+                    'parsed_data': merged_data
+                })
+            except Exception as e:
+                logger.error(f"Error parsing MERGED_DATA: {e}")
+        
+        # BEDROCK_EXTRACTION (AI-enriched fields for Protheus)
+        bedrock_item = next((item for item in items if item.get('SK') == 'BEDROCK_EXTRACTION'), None)
+        if bedrock_item and bedrock_item.get('EXTRACTED_FIELDS'):
+            try:
+                extracted = json.loads(bedrock_item['EXTRACTED_FIELDS'])
+                parsing_results.append({
+                    'source': 'BEDROCK_AI',
+                    'file_name': 'bedrock_extraction',
+                    'parsed_data': extracted
+                })
+            except Exception as e:
+                logger.error(f"Error parsing BEDROCK_EXTRACTION: {e}")
+        
         logger.info(f"Total parsing_results: {len(parsing_results)}")
         
         # Converter sctask_id de Decimal para string se necessário
@@ -346,6 +520,8 @@ class ProcessService:
                 'file_name': file_item.get('FILE_NAME'),
                 'status': file_item.get('STATUS', 'UNKNOWN')
             }
+            if file_item.get('DOC_TYPE'):
+                file_data['doc_type'] = file_item.get('DOC_TYPE')
             
             # Adicionar file_key apenas se existir (arquivos físicos)
             if file_item.get('FILE_KEY'):

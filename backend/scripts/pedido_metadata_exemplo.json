@@ -1,0 +1,21 @@
+{
+  "header": {
+    "tenantId": "00,010101"
+  },
+  "requestBody": {
+    "usoEConsumo": true,
+    "centroDeCusto": "Centro de Custo 1",
+    "natureza": "Compra de Mercadorias",
+    "moeda": "BRL",
+    "itens": [
+      {
+        "id": "26480",
+        "codigoProduto": "26480",
+        "codigoOperacao": "1B",
+        "produto": "FERTILIZANTE TOP PHOS 280 HP B1",
+        "quantidade": 1,
+        "unidadeMedida": "TON"
+      }
+    ]
+  }
+}

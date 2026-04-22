@@ -72,13 +72,13 @@
                         </div>
 
                         <div class="details-card">
-                            <h4>📄 DANFE (Obrigatório)</h4>
-                            <p style="color: #666; font-size: 0.9em; margin-bottom: 10px;">Upload do XML ou PDF da Nota Fiscal</p>
+                            <h4>📄 NF-e / documentos fiscais (DANFE)</h4>
+                            <p style="color: #666; font-size: 0.9em; margin-bottom: 10px;">Todos os anexos do processo (NF XML/PDF, boleto, imagens, etc.) entram aqui — mesma pasta <code>danfe</code> na API.</p>
                             <div class="upload-area">
-                                <input type="file" id="danfeInput" accept=".pdf,.xml" onchange="handleDanfeSelect()">
+                                <input type="file" id="danfeInput" accept=".pdf,.xml,.png,.jpg,.jpeg,.tiff,.tif" multiple onchange="handleDanfeSelect()">
                                 <label for="danfeInput" class="upload-label">
                                     <span class="upload-icon">📋</span>
-                                    <span>Upload DANFE (XML)</span>
+                                    <span>Enviar documentos (vários arquivos)</span>
                                 </label>
                             </div>
                             <div style="margin-top: 15px;">
@@ -99,28 +99,47 @@
 
                         <div class="details-card">
                             <h4>📊 Metadados do Pedido de Compra</h4>
-                            <p style="color: #666; font-size: 0.9em; margin-bottom: 10px;">Vincule os metadados JSON do pedido de compra</p>
-                            
+                            <p style="color: #666; font-size: 0.9em; margin-bottom: 10px;">
+                                Somente JSON do pedido (ERP). Arquivos PDF/XML ficam na secção <strong>NF-e / documentos fiscais</strong> acima.
+                            </p>
+                            <div id="pedidoMetadataLinked" style="display: none; margin-bottom: 12px; padding: 12px; background: #e8f5e9; border: 1px solid #c8e6c9; border-radius: 8px; font-size: 0.9em;">
+                                <strong>Pedido já vinculado</strong> (resumo abaixo). Use o botão para alterar.
+                            </div>
                             <div style="margin-bottom: 15px;">
                                 <button onclick="sendMetadataOnly()" class="btn-primary" style="width: 100%; padding: 12px;">
                                     📊 Vincular Metadados do Pedido de Compra
                                 </button>
                             </div>
-                            
                             <div style="margin-top: 15px;">
                                 <label style="display: block; margin-bottom: 5px; font-weight: bold; color: #333;">
-                                    📊 Metadados JSON <span style="color: #d32f2f; font-weight: normal;">(Obrigatório)</span>
+                                    📊 Metadados JSON do pedido
                                 </label>
                                 <textarea 
                                     id="docsMetadata" 
-                                    placeholder='{"header": {"tenantId": "123"}, "requestBody": {"cnpjEmitente": "...", "itens": [...], "duplicatas": [...]}}'
-                                    style="width: 100%; min-height: 200px; padding: 10px; border: 1px solid #ddd; border-radius: 4px; font-family: monospace; font-size: 0.9em; resize: vertical;"
-                                ></textarea>
+                                    style="width: 100%; min-height: 220px; padding: 10px; border: 1px solid #ddd; border-radius: 4px; font-family: monospace; font-size: 0.9em; resize: vertical;"
+                                >{
+  "header": {
+    "tenantId": "00,010101"
+  },
+  "requestBody": {
+    "usoEConsumo": true,
+    "centroDeCusto": "Centro de Custo 1",
+    "natureza": "Compra de Mercadorias",
+    "itens": [
+      {
+        "id": "26480",
+        "codigoProduto": "26480",
+        "produto": "FERTILIZANTE TOP PHOS 280 HP B1",
+        "quantidade": 1,
+        "unidadeMedida": "TON"
+      }
+    ]
+  }
+}</textarea>
                                 <small style="color: #666; display: block; margin-top: 5px;">
-                                    Metadados estruturados do pedido de compra. Campos obrigatórios: header.tenantId, requestBody.cnpjEmitente, requestBody.itens, requestBody.duplicatas (opcional).
+                                    <code>usoEConsumo</code>: <code>true</code> define o processo como USOCONSUMO. Em USOCONSUMO, <code>id</code> no item vira <code>codigoProduto</code> no envio ao Protheus (sem campo <code>produto</code> no payload). <code>produto</code> no JSON segue útil para validação/match. Modelo sem <code>pedidoDeCompra</code> no item; <code>quantidade</code> costuma ser 1.
                                 </small>
                             </div>
-                            <div id="docsList"></div>
                         </div>
 
                         <div class="details-card full-width">

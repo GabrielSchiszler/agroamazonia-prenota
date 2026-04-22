@@ -11,8 +11,117 @@ s3 = boto3.client('s3')
 dynamodb = boto3.resource('dynamodb')
 table = dynamodb.Table(os.environ['TABLE_NAME'])
 
+def _select_nfe_xml(items, bucket):
+    """Among all FILE# items ending in .xml, pick the NF-e (by namespace heuristic).
+
+    Returns (dynamo_item, xml_bytes) for the best candidate, or (None, None).
+    Priority: first confirmed NF-e XML; fall back to the first .xml if none is NF-e.
+    """
+    xml_candidates = [
+        item for item in items
+        if item.get('SK', '').startswith('FILE#')
+        and item.get('FILE_NAME', '').lower().endswith('.xml')
+    ]
+    if not xml_candidates:
+        return None, None
+
+    fallback_item = xml_candidates[0]
+    fallback_bytes = None
+
+    for item in xml_candidates:
+        file_key = item['FILE_KEY']
+        resp = s3.get_object(Bucket=bucket, Key=file_key)
+        raw = resp['Body'].read()
+        try:
+            root = ET.fromstring(raw)
+        except ET.ParseError:
+            logger.warning("XML inválido: %s", file_key)
+            continue
+
+        tag = root.tag
+        ns = ""
+        local = tag
+        if tag.startswith("{"):
+            ns, local = tag[1:].split("}", 1)
+
+        nfe_ns = "http://www.portalfiscal.inf.br/nfe"
+        nfe_tags = {"nfeProc", "NFe", "enviNFe"}
+
+        is_nfe = (ns == nfe_ns and local in nfe_tags)
+        if not is_nfe:
+            for child in root:
+                ctag = child.tag
+                if ctag.startswith("{"):
+                    cns, clocal = ctag[1:].split("}", 1)
+                    if cns == nfe_ns and clocal in nfe_tags:
+                        is_nfe = True
+                        break
+
+        if is_nfe:
+            logger.info("NF-e XML selecionado: %s", item['FILE_NAME'])
+            return item, raw
+
+        if fallback_bytes is None:
+            fallback_bytes = raw
+
+    logger.warning("Nenhum XML é NF-e; usando fallback: %s", fallback_item['FILE_NAME'])
+    if fallback_bytes is None:
+        resp = s3.get_object(Bucket=bucket, Key=fallback_item['FILE_KEY'])
+        fallback_bytes = resp['Body'].read()
+    return fallback_item, fallback_bytes
+
+
+def parse_generic_xml_summary(xml_content: str) -> dict:
+    """XML não-NF-e: resumo leve em JSON para merge / Protheus."""
+    root = ET.fromstring(xml_content)
+
+    def local_tag(tag: str) -> str:
+        if tag.startswith("{"):
+            return tag.split("}", 1)[1]
+        return tag
+
+    children = [local_tag(c.tag) for c in list(root)[:40]]
+    text_blob = "".join(root.itertext())
+    return {
+        "_kind": "generic_xml",
+        "root_tag": local_tag(root.tag),
+        "child_tags_sample": children,
+        "text_preview": text_blob.strip()[:2000],
+    }
+
+
+def handle_single_xml_attachment(event, pk, process_id, bucket):
+    """Um anexo .xml (Step Functions Map): grava PARSED_XML=; merge escolhe NF-e principal."""
+    file_name = event["file_name"]
+    file_key = event["file_key"]
+    logger.info("parse_xml single file: %s", file_key)
+    resp = s3.get_object(Bucket=bucket, Key=file_key)
+    raw = resp["Body"].read()
+    content = raw.decode("utf-8", errors="replace")
+    try:
+        try:
+            data = parse_nfe_xml(content)
+        except Exception:
+            data = parse_generic_xml_summary(content)
+    except Exception as e:
+        logger.error("parse_xml single failed %s: %s", file_name, e)
+        raise
+
+    sk = f"PARSED_XML={file_name}"
+    table.put_item(
+        Item={
+            "PK": pk,
+            "SK": sk,
+            "FILE_NAME": file_name,
+            "PARSED_DATA": json.dumps(data, ensure_ascii=False, default=str),
+            "SOURCE": "XML",
+        }
+    )
+    return {"process_id": process_id, "file_name": file_name, "status": "parsed_xml"}
+
+
 def handler(event, context):
-    """Parse XML DANFE para JSON estruturado"""
+    """Parse XML DANFE para JSON estruturado — prioriza NF-e entre múltiplos XMLs (batch legado) ou um arquivo (Map)."""
     logger.info(f"Received event: {json.dumps(event)}")
     
     process_id = event['process_id']
@@ -20,52 +129,87 @@ def handler(event, context):
     pk = f"PROCESS#{process_id}"
     
     try:
-        # Buscar arquivo XML
+        if event.get("file_name") and event.get("file_key"):
+            return handle_single_xml_attachment(event, pk, process_id, bucket)
+
         items = table.query(
             KeyConditionExpression='PK = :pk',
             ExpressionAttributeValues={':pk': pk}
         )['Items']
-        
-        xml_file = None
-        for item in items:
-            if item.get('SK', '').startswith('FILE#') and item.get('FILE_NAME', '').lower().endswith('.xml'):
-                xml_file = item
-                break
-        
+
+        xml_file, xml_raw = _select_nfe_xml(items, bucket)
+
         if not xml_file:
-            error_msg = "XML não encontrado"
-            logger.error(error_msg)
-            update_process_status_to_failed(pk, process_id, error_msg, "XML_NOT_FOUND")
-            raise Exception(error_msg)
-        
-        # Baixar XML do S3
+            logger.info("Nenhum XML encontrado — extract_documents / merge seguem sem NF-e")
+            return {
+                'process_id': process_id,
+                'xml_files_parsed': 0,
+            }
+
         file_key = xml_file['FILE_KEY']
-        logger.info(f"Downloading XML: {file_key}")
-        
-        response = s3.get_object(Bucket=bucket, Key=file_key)
-        xml_content = response['Body'].read().decode('utf-8')
-        
-        # Parse XML
+        logger.info(f"Parsing primary XML: {file_key}")
+
+        xml_content = xml_raw.decode('utf-8')
         parsed_data = parse_nfe_xml(xml_content)
-        
-        # Salvar no DynamoDB
+
         sk = f"PARSED_XML={xml_file['FILE_NAME']}"
         parsed_json = json.dumps(parsed_data)
         logger.info(f"Parsed data size: {len(parsed_json)} bytes")
-        
+
         table.put_item(Item={
             'PK': pk,
             'SK': sk,
             'FILE_NAME': xml_file['FILE_NAME'],
             'PARSED_DATA': parsed_json,
-            'SOURCE': 'XML'
+            'SOURCE': 'XML',
+            'IS_PRIMARY': True,
         })
-        
-        logger.info(f"XML parsed and saved to DynamoDB successfully")
-        
-        # Retornar apenas process_id para próximo step
+
+        xml_files_parsed = 1
+
+        xml_candidates = [
+            item for item in items
+            if item.get('SK', '').startswith('FILE#')
+            and item.get('FILE_NAME', '').lower().endswith('.xml')
+            and item.get('FILE_KEY')
+        ]
+        primary_name = xml_file['FILE_NAME']
+        for cand in xml_candidates:
+            if cand['FILE_NAME'] == primary_name:
+                continue
+            ck = cand['FILE_KEY']
+            logger.info(f"Parsing secondary XML: {cand['FILE_NAME']}")
+            try:
+                resp = s3.get_object(Bucket=bucket, Key=ck)
+                raw = resp['Body'].read()
+                content = raw.decode('utf-8', errors='replace')
+            except Exception as e:
+                logger.warning("Falha ao ler XML secundário %s: %s", ck, e)
+                continue
+            try:
+                try:
+                    sec_data = parse_nfe_xml(content)
+                except Exception:
+                    sec_data = parse_generic_xml_summary(content)
+            except Exception as e:
+                logger.warning("XML secundário inválido: %s — %s", cand['FILE_NAME'], e)
+                continue
+
+            sec_sk = f"PARSED_XML={cand['FILE_NAME']}"
+            table.put_item(Item={
+                'PK': pk,
+                'SK': sec_sk,
+                'FILE_NAME': cand['FILE_NAME'],
+                'PARSED_DATA': json.dumps(sec_data, ensure_ascii=False, default=str),
+                'SOURCE': 'XML',
+            })
+            xml_files_parsed += 1
+
+        logger.info(f"XML(s) gravados: {xml_files_parsed}")
+
         return {
-            'process_id': process_id
+            'process_id': process_id,
+            'xml_files_parsed': xml_files_parsed,
         }
     
     except Exception as e:
@@ -74,10 +218,8 @@ def handler(event, context):
         logger.error(f"Error parsing XML: {error_msg}")
         logger.exception("Full traceback:")
         
-        # Atualizar status para FAILED e salvar erro
         update_process_status_to_failed(pk, process_id, error_msg, error_type)
         
-        # Re-raise para que Step Functions capture o erro
         raise Exception(f"Parse XML failed: {error_msg}")
 
 def update_process_status_to_failed(pk, process_id, error_message, error_type):

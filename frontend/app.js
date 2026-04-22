@@ -1049,9 +1049,9 @@ function createNewProcess() {
     document.getElementById('processDetails').style.display = 'block';
     document.getElementById('processesList').style.display = 'none';
     
-    // Limpar listas de arquivos
     document.getElementById('danfeList').innerHTML = '';
-    document.getElementById('docsList').innerHTML = '';
+    const pb = document.getElementById('pedidoMetadataLinked');
+    if (pb) { pb.style.display = 'none'; pb.innerHTML = ''; }
     
     showToast(`✓ Novo processo preparado. Faça upload dos arquivos para criar.`, 'info');
 }
@@ -1135,6 +1135,7 @@ async function loadProcesses(silent = false) {
             const processTypeLabel = {
                 'AGROQUIMICOS': '🧪 Agroquímicos',
                 'BARTER': '🌾 Barter (Commodities)',
+                'USOCONSUMO': '📋 Uso e consumo',
                 'SEMENTES': '🌱 Sementes',
                 'FERTILIZANTES': '💊 Fertilizantes'
             }[p.process_type] || `📦 ${p.process_type || 'N/A'}`;
@@ -1355,118 +1356,95 @@ function displayErrorInfo(process) {
     }
 }
 
+function physicalAdditionalFiles(proc) {
+    if (!proc.files || !proc.files.additional) return [];
+    return proc.files.additional.filter(f => !f.metadata_only);
+}
+
+function allFiscalFilesList(proc) {
+    const danfe = proc.files.danfe || [];
+    const add = physicalAdditionalFiles(proc);
+    return [...danfe, ...add].sort((a, b) =>
+        (a.file_name || '').localeCompare(b.file_name || '', 'pt', { sensitivity: 'base' })
+    );
+}
+
+/** Uma linha de arquivo na secção DANFE (usa doc_type da API para editar metadados). */
+function renderFiscalFileRow(f) {
+    const statusClass = f.status === 'UPLOADED' ? 'uploaded' : 'pending';
+    const statusIcon = f.status === 'UPLOADED' ? '✅' : '⏳';
+    const downloadBtn = f.status === 'UPLOADED' && f.file_key
+        ? `<button onclick="downloadFile('${f.file_key}', '${f.file_name}')" style="padding: 4px 8px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 0.85em;">📥 Baixar</button>`
+        : '';
+    const docType = f.doc_type || 'DANFE';
+    const badge = docType === 'DANFE'
+        ? '<span style="font-size:0.75em;color:#666;">DANFE</span>'
+        : '<span style="font-size:0.75em;color:#666;">ADDITIONAL</span>';
+    const fileNameEscaped = f.file_name.replace(/'/g, "\\'");
+    let metadataDisplay = '';
+    if (f.metadados && Object.keys(f.metadados).length > 0) {
+        const metadataJson = JSON.stringify(f.metadados, null, 2);
+        const metadataEscaped = metadataJson.replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        metadataDisplay = `
+            <div style="margin-top: 12px; padding: 12px; background: #f8f9fa; border: 1px solid #dee2e6; border-radius: 6px;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                    <strong style="color: #495057; font-size: 0.9em;">📎 Metadados do arquivo (opcional)</strong>
+                    <button onclick="editMetadata('${fileNameEscaped}', '${docType}')"
+                            style="padding: 4px 12px; background: #28a745; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 0.85em;">
+                        ✏️ Editar
+                    </button>
+                </div>
+                <pre style="background: white; padding: 10px; border-radius: 4px; overflow-x: auto; font-size: 0.85em; max-height: 200px; overflow-y: auto; margin: 0;">${metadataEscaped}</pre>
+            </div>
+        `;
+    } else {
+        metadataDisplay = `
+            <div style="margin-top: 12px;">
+                <button onclick="editMetadata('${fileNameEscaped}', '${docType}')"
+                        style="padding: 6px 12px; background: #17a2b8; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 0.85em;">
+                    ➕ Metadados opcionais do arquivo
+                </button>
+            </div>
+        `;
+    }
+    return `
+        <div class="file-item file-${statusClass}" style="margin-bottom: 15px; padding: 15px; border: 1px solid #e0e0e0; border-radius: 8px; background: white;">
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+                <span style="font-weight: 500;">${statusIcon} ${f.file_name} ${badge}</span>
+                <div style="display: flex; gap: 8px; align-items: center;">
+                    <span class="file-status">${f.status}</span>
+                    ${downloadBtn}
+                </div>
+            </div>
+            ${metadataDisplay}
+        </div>
+    `;
+}
+
 async function loadProcessFiles() {
     if (!selectedProcess) return;
 
     const danfeList = document.getElementById('danfeList');
-    const docsList = document.getElementById('docsList');
+    const pedidoBox = document.getElementById('pedidoMetadataLinked');
 
-    // DANFE files
-    if (selectedProcess.files.danfe && selectedProcess.files.danfe.length > 0) {
-        danfeList.innerHTML = selectedProcess.files.danfe.map(f => {
-            const statusClass = f.status === 'UPLOADED' ? 'uploaded' : 'pending';
-            const statusIcon = f.status === 'UPLOADED' ? '✅' : '⏳';
-            const downloadBtn = f.status === 'UPLOADED' ? `<button onclick="downloadFile('${f.file_key}', '${f.file_name}')" style="padding: 4px 8px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 0.85em;">📥 Baixar</button>` : '';
-            
-            // Exibir metadados se existirem
-            let metadataDisplay = '';
-            const fileNameEscaped = f.file_name.replace(/'/g, "\\'");
-            if (f.metadados && Object.keys(f.metadados).length > 0) {
-                const metadataJson = JSON.stringify(f.metadados, null, 2);
-                const metadataEscaped = metadataJson.replace(/</g, '&lt;').replace(/>/g, '&gt;');
-                metadataDisplay = `
-                    <div style="margin-top: 12px; padding: 12px; background: #f8f9fa; border: 1px solid #dee2e6; border-radius: 6px;">
-                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
-                            <strong style="color: #495057; font-size: 0.9em;">📊 Metadados JSON</strong>
-                            <button onclick="editMetadata('${fileNameEscaped}', 'DANFE')" 
-                                    style="padding: 4px 12px; background: #28a745; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 0.85em;">
-                                ✏️ Editar
-                            </button>
-                        </div>
-                        <pre style="background: white; padding: 10px; border-radius: 4px; overflow-x: auto; font-size: 0.85em; max-height: 200px; overflow-y: auto; margin: 0;">${metadataEscaped}</pre>
-                    </div>
-                `;
-            } else {
-                metadataDisplay = `
-                    <div style="margin-top: 12px;">
-                        <button onclick="editMetadata('${fileNameEscaped}', 'DANFE')" 
-                                style="padding: 6px 12px; background: #17a2b8; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 0.85em;">
-                            ➕ Adicionar Metadados
-                        </button>
-                    </div>
-                `;
-            }
-            
-            return `
-                <div class="file-item file-${statusClass}" style="margin-bottom: 15px; padding: 15px; border: 1px solid #e0e0e0; border-radius: 8px; background: white;">
-                    <div style="display: flex; justify-content: space-between; align-items: center;">
-                        <span style="font-weight: 500;">${statusIcon} ${f.file_name}</span>
-                        <div style="display: flex; gap: 8px; align-items: center;">
-                            <span class="file-status">${f.status}</span>
-                            ${downloadBtn}
-                        </div>
-                    </div>
-                    ${metadataDisplay}
-                </div>
-            `;
-        }).join('');
+    const merged = allFiscalFilesList(selectedProcess);
+    if (merged.length > 0) {
+        danfeList.innerHTML = merged.map(renderFiscalFileRow).join('');
     } else {
-        danfeList.innerHTML = '<p style="color: #999; font-size: 0.9em;">⚠️ Nenhum DANFE enviado</p>';
+        danfeList.innerHTML = '<p style="color: #999; font-size: 0.9em;">⚠️ Nenhum arquivo enviado — use o upload acima (NF, boleto, XML, imagens).</p>';
     }
 
-    // Additional docs
-    if (selectedProcess.files.additional && selectedProcess.files.additional.length > 0) {
-        docsList.innerHTML = selectedProcess.files.additional.map(f => {
-            const isMetadataOnly = f.metadata_only === true;
-            const statusClass = f.status === 'UPLOADED' ? 'uploaded' : f.status === 'LINKED' ? 'linked' : 'pending';
-            const statusIcon = f.status === 'UPLOADED' ? '✅' : f.status === 'LINKED' ? '🔗' : '⏳';
-            const downloadBtn = (f.status === 'UPLOADED' && f.file_key) ? `<button onclick="downloadFile('${f.file_key}', '${f.file_name}')" style="padding: 4px 8px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 0.85em;">📥 Baixar</button>` : '';
-            
-            // Exibir metadados se existirem
-            let metadataDisplay = '';
-            const fileNameEscaped = f.file_name.replace(/'/g, "\\'");
-            if (f.metadados && Object.keys(f.metadados).length > 0) {
-                const metadataJson = JSON.stringify(f.metadados, null, 2);
-                const metadataEscaped = metadataJson.replace(/</g, '&lt;').replace(/>/g, '&gt;');
-                const editButton = !isMetadataOnly ? `<button onclick="editMetadata('${fileNameEscaped}', 'ADDITIONAL')" 
-                                    style="padding: 4px 12px; background: #28a745; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 0.85em;">
-                                ✏️ Editar
-                            </button>` : '';
-                metadataDisplay = `
-                    <div style="margin-top: 12px; padding: 12px; background: #f8f9fa; border: 1px solid #dee2e6; border-radius: 6px;">
-                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
-                            <strong style="color: #495057; font-size: 0.9em;">📊 Metadados JSON</strong>
-                            ${editButton}
-                        </div>
-                        <pre style="background: white; padding: 10px; border-radius: 4px; overflow-x: auto; font-size: 0.85em; max-height: 400px; overflow-y: auto; margin: 0; white-space: pre-wrap; word-wrap: break-word;">${metadataEscaped}</pre>
-                    </div>
-                `;
-            } else if (!isMetadataOnly) {
-                metadataDisplay = `
-                    <div style="margin-top: 12px;">
-                        <button onclick="editMetadata('${fileNameEscaped}', 'ADDITIONAL')" 
-                                style="padding: 6px 12px; background: #17a2b8; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 0.85em;">
-                            ➕ Adicionar Metadados
-                        </button>
-                    </div>
-                `;
-            }
-            
-            return `
-                <div class="file-item file-${statusClass}" style="margin-bottom: 15px; padding: 15px; border: 1px solid #e0e0e0; border-radius: 8px; background: white;">
-                    <div style="display: flex; justify-content: space-between; align-items: center;">
-                        <span style="font-weight: 500;">${statusIcon} ${f.file_name}</span>
-                        <div style="display: flex; gap: 8px; align-items: center;">
-                            <span class="file-status">${f.status}</span>
-                            ${downloadBtn}
-                        </div>
-                    </div>
-                    ${metadataDisplay}
-                </div>
-            `;
-        }).join('');
-    } else {
-        docsList.innerHTML = '<p style="color: #999; font-size: 0.9em;">Nenhum documento adicional</p>';
+    const pedidoVirtual = (selectedProcess.files.additional || []).find(f => f.metadata_only === true);
+    if (pedidoBox) {
+        if (pedidoVirtual && pedidoVirtual.metadados) {
+            pedidoBox.style.display = 'block';
+            const snippet = JSON.stringify(pedidoVirtual.metadados, null, 2);
+            pedidoBox.innerHTML = '<strong>Pedido vinculado</strong><pre style="margin:8px 0 0;font-size:0.8em;max-height:120px;overflow:auto;">' +
+                snippet.replace(/</g, '&lt;').replace(/>/g, '&gt;') + '</pre>';
+        } else {
+            pedidoBox.style.display = 'none';
+            pedidoBox.innerHTML = '';
+        }
     }
     
     // Carregar dados extraídos e validações se processo estiver completo, validado ou falhou
@@ -1485,30 +1463,27 @@ async function loadExtractedData() {
     
     let html = '';
     
+    const sourceConfig = {
+        'XML':        { icon: '📝', label: 'XML (NF-e)',            color: '#007bff' },
+        'OCR':        { icon: '📷', label: 'OCR',                   color: '#28a745' },
+        'TEXTRACT':   { icon: '🔍', label: 'Textract OCR',          color: '#6f42c1' },
+        'MERGED':     { icon: '🔗', label: 'Extração Unificada',    color: '#fd7e14' },
+        'BEDROCK_AI': { icon: '🤖', label: 'Extração IA (Bedrock)', color: '#dc3545' },
+    };
+
     selectedProcess.parsing_results.forEach(result => {
-        if (result.source === 'XML') {
-            html += `
-                <div style="margin-bottom: 20px;">
-                    <h5 style="margin-bottom: 10px;">📝 ${result.file_name} (XML)</h5>
-                    <details style="background: #f8f9fa; padding: 15px; border-radius: 8px; border: 1px solid #dee2e6; max-width: 100%;">
-                        <summary style="cursor: pointer; font-weight: bold; color: #007bff;">Ver JSON Extraído</summary>
-                        <pre style="margin-top: 10px; background: white; padding: 15px; border-radius: 4px; overflow-x: auto; font-size: 0.85em; max-width: 100%; white-space: pre-wrap; word-wrap: break-word;">${JSON.stringify(result.parsed_data, null, 2)}</pre>
-                    </details>
-                </div>
-            `;
-        } else if (result.source === 'OCR') {
-            html += `
-                <div style="margin-bottom: 20px;">
-                    <h5 style="margin-bottom: 10px;">📷 ${result.file_name} (OCR)</h5>
-                    <details style="background: #f8f9fa; padding: 15px; border-radius: 8px; border: 1px solid #dee2e6; max-width: 100%;">
-                        <summary style="cursor: pointer; font-weight: bold; color: #28a745;">Ver JSON Extraído</summary>
-                        <pre style="margin-top: 10px; background: white; padding: 15px; border-radius: 4px; overflow-x: auto; font-size: 0.85em; max-width: 100%; white-space: pre-wrap; word-wrap: break-word;">${JSON.stringify(result.parsed_data, null, 2)}</pre>
-                    </details>
-                </div>
-            `;
-        }
+        const cfg = sourceConfig[result.source] || { icon: '📄', label: result.source, color: '#6c757d' };
+        html += `
+            <div style="margin-bottom: 20px;">
+                <h5 style="margin-bottom: 10px;">${cfg.icon} ${result.file_name} (${cfg.label})</h5>
+                <details style="background: #f8f9fa; padding: 15px; border-radius: 8px; border: 1px solid #dee2e6; max-width: 100%;">
+                    <summary style="cursor: pointer; font-weight: bold; color: ${cfg.color};">Ver JSON Extraído</summary>
+                    <pre style="margin-top: 10px; background: white; padding: 15px; border-radius: 4px; overflow-x: auto; font-size: 0.85em; max-width: 100%; white-space: pre-wrap; word-wrap: break-word;">${JSON.stringify(result.parsed_data, null, 2)}</pre>
+                </details>
+            </div>
+        `;
     });
-    
+
     extractedDiv.innerHTML = html || '<p style="color: #999;">Nenhum dado extraído disponível</p>';
 }
 
@@ -1534,21 +1509,36 @@ async function loadValidationResults() {
     }
 }
 
-function handleDanfeSelect() {
+async function handleDanfeSelect() {
     const fileInput = document.getElementById('danfeInput');
-    const file = fileInput.files[0];
-    if (file) {
-        const metadataText = document.getElementById('danfeMetadata').value.trim();
-        let metadados = null;
-        if (metadataText) {
-            try {
-                metadados = JSON.parse(metadataText);
-            } catch (e) {
-                showToast(`❌ Erro ao parsear JSON de metadados: ${e.message}`, 'error');
-                return;
-            }
+    const files = Array.from(fileInput.files || []);
+    if (files.length === 0) return;
+
+    const metadataText = document.getElementById('danfeMetadata').value.trim();
+    let metadados = null;
+    if (metadataText) {
+        try {
+            metadados = JSON.parse(metadataText);
+        } catch (e) {
+            showToast(`❌ Erro ao parsear JSON de metadados: ${e.message}`, 'error');
+            return;
         }
-        uploadFile(file, 'DANFE', fileInput, metadados);
+    }
+
+    let ok = 0;
+    for (let i = 0; i < files.length; i++) {
+        try {
+            await uploadFile(files[i], 'DANFE', null, metadados, true);
+            ok++;
+        } catch (e) {
+            showToast(`❌ ${files[i].name}: ${e.message}`, 'error');
+        }
+    }
+    fileInput.value = '';
+    if (metadados) document.getElementById('danfeMetadata').value = '';
+    if (ok > 0) {
+        showToast(`✓ ${ok} arquivo(s) enviado(s) na secção DANFE.`, 'success');
+        setTimeout(() => selectProcess(selectedProcess.process_id, true), 1500);
     }
 }
 
@@ -1604,9 +1594,7 @@ async function sendMetadataOnly() {
     }
 }
 
-// Função removida - não há mais upload de documentos adicionais
-
-async function uploadFile(file, docType, fileInput, userMetadata = null) {
+async function uploadFile(file, docType, fileInput, userMetadata = null, batchMode = false) {
     if (!file || !selectedProcess) return;
 
     try {
@@ -1677,35 +1665,30 @@ async function uploadFile(file, docType, fileInput, userMetadata = null) {
         });
 
         const metadataMsg = userMetadata ? ' com metadados' : '';
-        showToast(`✓ ${docType === 'DANFE' ? 'DANFE' : 'Documento'} enviado${metadataMsg}!`, 'success');
-        fileInput.value = '';
-        
-        // Limpar campos de metadados após upload bem-sucedido
-        if (docType === 'DANFE') {
-            document.getElementById('danfeMetadata').value = '';
-        } else {
-            document.getElementById('docsMetadata').value = '';
+        if (!batchMode) {
+            showToast(`✓ ${docType === 'DANFE' ? 'DANFE' : 'Documento'} enviado${metadataMsg}!`, 'success');
+            if (fileInput) fileInput.value = '';
+            if (docType === 'DANFE' && fileInput) {
+                document.getElementById('danfeMetadata').value = '';
+            }
+            setTimeout(() => selectProcess(selectedProcess.process_id, true), 2000);
         }
-        
-        setTimeout(() => selectProcess(selectedProcess.process_id, true), 2000);
 
     } catch (error) {
-        showToast(`❌ Erro: ${error.message}`, 'error');
+        if (!batchMode) {
+            showToast(`❌ Erro: ${error.message}`, 'error');
+        }
+        throw error;
     }
 }
 
 async function startProcess() {
     if (!selectedProcess) return;
 
-    if (!selectedProcess.files.danfe || selectedProcess.files.danfe.length === 0) {
-        showToast('❌ ⚠️ DANFE é obrigatório!', 'error');
-        return;
-    }
+    const hasFiles = allFiscalFilesList(selectedProcess).length > 0;
 
-    // Verificar se há metadados do pedido de compra vinculados
-    const hasPedidoCompraMetadata = selectedProcess.files.additional && selectedProcess.files.additional.some(f => f.metadata_only === true);
-    if (!hasPedidoCompraMetadata) {
-        showToast('❌ Vincule os metadados do pedido de compra antes de iniciar o processamento', 'error');
+    if (!hasFiles) {
+        showToast('❌ Anexe pelo menos um arquivo (secção NF-e / documentos fiscais) antes de iniciar', 'error');
         return;
     }
 
@@ -1979,12 +1962,10 @@ function editMetadata(fileName, fileType) {
     currentEditingFile = fileName;
     currentEditingFileType = fileType;
     
-    // Buscar metadados existentes do arquivo
     let currentMetadata = null;
-    const files = fileType === 'DANFE' 
-        ? selectedProcess.files.danfe 
-        : selectedProcess.files.additional;
-    const file = files.find(f => f.file_name === fileName);
+    const fromDanfe = (selectedProcess.files.danfe || []).find(f => f.file_name === fileName);
+    const fromAdd = physicalAdditionalFiles(selectedProcess).find(f => f.file_name === fileName);
+    const file = fileType === 'ADDITIONAL' ? (fromAdd || fromDanfe) : (fromDanfe || fromAdd);
     if (file && file.metadados) {
         currentMetadata = file.metadados;
     }

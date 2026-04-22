@@ -4,7 +4,8 @@ from src.models.api import (
     XmlPresignedUrlRequest, DocsPresignedUrlRequest, DocsPresignedUrlResponse,
     ProcessStartRequest, ProcessStartResponse,
     ProcessResponse, UpdateFileMetadataRequest, UpdateFileMetadataResponse,
-    PedidoCompraMetadataRequest, PedidoCompraMetadataResponse
+    PedidoCompraMetadataRequest, PedidoCompraMetadataResponse,
+    BatchPresignedUrlRequest, BatchPresignedUrlResponse,
 )
 from src.services.process_service import ProcessService
 
@@ -81,6 +82,25 @@ async def get_docs_presigned_url(request: DocsPresignedUrlRequest):
         logger.exception("[get_docs_presigned_url] Traceback completo:")
         logger.info("=" * 80)
         raise HTTPException(status_code=500, detail=str(e))
+
+@router.post(
+    "/presigned-url/batch",
+    response_model=BatchPresignedUrlResponse,
+    summary="Upload múltiplos anexos (batch)",
+)
+async def get_batch_presigned_urls(request: BatchPresignedUrlRequest):
+    """Gera URLs pré-assinadas para N arquivos de uma vez (limite configurável)."""
+    logger.info("[batch_presigned] process_id=%s files=%d", request.process_id, len(request.files))
+    try:
+        files_dicts = [f.model_dump() for f in request.files]
+        result = service.generate_presigned_urls_batch(request.process_id, files_dicts)
+        return BatchPresignedUrlResponse(**result)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.exception("[batch_presigned] Erro inesperado")
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 @router.post("/metadados/pedido", response_model=PedidoCompraMetadataResponse, summary="Vincular Metadados do Pedido de Compra")
 async def link_pedido_compra_metadata(request: PedidoCompraMetadataRequest):

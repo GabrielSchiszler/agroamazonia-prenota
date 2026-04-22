@@ -10,6 +10,7 @@ import * as sns from 'aws-cdk-lib/aws-sns';
 import * as ec2 from 'aws-cdk-lib/aws-ec2';
 import * as logs from 'aws-cdk-lib/aws-logs';
 import { Construct } from 'constructs';
+import * as path from 'path';
 
 interface AgroAmazoniaStackProps extends cdk.StackProps {
   environment: string;
@@ -200,12 +201,20 @@ export class AgroAmazoniaStack extends cdk.Stack {
 
     documentTable.grantReadWriteData(processorLambda);
 
-    // Lambda: Validate Rules
+    // Lambda: Validate Rules (inclui ../utils — handler importa utils.primary_xml)
     const validateRulesLambda = new lambda.Function(this, 'ValidateRulesFunction', {
       functionName: name('lambda', 'validate-rules'),
       runtime: lambda.Runtime.PYTHON_3_12,
       handler: 'handler.handler',
-      code: lambda.Code.fromAsset('../backend/lambdas/validate_rules'),
+      code: lambda.Code.fromAsset(path.join(__dirname, '../../backend/lambdas'), {
+        bundling: {
+          image: lambda.Runtime.PYTHON_3_12.bundlingImage,
+          command: [
+            'bash', '-c',
+            'cd validate_rules && cp -au . /asset-output/ && cp -au ../utils /asset-output/utils',
+          ],
+        },
+      }),
       environment: {
         TABLE_NAME: documentTable.tableName,
         BEDROCK_MODEL_ID: process.env.BEDROCK_MODEL_ID || 'amazon.nova-pro-v1:0'
@@ -442,6 +451,124 @@ export class AgroAmazoniaStack extends cdk.Stack {
     documentTable.grantReadWriteData(parseXmlLambda);
     rawDocumentsBucket.grantRead(parseXmlLambda);
 
+    // Lambda: Extract Documents (Textract on non-XML files — multi-anexo)
+    const extractDocumentsLambda = new lambda.Function(this, 'ExtractDocumentsFunction', {
+      functionName: name('lambda', 'extract-documents'),
+      runtime: lambda.Runtime.PYTHON_3_12,
+      handler: 'handler.handler',
+      code: lambda.Code.fromAsset(path.join(__dirname, '../../backend/lambdas'), {
+        bundling: {
+          image: lambda.Runtime.PYTHON_3_12.bundlingImage,
+          command: [
+            'bash', '-c',
+            'cd extract_documents && cp -au . /asset-output/ && cp -au ../utils /asset-output/utils',
+          ],
+        },
+      }),
+      environment: {
+        TABLE_NAME: documentTable.tableName,
+        BUCKET_NAME: rawDocumentsBucket.bucketName,
+        // Textract não existe em sa-east-1; AnalyzeDocument usa Bytes após S3 GetObject local.
+        TEXTRACT_REGION: 'us-east-1',
+      },
+      timeout: cdk.Duration.minutes(5),
+      memorySize: 512,
+      logRetention: logs.RetentionDays.TWO_WEEKS,
+      ...vpcConfig
+    });
+
+    documentTable.grantReadWriteData(extractDocumentsLambda);
+    rawDocumentsBucket.grantRead(extractDocumentsLambda);
+    extractDocumentsLambda.addToRolePolicy(new iam.PolicyStatement({
+      actions: ['textract:AnalyzeDocument', 'textract:StartDocumentAnalysis', 'textract:GetDocumentAnalysis'],
+      resources: ['*']
+    }));
+    extractDocumentsLambda.addToRolePolicy(new iam.PolicyStatement({
+      actions: ['s3:GetObject', 's3:GetObjectVersion'],
+      resources: [rawDocumentsBucket.arnForObjects('*')]
+    }));
+
+    // Lambda: Merge Extractions (unify XML + Textract into canonical JSON)
+    const mergeExtractionsLambda = new lambda.Function(this, 'MergeExtractionsFunction', {
+      functionName: name('lambda', 'merge-extractions'),
+      runtime: lambda.Runtime.PYTHON_3_12,
+      handler: 'handler.handler',
+      code: lambda.Code.fromAsset(path.join(__dirname, '../../backend/lambdas'), {
+        bundling: {
+          image: lambda.Runtime.PYTHON_3_12.bundlingImage,
+          command: [
+            'bash', '-c',
+            'cd merge_extractions && cp -au . /asset-output/ && cp -au ../utils /asset-output/utils',
+          ],
+        },
+      }),
+      environment: {
+        TABLE_NAME: documentTable.tableName
+      },
+      timeout: cdk.Duration.minutes(2),
+      memorySize: 256,
+      logRetention: logs.RetentionDays.TWO_WEEKS,
+      ...vpcConfig
+    });
+
+    documentTable.grantReadWriteData(mergeExtractionsLambda);
+
+    // Lambda: listar FILE# para Step Functions Map (xml / textract / skip)
+    const listAttachmentsLambda = new lambda.Function(this, 'ListAttachmentsFunction', {
+      functionName: name('lambda', 'list-attachments'),
+      runtime: lambda.Runtime.PYTHON_3_12,
+      handler: 'handler.handler',
+      code: lambda.Code.fromAsset('../backend/lambdas/list_attachments'),
+      environment: {
+        TABLE_NAME: documentTable.tableName
+      },
+      timeout: cdk.Duration.seconds(30),
+      memorySize: 128,
+      logRetention: logs.RetentionDays.TWO_WEEKS,
+      ...vpcConfig
+    });
+
+    documentTable.grantReadData(listAttachmentsLambda);
+
+    // Lambda: rejeitar anexo não suportado (Map branch skip — sem Textract)
+    const rejectAttachmentLambda = new lambda.Function(this, 'RejectAttachmentFunction', {
+      functionName: name('lambda', 'reject-attachment'),
+      runtime: lambda.Runtime.PYTHON_3_12,
+      handler: 'handler.handler',
+      code: lambda.Code.fromAsset('../backend/lambdas/reject_attachment'),
+      environment: {
+        TABLE_NAME: documentTable.tableName
+      },
+      timeout: cdk.Duration.seconds(30),
+      memorySize: 128,
+      logRetention: logs.RetentionDays.TWO_WEEKS,
+      ...vpcConfig
+    });
+
+    documentTable.grantReadWriteData(rejectAttachmentLambda);
+
+    // Lambda: Bedrock Extract Fields (AI enrichment for Protheus payload)
+    const bedrockExtractFieldsLambda = new lambda.Function(this, 'BedrockExtractFieldsFunction', {
+      functionName: name('lambda', 'bedrock-extract-fields'),
+      runtime: lambda.Runtime.PYTHON_3_12,
+      handler: 'handler.handler',
+      code: lambda.Code.fromAsset('../backend/lambdas/bedrock_extract_fields'),
+      environment: {
+        TABLE_NAME: documentTable.tableName,
+        BEDROCK_MODEL_ID: process.env.BEDROCK_MODEL_ID || 'amazon.nova-pro-v1:0'
+      },
+      timeout: cdk.Duration.minutes(3),
+      memorySize: 512,
+      logRetention: logs.RetentionDays.TWO_WEEKS,
+      ...vpcConfig
+    });
+
+    documentTable.grantReadWriteData(bedrockExtractFieldsLambda);
+    bedrockExtractFieldsLambda.addToRolePolicy(new iam.PolicyStatement({
+      actions: ['bedrock:InvokeModel'],
+      resources: ['*']
+    }));
+
     // Lambda: Update Process Status (para atualizar status quando houver erro)
     const updateProcessStatusLambda = new lambda.Function(this, 'UpdateProcessStatusFunction', {
       functionName: name('lambda', 'update-process-status'),
@@ -485,10 +612,12 @@ export class AgroAmazoniaStack extends cdk.Stack {
       { prefix: 'processes/' }
     );
 
-    // Step Functions State Machine
-    // Cada Lambda recebe apenas o necessário e retorna apenas o necessário para o próximo passo
-    
+    // Step Functions — Map por anexo + Choice: XML→parse_xml | binário→Textract | skip→reject (sem OCR).
+    // Depois: merge → Bedrock → validação.
+
     const notifyTask = new tasks.LambdaInvoke(this, 'NotifyReceipt', {
+      stateName: 'NotificarRecebimento',
+      comment: 'Confirma recebimento do processo e prepara execução.',
       lambdaFunction: notifyReceiptLambda,
       payload: sfn.TaskInput.fromObject({
         'process_id.$': '$.process_id',
@@ -499,8 +628,122 @@ export class AgroAmazoniaStack extends cdk.Stack {
       resultPath: '$'  // Substituir contexto pelo resultado (apenas process_id)
     });
 
-    const parseXmlTask = new tasks.LambdaInvoke(this, 'ParseXml', {
+    const listAttachmentsTask = new tasks.LambdaInvoke(this, 'ListAttachments', {
+      stateName: 'ListarAnexosFILE',
+      comment: 'Monta attachments[] com handler xml | textract | skip (um item por FILE# com FILE_KEY).',
+      lambdaFunction: listAttachmentsLambda,
+      payload: sfn.TaskInput.fromObject({
+        'process_id.$': '$.process_id'
+      }),
+      outputPath: '$.Payload',
+      resultPath: '$'
+    });
+
+    // Map primeiro; Choice + tasks do iterator DEVEM ser filhos do Map (escopo `this` causa
+    // IDs duplicados no grafo → RangeError Maximum call stack em registerContainedState).
+    const attachmentsMap = sfn.Map.jsonPath(this, 'MapForEachAttachment', {
+      stateName: 'ParaCadaAnexo_ChoiceXmlOuTextract',
+      comment:
+        'Um branch por anexo; Choice só dispara parse XML ou Textract ou rejeição — sem Lambda de OCR para XML.',
+      itemsPath: '$.attachments',
+      itemSelector: {
+        'process_id.$': '$.process_id',
+        'attachment.$': '$$.Map.Item.Value'
+      },
+      maxConcurrency: 8,
+      resultPath: '$.attachmentResults'
+    });
+
+    const parseXmlSingleTask = new tasks.LambdaInvoke(attachmentsMap, 'ParseXmlSingle', {
+      stateName: 'MapItem_XmlParaJson',
+      comment: 'Iteração Map: um .xml → PARSED_XML= (NF-e ou resumo genérico).',
       lambdaFunction: parseXmlLambda,
+      payload: sfn.TaskInput.fromObject({
+        'process_id.$': '$.process_id',
+        'file_name.$': '$.attachment.file_name',
+        'file_key.$': '$.attachment.file_key'
+      }),
+      outputPath: '$.Payload',
+      resultPath: '$'
+    });
+
+    const extractTextractSingleTask = new tasks.LambdaInvoke(attachmentsMap, 'ExtractTextractSingle', {
+      stateName: 'MapItem_TextractOCR',
+      comment: 'Iteração Map: um PDF/imagem → TEXTRACT# (XML não passa aqui).',
+      lambdaFunction: extractDocumentsLambda,
+      payload: sfn.TaskInput.fromObject({
+        'process_id.$': '$.process_id',
+        'file_name.$': '$.attachment.file_name',
+        'file_key.$': '$.attachment.file_key',
+        'file_sk.$': '$.attachment.file_sk'
+      }),
+      outputPath: '$.Payload',
+      resultPath: '$'
+    });
+
+    const rejectUnsupportedTask = new tasks.LambdaInvoke(attachmentsMap, 'RejectUnsupportedAttachment', {
+      stateName: 'MapItem_RejeitarSemOCR',
+      comment: 'Iteração Map: DOCX etc. → REJECTED no FILE#, sem Textract.',
+      lambdaFunction: rejectAttachmentLambda,
+      payload: sfn.TaskInput.fromObject({
+        'process_id.$': '$.process_id',
+        'attachment.$': '$.attachment'
+      }),
+      outputPath: '$.Payload',
+      resultPath: '$'
+    });
+
+    const routeAttachmentKind = new sfn.Choice(attachmentsMap, 'RouteAttachmentKind')
+      .when(
+        sfn.Condition.stringEquals('$.attachment.handler', 'xml'),
+        parseXmlSingleTask
+      )
+      .when(
+        sfn.Condition.stringEquals('$.attachment.handler', 'textract'),
+        extractTextractSingleTask
+      )
+      .otherwise(rejectUnsupportedTask);
+
+    attachmentsMap.itemProcessor(routeAttachmentKind);
+
+    const afterAttachmentsPass = new sfn.Pass(this, 'AfterAttachmentsNormalize', {
+      stateName: 'AposMap_SoProcessId',
+      comment: 'Contexto mínimo para merge (PARSED_XML / TEXTRACT# já no Dynamo).',
+      parameters: {
+        'process_id.$': '$.process_id'
+      },
+      resultPath: '$'
+    });
+
+    const faseDepoisTextractAntesMerge = new sfn.Pass(this, 'FaseDepoisTextractAntesMerge', {
+      stateName: 'Fase_Unificar_fontes_JSON',
+      comment:
+        'Transição: próximo estado monta um único registro MERGED_EXTRACTION (xml_documents + textract_documents).',
+    });
+
+    const mergeExtractionsTask = new tasks.LambdaInvoke(this, 'MergeExtractions', {
+      stateName: 'UnificarXmlMaisTextract_Json',
+      comment:
+        'Lê todos PARSED_XML=* e TEXTRACT#*, grava MERGED_EXTRACTION + PARSED_OCR compatível com send_to_protheus.',
+      lambdaFunction: mergeExtractionsLambda,
+      payload: sfn.TaskInput.fromObject({
+        'process_id.$': '$.process_id'
+      }),
+      outputPath: '$.Payload',
+      resultPath: '$'
+    });
+
+    const faseDepoisMergeAntesBedrock = new sfn.Pass(this, 'FaseDepoisMergeAntesBedrock', {
+      stateName: 'Fase_Bedrock_formato_Protheus',
+      comment:
+        'Transição: próximo estado chama Bedrock para extrair/normalizar campos no formato esperado antes da validação e do Protheus.',
+    });
+
+    const bedrockExtractFieldsTask = new tasks.LambdaInvoke(this, 'BedrockExtractFields', {
+      stateName: 'Bedrock_PadronizarParaProtheus',
+      comment:
+        'LLM sobre MERGED_EXTRACTION → BEDROCK_EXTRACTION (campos padronizados reutilizáveis na integração).',
+      lambdaFunction: bedrockExtractFieldsLambda,
       payload: sfn.TaskInput.fromObject({
         'process_id.$': '$.process_id'
       }),
@@ -509,6 +752,8 @@ export class AgroAmazoniaStack extends cdk.Stack {
     });
 
     const validateTask = new tasks.LambdaInvoke(this, 'ValidateRules', {
+      stateName: 'ValidarRegrasNegocio',
+      comment: 'Regras de negócio sobre NF-e + pedido + documentos (resultado em validation_result).',
       lambdaFunction: validateRulesLambda,
       payload: sfn.TaskInput.fromObject({
         'process_id.$': '$.process_id'
@@ -727,7 +972,11 @@ export class AgroAmazoniaStack extends cdk.Stack {
     updateMetricsTaskValidationFailure.addCatch(updateStatusBeforeErrorTask, { resultPath: '$.error' });
     updateMetricsTaskError.addCatch(updateStatusBeforeErrorTask, { resultPath: '$.error' });
     notifyTask.addCatch(updateStatusBeforeErrorTask, { resultPath: '$.error' });
-    parseXmlTask.addCatch(updateStatusBeforeErrorTask, { resultPath: '$.error' });
+    listAttachmentsTask.addCatch(updateStatusBeforeErrorTask, { resultPath: '$.error' });
+    // Só Catch no Map: Catch nos estados internos + alvo fora do iterator gerava ciclo infinito no CDK (registerContainedState).
+    attachmentsMap.addCatch(updateStatusBeforeErrorTask, { resultPath: '$.error' });
+    mergeExtractionsTask.addCatch(updateStatusBeforeErrorTask, { resultPath: '$.error' });
+    bedrockExtractFieldsTask.addCatch(updateStatusBeforeErrorTask, { resultPath: '$.error' });
     validateTask.addCatch(updateStatusBeforeErrorTask, { resultPath: '$.error' });
     sendToProtheusTask.addCatch(updateStatusBeforeErrorTask, { resultPath: '$.error' });
     reportFailureTask.addCatch(updateStatusBeforeErrorTask, { resultPath: '$.error' });
@@ -739,16 +988,25 @@ export class AgroAmazoniaStack extends cdk.Stack {
     // Se sendFeedbackLambdaFailureTask falhar, ainda assim deve terminar como falha
     sendFeedbackLambdaFailureTask.addCatch(failureState, { resultPath: '$.feedback_error' });
 
-    // Conectar fluxo principal
-    const definition = notifyTask
-      .next(parseXmlTask)
+    attachmentsMap
+      .next(afterAttachmentsPass)
+      .next(faseDepoisTextractAntesMerge)
+      .next(mergeExtractionsTask)
+      .next(faseDepoisMergeAntesBedrock)
+      .next(bedrockExtractFieldsTask)
       .next(validateTask)
       .next(validationChoice);
+
+    const definition = notifyTask
+      .next(listAttachmentsTask)
+      .next(attachmentsMap);
 
 
 
     const stateMachine = new sfn.StateMachine(this, 'DocumentProcessorStateMachine', {
       stateMachineName: name('state-machine', 'document-processor-workflow'),
+      comment:
+        'Listar anexos → Map por arquivo (Choice: XML→parse | binário→Textract | skip→reject) → merge JSON → Bedrock → validação. XML não passa pela Lambda de Textract.',
       definition,
       timeout: cdk.Duration.minutes(15)
     });
