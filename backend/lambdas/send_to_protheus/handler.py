@@ -1889,6 +1889,13 @@ def lambda_handler(event, context):
                 "valorUnitario": valor_unitario,
                 "codigoOperacao": codigo_operacao
             }
+            if isinstance(produto_xml, dict) and "valor_desconto" in produto_xml:
+                vd_xml = produto_xml.get("valor_desconto")
+                if vd_xml is not None and str(vd_xml).strip() != "":
+                    try:
+                        item["valorDesconto"] = float(str(vd_xml).strip().replace(",", "."))
+                    except (TypeError, ValueError):
+                        pass
             
             # Adicionar pedidoDeCompra apenas se existir e tiver pedidoErp
             if pedido_de_compra and pedido_de_compra.get('pedidoErp'):
@@ -1978,6 +1985,13 @@ def lambda_handler(event, context):
                     "codigoOperacao": codigo_operacao,
                     "pedidoDeCompra": pedido_de_compra
                 }
+                if isinstance(produto, dict) and "valor_desconto" in produto:
+                    vd_fb = produto.get("valor_desconto")
+                    if vd_fb is not None and str(vd_fb).strip() != "":
+                        try:
+                            item["valorDesconto"] = float(str(vd_fb).strip().replace(",", "."))
+                        except (TypeError, ValueError):
+                            pass
                 
                 # Adicionar unidade se disponível no XML
                 unidade = produto.get('unidade', '').strip()
