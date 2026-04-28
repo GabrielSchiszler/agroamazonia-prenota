@@ -9,10 +9,9 @@
     "moeda": "BRL",
     "itens": [
       {
-        "id": "26480",
-        "codigoProduto": "26480",
+        "codigoProduto": "AHYMC0000000001",
         "codigoOperacao": "1B",
-        "produto": "FERTILIZANTE TOP PHOS 280 HP B1",
+        "produto": "USO E CONSUMO - PADRAO",
         "quantidade": 1,
         "unidadeMedida": "TON"
       }

@@ -1225,6 +1225,8 @@ async function selectProcess(processId, silent = false) {
         document.getElementById('processesList').style.display = 'none';
         document.getElementById('textractResults').innerHTML = '';
         document.getElementById('extractedData').innerHTML = '';
+        const protheusPayloadEl = document.getElementById('protheusPayloadSection');
+        if (protheusPayloadEl) protheusPayloadEl.innerHTML = '';
         
         loadProcessFiles();
         
@@ -1451,40 +1453,57 @@ async function loadProcessFiles() {
     if (selectedProcess.status === 'COMPLETED' || selectedProcess.status === 'VALIDATED' || selectedProcess.status === 'FAILED') {
         loadExtractedData();
     }
+    loadProtheusRequestPayload();
+}
+
+function _escapeForHtmlText(s) {
+    return String(s)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
 }
 
 async function loadExtractedData() {
     const extractedDiv = document.getElementById('extractedData');
-    
-    if (!selectedProcess.parsing_results || selectedProcess.parsing_results.length === 0) {
-        extractedDiv.innerHTML = '<p style="color: #999;">Nenhum dado extraído disponível</p>';
+
+    const byFile = Array.isArray(selectedProcess.bedrock_by_file) ? selectedProcess.bedrock_by_file : [];
+    if (byFile.length > 0) {
+        extractedDiv.innerHTML = byFile.map((entry) => {
+            const name = _escapeForHtmlText(entry.file_name || '(sem nome)');
+            const jsonStr = JSON.stringify(entry.parsed_data ?? {}, null, 2);
+            return `
+            <div style="margin-bottom: 20px;">
+                <h5 style="margin: 0 0 8px; font-size: 0.95rem; color: #333;">${name}</h5>
+                <pre style="margin: 0; background: #fafafa; padding: 14px; border-radius: 6px; border: 1px solid #e0e0e0; overflow-x: auto; font-size: 0.82rem; line-height: 1.45; white-space: pre-wrap; word-break: break-word;">${_escapeForHtmlText(jsonStr)}</pre>
+            </div>`;
+        }).join('');
         return;
     }
-    
-    let html = '';
-    
-    const sourceConfig = {
-        'XML':        { icon: '📝', label: 'XML (NF-e)',            color: '#007bff' },
-        'OCR':        { icon: '📷', label: 'OCR',                   color: '#28a745' },
-        'TEXTRACT':   { icon: '🔍', label: 'Textract OCR',          color: '#6f42c1' },
-        'MERGED':     { icon: '🔗', label: 'Extração Unificada',    color: '#fd7e14' },
-        'BEDROCK_AI': { icon: '🤖', label: 'Extração IA (Bedrock)', color: '#dc3545' },
-    };
 
-    selectedProcess.parsing_results.forEach(result => {
-        const cfg = sourceConfig[result.source] || { icon: '📄', label: result.source, color: '#6c757d' };
-        html += `
-            <div style="margin-bottom: 20px;">
-                <h5 style="margin-bottom: 10px;">${cfg.icon} ${result.file_name} (${cfg.label})</h5>
-                <details style="background: #f8f9fa; padding: 15px; border-radius: 8px; border: 1px solid #dee2e6; max-width: 100%;">
-                    <summary style="cursor: pointer; font-weight: bold; color: ${cfg.color};">Ver JSON Extraído</summary>
-                    <pre style="margin-top: 10px; background: white; padding: 15px; border-radius: 4px; overflow-x: auto; font-size: 0.85em; max-width: 100%; white-space: pre-wrap; word-wrap: break-word;">${JSON.stringify(result.parsed_data, null, 2)}</pre>
-                </details>
-            </div>
-        `;
-    });
+    const merged = (selectedProcess.parsing_results || []).find((r) => r.source === 'BEDROCK_AI');
+    if (merged && merged.parsed_data) {
+        const jsonStr = JSON.stringify(merged.parsed_data, null, 2);
+        extractedDiv.innerHTML = `
+            <p style="color: #666; font-size: 0.88em; margin: 0 0 10px;">Consolidado (fluxo sem divisão por arquivo no Bedrock).</p>
+            <pre style="margin: 0; background: #fafafa; padding: 14px; border-radius: 6px; border: 1px solid #e0e0e0; overflow-x: auto; font-size: 0.82rem; line-height: 1.45; white-space: pre-wrap; word-break: break-word;">${_escapeForHtmlText(jsonStr)}</pre>`;
+        return;
+    }
 
-    extractedDiv.innerHTML = html || '<p style="color: #999;">Nenhum dado extraído disponível</p>';
+    extractedDiv.innerHTML = '<p style="color: #999;">Nenhum JSON do Bedrock disponível ainda (aguarde o fim do processamento ou envie PDF/imagem para OCR).</p>';
+}
+
+function loadProtheusRequestPayload() {
+    const el = document.getElementById('protheusPayloadSection');
+    if (!el || !selectedProcess) return;
+
+    const payload = selectedProcess.protheus_request_payload;
+    if (payload != null && typeof payload === 'object') {
+        const jsonStr = JSON.stringify(payload, null, 2);
+        el.innerHTML = `<pre style="margin: 0; background: #fafafa; padding: 14px; border-radius: 6px; border: 1px solid #e0e0e0; overflow-x: auto; font-size: 0.82rem; line-height: 1.45; white-space: pre-wrap; word-break: break-word;">${_escapeForHtmlText(jsonStr)}</pre>`;
+        return;
+    }
+
+    el.innerHTML = '<p style="color: #999;">Nenhum payload Protheus registado ainda (a etapa de envio ainda não correu ou falhou antes de montar o corpo da requisição).</p>';
 }
 
 async function loadValidationResults() {

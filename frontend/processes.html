@@ -85,13 +85,12 @@
                                 <label style="display: block; margin-bottom: 5px; font-weight: bold; color: #333;">
                                     📊 Metadados JSON (Opcional)
                                 </label>
-                                <textarea 
-                                    id="danfeMetadata" 
-                                    placeholder='{"moeda": "BRL", "pedidoFornecedor": "369763", "pedidoErp": "023037", ...}'
+                                <textarea
+                                    id="danfeMetadata"
                                     style="width: 100%; min-height: 80px; padding: 10px; border: 1px solid #ddd; border-radius: 4px; font-family: monospace; font-size: 0.9em; resize: vertical;"
                                 ></textarea>
                                 <small style="color: #666; display: block; margin-top: 5px;">
-                                    Metadados estruturados que serão usados nas validações (ex: moeda, pedidoFornecedor, pedidoErp, itens, etc.)
+                                    Metadados estruturados usados nas validações (opcional).
                                 </small>
                             </div>
                             <div id="danfeList"></div>
@@ -114,31 +113,10 @@
                                 <label style="display: block; margin-bottom: 5px; font-weight: bold; color: #333;">
                                     📊 Metadados JSON do pedido
                                 </label>
-                                <textarea 
-                                    id="docsMetadata" 
+                                <textarea
+                                    id="docsMetadata"
                                     style="width: 100%; min-height: 220px; padding: 10px; border: 1px solid #ddd; border-radius: 4px; font-family: monospace; font-size: 0.9em; resize: vertical;"
-                                >{
-  "header": {
-    "tenantId": "00,010101"
-  },
-  "requestBody": {
-    "usoEConsumo": true,
-    "centroDeCusto": "Centro de Custo 1",
-    "natureza": "Compra de Mercadorias",
-    "itens": [
-      {
-        "id": "26480",
-        "codigoProduto": "26480",
-        "produto": "FERTILIZANTE TOP PHOS 280 HP B1",
-        "quantidade": 1,
-        "unidadeMedida": "TON"
-      }
-    ]
-  }
-}</textarea>
-                                <small style="color: #666; display: block; margin-top: 5px;">
-                                    <code>usoEConsumo</code>: <code>true</code> define o processo como USOCONSUMO. Em USOCONSUMO, <code>id</code> no item vira <code>codigoProduto</code> no envio ao Protheus (sem campo <code>produto</code> no payload). <code>produto</code> no JSON segue útil para validação/match. Modelo sem <code>pedidoDeCompra</code> no item; <code>quantidade</code> costuma ser 1.
-                                </small>
+                                ></textarea>
                             </div>
                         </div>
 
@@ -149,8 +127,15 @@
                         </div>
 
                         <div class="details-card full-width">
-                            <h4>📊 Dados Extraídos (JSON)</h4>
+                            <h4>Extração IA (JSON por arquivo)</h4>
+                            <p style="color: #666; font-size: 0.9em; margin-bottom: 10px;">Resultado do Bedrock após o OCR (formato estruturado usado antes do envio ao Protheus).</p>
                             <div id="extractedData"></div>
+                        </div>
+
+                        <div class="details-card full-width">
+                            <h4>Payload Protheus (tentativa de envio)</h4>
+                            <p style="color: #666; font-size: 0.9em; margin-bottom: 10px;">Corpo JSON enviado à API de documento de entrada (permanece gravado mesmo se a chamada falhar).</p>
+                            <div id="protheusPayloadSection"></div>
                         </div>
 
                         <div class="details-card full-width">
@@ -176,9 +161,8 @@
                 </div>
                 <div class="form-group">
                     <label>Metadados JSON</label>
-                    <textarea 
-                        id="editMetadataTextarea" 
-                        placeholder='{"moeda": "BRL", "pedidoFornecedor": "369763", "pedidoErp": "023037", "itens": [...]}'
+                    <textarea
+                        id="editMetadataTextarea"
                         style="width: 100%; min-height: 300px; padding: 15px; border: 1px solid #ddd; border-radius: 4px; font-family: 'Courier New', monospace; font-size: 0.9em; resize: vertical; line-height: 1.5;"
                     ></textarea>
                     <small style="color: #666; display: block; margin-top: 5px;">

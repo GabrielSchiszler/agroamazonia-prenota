@@ -92,7 +92,7 @@ async def get_batch_presigned_urls(request: BatchPresignedUrlRequest):
     """Gera URLs pré-assinadas para N arquivos de uma vez (limite configurável)."""
     logger.info("[batch_presigned] process_id=%s files=%d", request.process_id, len(request.files))
     try:
-        files_dicts = [f.model_dump() for f in request.files]
+        files_dicts = [f.model_dump(exclude_none=True) for f in request.files]
         result = service.generate_presigned_urls_batch(request.process_id, files_dicts)
         return BatchPresignedUrlResponse(**result)
     except ValueError as e:

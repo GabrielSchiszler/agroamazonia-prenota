@@ -43,6 +43,41 @@ def _norm_codigo_produto(val) -> str:
     return s
 
 
+def _unidade_medida_from_item_rb(item_rb):
+    """unidadeMedida do pedido (metadado); aceita alias 'unidade'."""
+    if not isinstance(item_rb, dict):
+        return ""
+    um = item_rb.get("unidadeMedida")
+    if um is None or (isinstance(um, str) and not um.strip()):
+        um = item_rb.get("unidade")
+    if um is None:
+        return ""
+    return str(um).strip()
+
+
+def _find_request_body_item_for_codigo(request_body_data, codigo_produto):
+    """Item do requestBody que corresponde ao código do produto (codigoProduto ou id)."""
+    if not request_body_data or not isinstance(request_body_data.get("itens"), list):
+        return None
+    codigo_prod_s = str(codigo_produto or "").strip()
+    for item_rb_check in request_body_data["itens"]:
+        codigo_rb_check = item_rb_check.get("codigoProduto", "").strip()
+        id_rb = item_rb_check.get("id")
+        id_rb_s = str(id_rb).strip() if id_rb is not None else ""
+        match = False
+        if codigo_produto and codigo_rb_check:
+            codigo_rb_norm = codigo_rb_check.lstrip("0") or "0"
+            codigo_prod_norm = str(codigo_produto).lstrip("0") or "0"
+            if codigo_rb_norm == codigo_prod_norm:
+                match = True
+        if not match and codigo_prod_s and id_rb_s:
+            if _norm_codigo_produto(id_rb_s) == _norm_codigo_produto(codigo_prod_s):
+                match = True
+        if match:
+            return item_rb_check
+    return None
+
+
 def _find_rb_item_uso_consumo(request_body_data, codigo_produto, merge_index: int):
     """Item do pedido correspondente ao produto (código ou id) ou pela posição."""
     if not request_body_data or not isinstance(request_body_data.get("itens"), list):
@@ -64,16 +99,24 @@ def _find_rb_item_uso_consumo(request_body_data, codigo_produto, merge_index: in
 
 
 def _merge_uso_consumo_protheus_item(item: dict, item_rb):
-    """Preenche codigoProduto com id do metadado (quando existir) e codigoOperacao; sem campo produto no payload Protheus."""
+    """Preenche codigoProduto a partir do pedido: prioriza ``id``; senão ``codigoProduto`` do item.
+    Repassa codigoOperacao e unidadeMedida (metadado). Remove ``produto`` do payload Protheus."""
     if not item_rb:
         return item
     iid = item_rb.get("id")
     if iid is not None and str(iid).strip() != "":
         item["codigoProduto"] = str(iid).strip()
+    else:
+        cp_rb = item_rb.get("codigoProduto")
+        if cp_rb is not None and str(cp_rb).strip() != "":
+            item["codigoProduto"] = str(cp_rb).strip()
     item.pop("produto", None)
     co = item_rb.get("codigoOperacao")
     if co is not None and str(co).strip() != "":
         item["codigoOperacao"] = str(co).strip()
+    um = _unidade_medida_from_item_rb(item_rb)
+    if um:
+        item["unidadeMedida"] = um
     return item
 
 
@@ -593,6 +636,16 @@ def map_data_emissao(data_emissao):
     # Se tem espaço, pegar primeira parte
     if ' ' in data_str:
         return data_str.split(' ')[0]
+    
+    # Somente dígitos YYYYMMDD (ex.: 20260414 do Bedrock / IA)
+    digits_only = "".join(c for c in data_str if c.isdigit())
+    if len(digits_only) >= 8:
+        try:
+            from datetime import datetime
+            dt = datetime.strptime(digits_only[:8], "%Y%m%d")
+            return dt.strftime("%Y-%m-%d")
+        except ValueError:
+            pass
     
     # Tentar parsear outros formatos
     try:
@@ -1187,6 +1240,46 @@ def process_produtos_with_lotes(produtos_filtrados, xml_data, request_body_data)
     print(f"\n[PROCESS_LOTES] Total de produtos processados: {len(produtos_processados)} (incluindo splits)")
     return produtos_processados
 
+
+def _emitente_cnpj_from_ocr_per_document(ocr_data: dict) -> str | None:
+    """
+    CNPJ do emitente a partir de TEXTRACT merge (per_document): prioriza parsed_xml_style.emitente.cnpj
+    (mesmo formato que parse_xml), senão hints flat; se vários CNPJs, prefere o que coincide com chave[4:18].
+    """
+    if not isinstance(ocr_data, dict):
+        return None
+    per = ocr_data.get("per_document") or []
+    if not isinstance(per, list):
+        return None
+    chaves: list[str] = []
+    candidatos: list[str] = []
+    for pd in per:
+        if not isinstance(pd, dict):
+            continue
+        hints = pd.get("protheus_hints")
+        hints = hints if isinstance(hints, dict) else {}
+        px = hints.get("parsed_xml_style")
+        px = px if isinstance(px, dict) else {}
+        em = px.get("emitente")
+        em = em if isinstance(em, dict) else {}
+        raw_cnpj = em.get("cnpj") or hints.get("cnpjEmitente")
+        if raw_cnpj is None:
+            continue
+        d = "".join(c for c in str(raw_cnpj) if c.isdigit())
+        if len(d) == 14:
+            candidatos.append(d)
+        ch = hints.get("chaveAcesso") or px.get("chave_acesso")
+        if ch:
+            cd = "".join(c for c in str(ch) if c.isdigit())
+            if len(cd) >= 44:
+                chaves.append(cd[:44])
+    for c in candidatos:
+        for ch in chaves:
+            if len(ch) >= 18 and ch[4:18] == c:
+                return c
+    return candidatos[0] if candidatos else None
+
+
 def lambda_handler(event, context):
     print("="*80)
     print("SEND TO PROTHEUS - INICIO")
@@ -1554,7 +1647,7 @@ def lambda_handler(event, context):
             serie = bedrock_extraction['serie']
             print(f"[7.1.IA] serie preenchida via Bedrock: {serie}")
         if not data_emissao_xml and bedrock_extraction.get('dataEmissao'):
-            data_emissao = bedrock_extraction['dataEmissao']
+            data_emissao = map_data_emissao(bedrock_extraction['dataEmissao'])
             print(f"[7.1.IA] dataEmissao preenchida via Bedrock: {data_emissao}")
         if not chave_acesso_xml and bedrock_extraction.get('chaveAcesso'):
             chave_acesso = bedrock_extraction['chaveAcesso']
@@ -1577,6 +1670,13 @@ def lambda_handler(event, context):
                     tx_bd = None
             taxa_cambio = map_taxa_cambio(moeda, tx_bd)
             print(f"[7.1.IA] moeda preenchida via Bedrock: {moeda}")
+
+    # Normalizar data (YYYYMMDD, ISO, etc.) para YYYY-MM-DD
+    data_emissao = map_data_emissao(data_emissao)
+
+    if uso_merge:
+        tipo_documento = "N"
+        print(f"[7.2.UC] tipoDeDocumento forçado para N (USO E CONSUMO)")
 
     print(f"[7.2] Campos mapeados:")
     print(f"  tipoDeDocumento: {tipo_documento} (modelo: {modelo})")
@@ -1624,6 +1724,31 @@ def lambda_handler(event, context):
         if emitente:
             print(f"    - emitente.cnpj: {emitente.get('cnpj')}")
             print(f"    - emitente.cpf: {emitente.get('cpf')}")
+
+    # Fallback: TEXTRACT por ficheiro (parsed_xml_style / protheus_hints) — fluxo só-PDF / NFS-e
+    if not cnpj_emitente and not cpf_emitente:
+        ocr_cnpj = _emitente_cnpj_from_ocr_per_document(ocr_data)
+        if ocr_cnpj:
+            cnpj_emitente = ocr_cnpj
+            print(f"  [7.3.3] CNPJ emitente a partir de OCR (per_document / parsed_xml_style): {cnpj_emitente}")
+
+    # Bedrock: CNPJ emitente se ainda faltar (IA já devolve 14 dígitos)
+    if not cnpj_emitente and not cpf_emitente and isinstance(bedrock_extraction, dict):
+        bc = bedrock_extraction.get("cnpjEmitente")
+        if bc:
+            d = "".join(c for c in str(bc) if c.isdigit())
+            if len(d) == 14:
+                cnpj_emitente = d
+                print(f"  [7.3.4] CNPJ emitente a partir de BEDROCK_EXTRACTION: {cnpj_emitente}")
+
+    # Metadados pedido: requestBody.cnpjEmitente (validação CNPJ fornecedor usa este campo)
+    if not cnpj_emitente and not cpf_emitente and isinstance(request_body_data, dict):
+        rb_c = request_body_data.get("cnpjEmitente")
+        if rb_c:
+            d = "".join(c for c in str(rb_c) if c.isdigit())
+            if len(d) == 14:
+                cnpj_emitente = d
+                print(f"  [7.3.5] CNPJ emitente a partir de requestBody (pedido): {cnpj_emitente}")
 
     # # Extrair CNPJ destinatário - tentar múltiplas fontes
     # print(f"\n[7.4] Extraindo CNPJ do destinatário...")
@@ -2124,9 +2249,14 @@ def lambda_handler(event, context):
             else:
                 print(f"[8.{idx}.12.1] pedidoDeCompra não incluído no payload (não encontrado ou vazio)")
             
-            # Adicionar unidade se disponível no XML
+            # unidadeMedida: XML; se vazio, metadado requestBody.itens (mesmo match de codigoProduto/id)
+            if not unidade:
+                rb_um = _find_request_body_item_for_codigo(request_body_data, codigo_produto)
+                if rb_um:
+                    unidade = _unidade_medida_from_item_rb(rb_um)
             if unidade:
                 item["unidadeMedida"] = unidade
+                print(f"[8.{idx}.7.u] unidadeMedida incluída (XML ou pedido): {unidade}")
             
             # Adicionar lote se disponível
             if lote:
@@ -2168,9 +2298,9 @@ def lambda_handler(event, context):
         
         for idx, produto in enumerate(produtos_para_processar, 1):
             try:
-                # Formato antigo: produtos do XML ou requestBody
-                # Normalizar código produto (remover zeros à esquerda se numérico)
-                codigo = produto.get('codigo', '')
+                # Formato antigo: produtos do XML ou requestBody (itens usam codigoProduto)
+                codigo_raw = produto.get('codigoProduto') or produto.get('codigo') or ''
+                codigo = str(codigo_raw).strip()
                 if codigo.isdigit():
                     codigo = codigo.lstrip('0') or '0'
                 
@@ -2226,8 +2356,12 @@ def lambda_handler(event, context):
                     "pedidoDeCompra": pedido_de_compra
                 }
                 
-                # Adicionar unidade se disponível no XML
-                unidade = produto.get('unidade', '').strip()
+                # unidadeMedida: XML (unidade) ou metadado do pedido (unidadeMedida / unidade)
+                unidade = (produto.get('unidadeMedida') or produto.get('unidade') or '').strip()
+                if not unidade and request_body_data and request_body_data.get('itens'):
+                    rb_um = _find_request_body_item_for_codigo(request_body_data, codigo)
+                    if rb_um:
+                        unidade = _unidade_medida_from_item_rb(rb_um)
                 if unidade:
                     item["unidadeMedida"] = unidade
 

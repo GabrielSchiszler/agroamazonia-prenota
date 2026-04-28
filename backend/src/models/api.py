@@ -184,6 +184,11 @@ class ProcessResponse(BaseModel):
     sctask_id: Optional[str] = None
     files: Dict[str, List[Dict[str, Any]]]
     parsing_results: List[Dict[str, Any]] = []
+    bedrock_by_file: List[Dict[str, Any]] = Field(default_factory=list)
+    protheus_request_payload: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description="JSON do documento de entrada enviado (ou tentado) à API Protheus",
+    )
     created_at: str
     error_info: Optional[Dict[str, Any]] = None
     
@@ -227,15 +232,34 @@ ALLOWED_CONTENT_TYPES = {
 }
 
 
+def infer_doc_type_and_folder(file_name: str, file_type: str) -> tuple[str, str]:
+    """Define DOC_TYPE e pasta no S3 só com nome + MIME (batch sem ``doc_type`` no cliente).
+
+    Regra: XML (MIME ou extensão ``.xml``) → ``DANFE`` / prefixo ``danfe`` (legado).
+    Qualquer outro tipo permitido pela API → ``ADDITIONAL`` / ``docs``.
+
+    O pipeline (parse_xml, extract_documents, etc.) já decide pelo conteúdo/extensão;
+    isto só posiciona o objeto no bucket e grava DOC_TYPE no Dynamo para listagens.
+    """
+    ft = (file_type or "").strip().lower().split(";")[0].strip()
+    name_l = (file_name or "").strip().lower()
+    if ft in ("application/xml", "text/xml") or name_l.endswith(".xml"):
+        return "DANFE", "danfe"
+    return "ADDITIONAL", "docs"
+
+
 class BatchFileItem(BaseModel):
     file_name: str = Field(..., description="Nome do arquivo")
     file_type: str = Field(
         ...,
         description="Content-Type do arquivo (application/xml, application/pdf, ...)",
     )
-    doc_type: str = Field(
-        default="ADDITIONAL",
-        description="DANFE ou ADDITIONAL",
+    doc_type: Optional[str] = Field(
+        default=None,
+        description=(
+            "Opcional. Omitido: inferido de file_type/extensão (XML→DANFE/danfe; "
+            "demais→ADDITIONAL/docs). Envio explícito mantém compatibilidade com integrações antigas."
+        ),
     )
 
 

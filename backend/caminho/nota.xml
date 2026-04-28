@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<nfeProc xmlns="http://www.portalfiscal.inf.br/nfe" versao="4.00">
+  <protNFe>
+    <infProt>
+      <nProt>243250401092571</nProt>
+      <digVal>uDFG3AOUbDv+HpkHatR+kzsOcjo</digVal>
+      <dhRecbto>2025-12-21T19:13:28-03:00</dhRecbto>
+      <chNFe>43251202329713000200550040004742931458693440</chNFe>
+      <xMotivo>Autorizado o uso da NF-e</xMotivo>
+      <cStat>100</cStat>
+    </infProt>
+  </protNFe>
+</nfeProc>

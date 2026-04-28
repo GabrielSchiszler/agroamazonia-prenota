@@ -17,7 +17,7 @@ Schema (MERGED_EXTRACTION):
             "raw_text": "...",
             "tables": [{"rows": [[...]]}],
             "job_id": "...",
-            "protheus_hints": { ... }  // opcional (regex sobre texto)
+            "protheus_hints": { ... , "parsed_xml_style": { ... } }  // flat + espelho tipo PARSED_DATA XML
         }
     ]
 }
@@ -140,8 +140,8 @@ def handler(event, context):
         ocr_compat = {
             "raw_text": combined_text,
             "source_files": [d["file_name"] for d in textract_docs],
-            # Heurísticas por ficheiro (regex); o JSON no formato "documento entrada" Protheus
-            # vem depois do Bedrock no mesmo registo (chave documento_entrada_protheus).
+            # Por ficheiro: protheus_hints (regex + parsed_xml_style como parse_xml) e depois
+            # documento_entrada_protheus no mesmo registo (Bedrock).
             "per_document": [
                 {
                     "file_name": d.get("file_name", ""),

@@ -170,7 +170,7 @@ class ProcessService:
         Validates MIME types and per-process attachment limit before generating any URL.
         """
         import re
-        from src.models.api import MAX_FILES_PER_PROCESS, ALLOWED_CONTENT_TYPES
+        from src.models.api import MAX_FILES_PER_PROCESS, ALLOWED_CONTENT_TYPES, infer_doc_type_and_folder
 
         if len(files) > MAX_FILES_PER_PROCESS:
             raise ValueError(
@@ -209,8 +209,19 @@ class ProcessService:
         results: list[Dict[str, str]] = []
         for f in files:
             safe_name = re.sub(r"[^a-zA-Z0-9._-]", "_", f["file_name"])
-            doc_type = f.get("doc_type", "ADDITIONAL")
-            folder = "danfe" if doc_type == "DANFE" else "docs"
+            raw_dt = f.get("doc_type")
+            if raw_dt is not None and str(raw_dt).strip() != "":
+                doc_type = str(raw_dt).strip().upper()
+                if doc_type not in ("DANFE", "ADDITIONAL"):
+                    raise ValueError(
+                        f"doc_type inválido para {f['file_name']}: {raw_dt!r}. "
+                        "Use DANFE, ADDITIONAL ou omita para inferência automática."
+                    )
+                folder = "danfe" if doc_type == "DANFE" else "docs"
+            else:
+                doc_type, folder = infer_doc_type_and_folder(
+                    f["file_name"], f["file_type"]
+                )
             file_key = f"processes/{process_id}/{folder}/{safe_name}"
 
             url = self.s3_client.generate_presigned_url(
@@ -506,8 +517,44 @@ class ProcessService:
                 })
             except Exception as e:
                 logger.error(f"Error parsing BEDROCK_EXTRACTION: {e}")
+
+        # Bedrock por arquivo (SK=BEDROCK_EXTRACTION#nome) — JSON estruturado para UI / integração
+        bedrock_by_file: list = []
+        for item in items:
+            sk = item.get('SK') or ''
+            if sk.startswith('BEDROCK_EXTRACTION#') and item.get('EXTRACTED_FIELDS'):
+                suffix = sk.split('#', 1)[1] if '#' in sk else ''
+                try:
+                    bedrock_by_file.append({
+                        'file_name': item.get('FILE_NAME') or suffix,
+                        'parsed_data': json.loads(item['EXTRACTED_FIELDS']),
+                    })
+                except Exception as e:
+                    logger.error(f"Error parsing {sk}: {e}")
+        bedrock_by_file.sort(key=lambda x: (x.get('file_name') or ''))
         
         logger.info(f"Total parsing_results: {len(parsing_results)}")
+
+        # Payload HTTP enviado (ou tentado) ao Protheus — salvo em send_to_protheus antes do POST
+        protheus_request_payload = None
+        prp_raw = metadata.get('protheus_request_payload') or metadata.get('PROTHEUS_REQUEST_PAYLOAD')
+        if prp_raw:
+            try:
+                if isinstance(prp_raw, str):
+                    protheus_request_payload = json.loads(prp_raw)
+                elif isinstance(prp_raw, dict):
+                    protheus_request_payload = prp_raw
+            except Exception as e:
+                logger.warning(f"Erro ao parsear protheus_request_payload: {e}")
+        if protheus_request_payload is None:
+            p_info_raw = metadata.get('protheus_request_info') or metadata.get('PROTHEUS_REQUEST_INFO')
+            if p_info_raw:
+                try:
+                    p_info = json.loads(p_info_raw) if isinstance(p_info_raw, str) else p_info_raw
+                    if isinstance(p_info, dict) and p_info.get('request_payload') is not None:
+                        protheus_request_payload = p_info.get('request_payload')
+                except Exception as e:
+                    logger.warning(f"Erro ao parsear protheus_request_info: {e}")
         
         # Converter sctask_id de Decimal para string se necessário
         sctask_id = metadata.get('sctask_id')
@@ -575,6 +622,8 @@ class ProcessService:
                 'additional': additional_files_list
             },
             'parsing_results': parsing_results,
+            'bedrock_by_file': bedrock_by_file,
+            'protheus_request_payload': protheus_request_payload,
             'created_at': str(int(metadata.get('TIMESTAMP', 0)))
         }
         

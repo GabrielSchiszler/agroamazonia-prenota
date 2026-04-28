@@ -355,8 +355,10 @@ export class FrontendStack extends cdk.Stack {
         ? ['fast-dash-prd.agroamazonia.com']
         : this.envName === 'stg'
         ? ['fast-dash-hml.agroamazonia.com']
+        : this.envName === 'dev'
+        ? ['fast-dash-dev.agroamazonia.com']
         : [],
-      certificate: this.envName === 'prd' || this.envName === 'stg'
+      certificate: this.envName === 'prd' || this.envName === 'stg' || this.envName === 'dev'
         ? certificatemanager.Certificate.fromCertificateArn(
             this,
             'CloudFrontCertificate',

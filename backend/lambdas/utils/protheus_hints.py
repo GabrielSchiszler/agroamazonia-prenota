@@ -217,4 +217,41 @@ def hints_from_textract_text(text: str) -> dict[str, object]:
     if valor_doc:
         out["valorDocumento"] = valor_doc
 
+    return enrich_hints_with_xml_style(out)
+
+
+def enrich_hints_with_xml_style(hints: dict[str, object]) -> dict[str, object]:
+    """
+    Acrescenta `parsed_xml_style`: subconjunto no mesmo formato que `parse_xml` grava em PARSED_DATA
+    (emitente/destinatario/totais/chave_acesso em snake_case), para o send_to_protheus e outras
+    etapas lerem como se viessem de NF-e XML. Mantém as chaves “flat” (chaveAcesso, cnpjEmitente, …).
+    """
+    if not hints:
+        return hints
+    out = dict(hints)
+    px: dict[str, object] = {}
+
+    ch = out.get("chaveAcesso")
+    if ch is not None and str(ch).strip():
+        cd = _digits(str(ch))
+        if len(cd) >= 44:
+            px["chave_acesso"] = cd[:44]
+
+    emit: dict[str, object] = {}
+    if out.get("cnpjEmitente"):
+        emit["cnpj"] = str(out["cnpjEmitente"])
+    if emit:
+        px["emitente"] = emit
+
+    dest: dict[str, object] = {}
+    if out.get("cnpjTomador"):
+        dest["cnpj"] = str(out["cnpjTomador"])
+    if dest:
+        px["destinatario"] = dest
+
+    if out.get("valorDocumento") is not None and str(out.get("valorDocumento")).strip() != "":
+        px["totais"] = {"valor_nota": str(out["valorDocumento"]).strip()}
+
+    if px:
+        out["parsed_xml_style"] = px
     return out

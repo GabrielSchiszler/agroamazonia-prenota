@@ -152,6 +152,51 @@ class TestGetProcess:
 
         result = service.get_process("p1")
         assert result["parsing_results"] == []
+        assert result.get("bedrock_by_file") == []
+
+    def test_bedrock_by_file_from_prefixed_sk(self):
+        service, repo = _build_service()
+        repo.query_by_pk.return_value = [
+            _metadata(),
+            _danfe_file(),
+            {
+                "PK": "PROCESS#p1",
+                "SK": "BEDROCK_EXTRACTION#boleto.pdf",
+                "FILE_NAME": "boleto.pdf",
+                "EXTRACTED_FIELDS": json.dumps({"documento": "55", "tipoDeDocumento": "BOL"}),
+            },
+        ]
+
+        result = service.get_process("p1")
+        assert len(result["bedrock_by_file"]) == 1
+        assert result["bedrock_by_file"][0]["file_name"] == "boleto.pdf"
+        assert result["bedrock_by_file"][0]["parsed_data"]["documento"] == "55"
+
+    def test_protheus_request_payload_from_metadata(self):
+        service, repo = _build_service()
+        meta = dict(_metadata())
+        meta["protheus_request_payload"] = json.dumps({
+            "documento": "999",
+            "itens": [{"codigoProduto": "1"}],
+        })
+        repo.query_by_pk.return_value = [meta, _danfe_file()]
+
+        result = service.get_process("p1")
+        assert result["protheus_request_payload"] is not None
+        assert result["protheus_request_payload"]["documento"] == "999"
+        assert len(result["protheus_request_payload"]["itens"]) == 1
+
+    def test_protheus_request_payload_fallback_from_request_info(self):
+        service, repo = _build_service()
+        meta = dict(_metadata())
+        meta["protheus_request_info"] = json.dumps({
+            "request_payload": {"documento": "777"},
+            "response_status_code": 400,
+        })
+        repo.query_by_pk.return_value = [meta, _danfe_file()]
+
+        result = service.get_process("p1")
+        assert result["protheus_request_payload"]["documento"] == "777"
 
     def test_process_not_found_raises(self):
         service, repo = _build_service()

@@ -144,6 +144,56 @@ class TestBedrockExtractFieldsHandler:
         assert result["fields_extracted"] is True
         assert len(mock_table.put_item.call_args_list) == 2
 
+    @patch("bedrock_extract_fields.handler._invoke_bedrock")
+    @patch("bedrock_extract_fields.handler.table")
+    def test_two_textract_files_saves_per_file_sk_and_merged(self, mock_table, mock_invoke):
+        from bedrock_extract_fields.handler import handler
+
+        tex = [
+            {"file_name": "a.pdf", "raw_text": "NOTA A", "tables": []},
+            {"file_name": "b.pdf", "raw_text": "NOTA B", "tables": []},
+        ]
+        ocr_pd = json.dumps({
+            "raw_text": "x",
+            "per_document": [
+                {"file_name": "a.pdf", "protheus_hints": {}},
+                {"file_name": "b.pdf", "protheus_hints": {}},
+            ],
+        })
+        ocr_item = {
+            "PK": "PROCESS#p1",
+            "SK": "PARSED_OCR=textract_merged",
+            "FILE_NAME": "textract_merged",
+            "PARSED_DATA": ocr_pd,
+            "SOURCE": "TEXTRACT",
+        }
+        mock_table.query.return_value = {
+            "Items": [_merged_item(nfe_xml={"numero_nota": "9"}, textract_docs=tex), ocr_item],
+        }
+        ex_a = json.dumps({"tipoDeDocumento": "NF", "documento": "111", "serie": "1"})
+        ex_b = json.dumps({"tipoDeDocumento": "NF", "documento": "222", "serie": "2"})
+        mock_invoke.side_effect = [ex_a, ex_b]
+
+        result = handler({"process_id": "p1"}, None)
+        assert result["fields_extracted"] is True
+        assert mock_invoke.call_count == 2
+
+        puts = mock_table.put_item.call_args_list
+        sks = [c[1]["Item"]["SK"] for c in puts]
+        assert "BEDROCK_EXTRACTION#a.pdf" in sks
+        assert "BEDROCK_EXTRACTION#b.pdf" in sks
+        assert "BEDROCK_EXTRACTION" in sks
+        assert "PARSED_OCR=textract_merged" in sks
+
+        merged_item = next(c[1]["Item"] for c in puts if c[1]["Item"]["SK"] == "BEDROCK_EXTRACTION")
+        merged = json.loads(merged_item["EXTRACTED_FIELDS"])
+        assert merged["documento"] == "111"
+
+        ocr_saved = next(c[1]["Item"] for c in puts if c[1]["Item"]["SK"] == "PARSED_OCR=textract_merged")
+        ocr_out = json.loads(ocr_saved["PARSED_DATA"])
+        assert ocr_out["per_document"][0]["documento_entrada_protheus"]["documento"] == "111"
+        assert ocr_out["per_document"][1]["documento_entrada_protheus"]["documento"] == "222"
+
 
 class TestBuildPrompt:
 
@@ -182,3 +232,17 @@ class TestBuildPrompt:
         )
         assert "pedido de compra" in prompt
         assert "cnpjEmitente" in prompt
+
+    def test_single_doc_prompt_targets_one_file(self):
+        from bedrock_extract_fields.handler import _build_prompt_single_doc
+
+        doc = {"file_name": "fatura.pdf", "raw_text": "Total R$ 10", "tables": [{"rows": []}]}
+        prompt = _build_prompt_single_doc(
+            {"nfe_xml": {"numero_nota": "1"}, "textract_documents": [doc]},
+            doc,
+            None,
+        )
+        assert "fatura.pdf" in prompt
+        assert "único alvo" in prompt
+        assert "Total R$ 10" in prompt
+        assert "numero_nota" in prompt

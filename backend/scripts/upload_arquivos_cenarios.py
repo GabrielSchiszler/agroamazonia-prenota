@@ -2,10 +2,10 @@
 """
 Envia arquivos de teste em scripts/arquivos/<cenário>/ (ex.: 53, 61, 71, 78) para a API.
 
-Por defeito **todos** os ficheiros (NF, boleto, XML, imagens) sobem como **DANFE** (arquivos
-principais em `processes/.../danfe/`). Metadados do **pedido** (JSON ERP) são só o bloco
-`header` + `requestBody`. Por defeito o script carrega `scripts/pedido_metadata_exemplo.json`
-se existir (POST `/metadados/pedido` após uploads). Use `--no-pedido-metadata` para não enviar.
+O POST `/presigned-url/batch` envia só ``file_name`` e ``file_type``; a API infere pasta/DOC_TYPE
+(XML → ``danfe/``, demais → ``docs/``). Metadados do **pedido** (JSON ERP) são só o bloco
+``header`` + ``requestBody``. Por defeito o script carrega ``scripts/pedido_metadata_exemplo.json``
+se existir (POST ``/metadados/pedido`` após uploads). Use ``--no-pedido-metadata`` para não enviar.
 
 **URL da API:** `test_create_process.py` usa `{API_URL}/api/process/...`. Este script, por defeito,
 usa `{API_URL}/process/...` (igual ao front HML). Se obtiveres 404 nos POST, usa
@@ -41,7 +41,7 @@ _DEFAULT_BROWSER_UA = (
     "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
 )
 
-DEFAULT_API_URL = "https://api-hml.agroamazonia.com/fast/v1"
+DEFAULT_API_URL = "https://api-dev.agroamazonia.com/fast/v1"
 DEFAULT_SCENARIOS = ("53", "61", "71", "78")
 
 
@@ -205,10 +205,9 @@ def _collect_files(scenario_dir: Path) -> list[Path]:
     return files
 
 
-def _batch_items(paths: list[Path], doc_layout: str) -> list[dict[str, str]]:
-    """Monta lista para BatchPresignedUrlRequest: file_name, file_type, doc_type."""
+def _batch_items(paths: list[Path]) -> list[dict[str, str]]:
+    """Monta lista para BatchPresignedUrlRequest: file_name e file_type (doc_type inferido na API)."""
     items: list[dict[str, str]] = []
-    xml_primary_assigned = False
     for p in paths:
         ct = _content_type_for_path(p)
         if ct == "application/octet-stream":
@@ -216,29 +215,7 @@ def _batch_items(paths: list[Path], doc_layout: str) -> list[dict[str, str]]:
                 f"Tipo não suportado para {p.name}. "
                 f"Use pdf/xml/png/jpeg/tiff (ver ALLOWED_CONTENT_TYPES na API)."
             )
-        is_xml = ct in ("application/xml", "text/xml")
-
-        if doc_layout == "additional":
-            doc = "ADDITIONAL"
-        elif doc_layout == "danfe":
-            doc = "DANFE"
-        else:  # smart — só separa múltiplos XML (1º DANFE, resto ADDITIONAL); PDF/boleto = DANFE
-            if is_xml:
-                if not xml_primary_assigned:
-                    doc = "DANFE"
-                    xml_primary_assigned = True
-                else:
-                    doc = "ADDITIONAL"
-            else:
-                doc = "DANFE"
-
-        items.append(
-            {
-                "file_name": p.name,
-                "file_type": ct,
-                "doc_type": doc,
-            }
-        )
+        items.append({"file_name": p.name, "file_type": ct})
     return items
 
 
@@ -295,7 +272,6 @@ def run_scenario(
     scenario: str,
     arquivos_root: Path,
     start: bool,
-    doc_layout: str,
     timeout: int,
     pedido_metadados: dict | None,
 ) -> int:
@@ -307,12 +283,11 @@ def run_scenario(
 
     process_id = str(uuid.uuid4())
     print(f"\n=== Cenário {scenario} | process_id={process_id} ===")
-    print(f"doc_layout={doc_layout} (todos os PDF/boleto como principal use default danfe)")
     print(f"Arquivos ({len(paths)}): {[p.name for p in paths]}")
 
-    batch_items = _batch_items(paths, doc_layout=doc_layout)
+    batch_items = _batch_items(paths)
     for it in batch_items:
-        print(f"  → {it['file_name']}: {it['doc_type']}")
+        print(f"  → {it['file_name']}: {it['file_type']} (doc_type inferido na API)")
 
     r = requests.post(
         f"{base}/presigned-url/batch",
@@ -397,16 +372,6 @@ def main() -> int:
         "--no-start",
         action="store_true",
         help="Não chamar POST /process/start após os uploads",
-    )
-    parser.add_argument(
-        "--doc-layout",
-        choices=("smart", "danfe", "additional"),
-        default="danfe",
-        help=(
-            "danfe (padrão): todos os arquivos como principais (NF, boleto, PDF, etc.). "
-            "smart: 1º XML DANFE, demais XML ADDITIONAL; resto tudo DANFE. "
-            "additional: tudo como documento adicional (legado)."
-        ),
     )
     parser.add_argument(
         "--pedido-json",
@@ -542,7 +507,6 @@ def main() -> int:
             sc,
             arquivos_root,
             start=start,
-            doc_layout=args.doc_layout,
             timeout=args.timeout,
             pedido_metadados=pedido_metadados,
         ):
