@@ -7,7 +7,17 @@ class DashboardService:
     def __init__(self):
         self.dynamodb = boto3.resource('dynamodb')
         self.table = self.dynamodb.Table(os.environ.get('TABLE_NAME', 'DocumentProcessorTable'))
-    
+
+    @staticmethod
+    def _failed_rules_with_gap(failed_rules: dict, failed_count: int) -> dict:
+        """Acrescenta chave 'Outros' quando há falhas sem contagem em regras nomeadas (lambda, integração, etc.)."""
+        fr = dict(failed_rules or {})
+        fc = int(failed_count or 0)
+        attributed = sum(int(v) for v in fr.values())
+        if fc > attributed:
+            fr["Outros"] = fr.get("Outros", 0) + (fc - attributed)
+        return fr
+
     def get_dashboard_metrics(self, start_date=None, end_date=None):
         """Retorna métricas completas para dashboard
         
@@ -34,6 +44,10 @@ class DashboardService:
                     total_time_period += avg_time * total_count  # Acumular tempo total
                     total_count_period += total_count
                     
+                    fr_day = self._failed_rules_with_gap(
+                        daily_metrics.get('failed_rules', {}),
+                        daily_metrics.get('failed_count', 0),
+                    )
                     period_days.append({
                         'date': date,
                         'total': total_count,
@@ -41,7 +55,7 @@ class DashboardService:
                         'failed': daily_metrics.get('failed_count', 0),
                         'success_rate': daily_metrics.get('success_rate', 0),
                         'avg_processing_time': avg_time,
-                        'failed_rules': daily_metrics.get('failed_rules', {}),
+                        'failed_rules': fr_day,
                         'processes_by_type': daily_metrics.get('processes_by_type', {})
                     })
                 else:
@@ -65,10 +79,18 @@ class DashboardService:
                 for proc_type, count in daily.get('processes_by_type', {}).items():
                     processes_by_type_period[proc_type] = processes_by_type_period.get(proc_type, 0) + count
                 
-                # Agregar regras que falharam
+                # Agregar regras que falharam (inclui Outros por dia quando aplicável)
                 for rule, count in daily.get('failed_rules', {}).items():
-                    failed_rules_period[rule] = failed_rules_period.get(rule, 0) + count
-            
+                    failed_rules_period[rule] = failed_rules_period.get(rule, 0) + int(count)
+
+            # Garantir consistência com totais de falha do período (somatório das barras = falhas reais)
+            total_failed_period = sum(int(d['failed']) for d in period_days)
+            sum_rules_period = sum(int(v) for v in failed_rules_period.values())
+            if total_failed_period > sum_rules_period:
+                failed_rules_period['Outros'] = failed_rules_period.get('Outros', 0) + (
+                    total_failed_period - sum_rules_period
+                )
+
             # Calcular tempo médio do período
             avg_processing_time_period = (total_time_period / total_count_period) if total_count_period > 0 else 0
             
@@ -89,62 +111,75 @@ class DashboardService:
         else:
             # Comportamento padrão: hoje e últimos 7 dias
             today = datetime.now().strftime('%Y-%m-%d')
-        today_metrics = self.get_metrics_by_date(today)
+            today_metrics = self.get_metrics_by_date(today)
+            if today_metrics:
+                today_metrics['failed_rules'] = self._failed_rules_with_gap(
+                    today_metrics.get('failed_rules', {}),
+                    today_metrics.get('failed_count', 0),
+                )
+
+            # Últimos 7 dias (índice 0 = hoje — ordenação cronológica refeita no cliente se necessário)
+            last_7_days = []
+            total_time_week = 0
+            total_count_week = 0
+
+            for i in range(7):
+                date = (datetime.now() - timedelta(days=i)).strftime('%Y-%m-%d')
+                daily_metrics = self.get_metrics_by_date(date)
+                if daily_metrics:
+                    total_count = daily_metrics.get('total_count', 0)
+                    avg_time = daily_metrics.get('avg_processing_time', 0)
+                    total_time_week += avg_time * total_count
+                    total_count_week += total_count
+
+                    fr_day = self._failed_rules_with_gap(
+                        daily_metrics.get('failed_rules', {}),
+                        daily_metrics.get('failed_count', 0),
+                    )
+                    last_7_days.append({
+                        'date': date,
+                        'total': total_count,
+                        'success': daily_metrics.get('success_count', 0),
+                        'failed': daily_metrics.get('failed_count', 0),
+                        'success_rate': daily_metrics.get('success_rate', 0),
+                        'avg_processing_time': avg_time,
+                        'failed_rules': fr_day,
+                        'processes_by_type': daily_metrics.get('processes_by_type', {})
+                    })
         
-        # Últimos 7 dias
-        last_7_days = []
-        total_time_week = 0
-        total_count_week = 0
-        
-        for i in range(7):
-            date = (datetime.now() - timedelta(days=i)).strftime('%Y-%m-%d')
-            daily_metrics = self.get_metrics_by_date(date)
-            if daily_metrics:
-                total_count = daily_metrics.get('total_count', 0)
-                avg_time = daily_metrics.get('avg_processing_time', 0)
-                total_time_week += avg_time * total_count
-                total_count_week += total_count
-                
-                last_7_days.append({
-                    'date': date,
-                    'total': total_count,
-                    'success': daily_metrics.get('success_count', 0),
-                    'failed': daily_metrics.get('failed_count', 0),
-                    'success_rate': daily_metrics.get('success_rate', 0),
-                    'avg_processing_time': avg_time,
-                    'failed_rules': daily_metrics.get('failed_rules', {}),
-                    'processes_by_type': daily_metrics.get('processes_by_type', {})
-                })
-        
-        # Calcular métricas agregadas por tipo
-        processes_by_type_week = {}
-        failed_rules_week = {}
-        
-        for daily in last_7_days:
-            # Agregar por tipo
-            for proc_type, count in daily.get('processes_by_type', {}).items():
-                processes_by_type_week[proc_type] = processes_by_type_week.get(proc_type, 0) + count
-            
-            # Agregar regras que falharam
-            for rule, count in daily.get('failed_rules', {}).items():
-                failed_rules_week[rule] = failed_rules_week.get(rule, 0) + count
-        
-        # Calcular tempo médio da semana
-        avg_processing_time_week = (total_time_week / total_count_week) if total_count_week > 0 else 0
-        
-        return {
-            'today': today_metrics,
-            'last_7_days': last_7_days,
-            'summary': {
-                'total_week': sum(d['total'] for d in last_7_days),
-                'success_week': sum(d['success'] for d in last_7_days),
-                'failed_week': sum(d['failed'] for d in last_7_days),
-                'success_rate_week': round((sum(d['success'] for d in last_7_days) / sum(d['total'] for d in last_7_days) * 100) if sum(d['total'] for d in last_7_days) > 0 else 0, 2),
-                'avg_processing_time': round(avg_processing_time_week, 2)
-            },
-            'processes_by_type_week': processes_by_type_week,
-            'failed_rules_week': failed_rules_week
-        }
+            # Calcular métricas agregadas por tipo
+            processes_by_type_week = {}
+            failed_rules_week = {}
+
+            for daily in last_7_days:
+                for proc_type, count in daily.get('processes_by_type', {}).items():
+                    processes_by_type_week[proc_type] = processes_by_type_week.get(proc_type, 0) + count
+
+                for rule, count in daily.get('failed_rules', {}).items():
+                    failed_rules_week[rule] = failed_rules_week.get(rule, 0) + int(count)
+
+            total_failed_week = sum(int(d['failed']) for d in last_7_days)
+            sum_rules_week = sum(int(v) for v in failed_rules_week.values())
+            if total_failed_week > sum_rules_week:
+                failed_rules_week['Outros'] = failed_rules_week.get('Outros', 0) + (
+                    total_failed_week - sum_rules_week
+                )
+
+            avg_processing_time_week = (total_time_week / total_count_week) if total_count_week > 0 else 0
+
+            return {
+                'today': today_metrics,
+                'last_7_days': last_7_days,
+                'summary': {
+                    'total_week': sum(d['total'] for d in last_7_days),
+                    'success_week': sum(d['success'] for d in last_7_days),
+                    'failed_week': sum(d['failed'] for d in last_7_days),
+                    'success_rate_week': round((sum(d['success'] for d in last_7_days) / sum(d['total'] for d in last_7_days) * 100) if sum(d['total'] for d in last_7_days) > 0 else 0, 2),
+                    'avg_processing_time': round(avg_processing_time_week, 2)
+                },
+                'processes_by_type_week': processes_by_type_week,
+                'failed_rules_week': failed_rules_week
+            }
     
     def _get_raw_hourly(self, date):
         """Busca processes_by_hour raw (UTC) de uma data específica"""

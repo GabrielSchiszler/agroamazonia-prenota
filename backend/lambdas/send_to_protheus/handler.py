@@ -2056,7 +2056,25 @@ def lambda_handler(event, context):
         print(f"[8.5.7] Campo 'duplicatas' vazio ou inválido, não será incluído")
     else:
         print(f"[8.5.8] Campo 'duplicatas' não encontrado em request_body_data nem em xml_data.cobranca, não será incluído")
-    
+
+    # Impostos (NF-e total / ICMSTot): vDesc → impostos.cabecalho.desconto no Protheus
+    v_desc_raw = None
+    if totais and isinstance(totais, dict):
+        v_desc_raw = totais.get('valor_desconto')
+    if v_desc_raw is not None and str(v_desc_raw).strip() != '':
+        try:
+            desconto_nf = float(str(v_desc_raw).strip().replace(',', '.'))
+            payload['impostos'] = {
+                'cabecalho': {
+                    'desconto': desconto_nf
+                }
+            }
+            print(f"[8.6] impostos.cabecalho.desconto ← ICMSTot/vDesc (valor_desconto XML): {desconto_nf}")
+        except (ValueError, TypeError) as e:
+            print(f"[8.6] WARNING: valor_desconto inválido para impostos: {v_desc_raw!r} ({e})")
+    else:
+        print(f"[8.6] valor_desconto (ICMSTot/vDesc) ausente ou vazio — campo impostos não incluído")
+
     # Enviar para Protheus via HTTP direto (autenticação Basic)
     protheus_secret_id = _env('PROTHEUS_SECRET_ID')
     protheus_endpoint = _env('PROTHEUS_API_URL')
