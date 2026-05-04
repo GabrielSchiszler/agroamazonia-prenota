@@ -33,12 +33,16 @@ infrastructure/*.d.ts
 .env.homolog
 .env.prod
 .env.development
+.env.usoconsumo
 .env.test
 .env.staging
 .env.*.local
 
 # Logs
 *.log
+
+# Script local reports (may contain API responses / URLs)
+backend/scripts/presigned_batch_last_run.json
 
 # OS
 .DS_Store
