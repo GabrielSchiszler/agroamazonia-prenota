@@ -4,10 +4,15 @@ import boto3
 import uuid
 import logging
 from datetime import datetime
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 from src.repositories.dynamodb_repository import DynamoDBRepository
 
 logger = logging.getLogger(__name__)
+
+
+def _new_file_upload_id() -> str:
+    """Identificador único por upload (SK FILE#… / prefixo da chave S3)."""
+    return uuid.uuid4().hex
 
 
 def _truthy_pedido_flag(value: Any) -> bool:
@@ -57,7 +62,15 @@ class ProcessService:
         
         return {'process_id': process_id, 'process_type': process_type, 'status': 'CREATED'}
     
-    def generate_presigned_url(self, process_id: str, file_name: str, file_type: str, doc_type: str = 'ADDITIONAL', metadados: Dict[str, Any] = None) -> Dict[str, Any]:
+    def generate_presigned_url(
+        self,
+        process_id: str,
+        file_name: str,
+        file_type: str,
+        doc_type: str = "ADDITIONAL",
+        metadados: Dict[str, Any] = None,
+        upload_route_kind: Optional[str] = None,
+    ) -> Dict[str, Any]:
         import re
         
         logger.info(f"[generate_presigned_url] Iniciando geração de URL pré-assinada")
@@ -66,9 +79,18 @@ class ProcessService:
         logger.info(f"  - file_name: {file_name} (tipo: {type(file_name)}, length: {len(file_name) if file_name else 0})")
         logger.info(f"  - file_type: {file_type} (tipo: {type(file_type)})")
         logger.info(f"  - doc_type: {doc_type} (tipo: {type(doc_type)})")
+        logger.info(f"  - upload_route_kind: {upload_route_kind}")
         logger.info(f"  - metadados: {metadados} (tipo: {type(metadados)})")
         
         try:
+            # MIME principal (sem charset) — deve coincidir com o header Content-Type do PUT no S3 (assinatura SigV4).
+            ft = (file_type or "").strip()
+            if ";" in ft:
+                ft = ft.split(";", 1)[0].strip()
+            if not ft:
+                ft = "application/octet-stream"
+            file_type = ft
+
             # Criar processo se não existir
             pk = f'PROCESS#{process_id}'
             logger.info(f"[generate_presigned_url] Verificando se processo existe: {pk}")
@@ -100,8 +122,11 @@ class ProcessService:
             logger.info(f"[generate_presigned_url] Processando nome do arquivo: {file_name}")
             safe_name = re.sub(r'[^a-zA-Z0-9._-]', '_', file_name)
             logger.info(f"[generate_presigned_url] Nome seguro gerado: {safe_name}")
-            
-            file_key = f"processes/{process_id}/{'danfe' if doc_type == 'DANFE' else 'docs'}/{safe_name}"
+
+            upload_id = _new_file_upload_id()
+            file_sk = f"FILE#{upload_id}"
+            folder = "danfe" if doc_type == "DANFE" else "docs"
+            file_key = f"processes/{process_id}/{folder}/{upload_id}_{safe_name}"
             logger.info(f"[generate_presigned_url] file_key gerado: {file_key}")
             logger.info(f"[generate_presigned_url] bucket_name: {self.bucket_name}")
             
@@ -124,8 +149,11 @@ class ProcessService:
                 'FILE_NAME': safe_name,
                 'FILE_KEY': file_key,
                 'DOC_TYPE': doc_type,
-                'STATUS': 'PENDING'
+                'STATUS': 'PENDING',
+                'FILE_UPLOAD_ID': upload_id,
             }
+            if upload_route_kind:
+                file_data['UPLOAD_ROUTE_KIND'] = upload_route_kind
             
             # Adicionar metadados se fornecidos
             if metadados:
@@ -135,7 +163,7 @@ class ProcessService:
             
             logger.info(f"[generate_presigned_url] Salvando file_data no DynamoDB: {file_data}")
             try:
-                self.repository.put_item(pk, f'FILE#{safe_name}', file_data)
+                self.repository.put_item(pk, file_sk, file_data)
                 logger.info(f"[generate_presigned_url] File data salvo no DynamoDB com sucesso")
             except Exception as e:
                 logger.error(f"[generate_presigned_url] Erro ao salvar file_data no DynamoDB: {str(e)}")
@@ -149,6 +177,8 @@ class ProcessService:
                 'content_type': file_type,
                 'doc_type': doc_type
             }
+            if upload_route_kind:
+                result['upload_route_kind'] = upload_route_kind
             logger.info(f"[generate_presigned_url] Resultado final gerado: {result}")
             logger.info(f"[generate_presigned_url] Geração de URL pré-assinada concluída com sucesso")
             return result
@@ -209,6 +239,8 @@ class ProcessService:
         results: list[Dict[str, str]] = []
         for f in files:
             safe_name = re.sub(r"[^a-zA-Z0-9._-]", "_", f["file_name"])
+            upload_id = _new_file_upload_id()
+            file_sk = f"FILE#{upload_id}"
             raw_dt = f.get("doc_type")
             if raw_dt is not None and str(raw_dt).strip() != "":
                 doc_type = str(raw_dt).strip().upper()
@@ -222,7 +254,7 @@ class ProcessService:
                 doc_type, folder = infer_doc_type_and_folder(
                     f["file_name"], f["file_type"]
                 )
-            file_key = f"processes/{process_id}/{folder}/{safe_name}"
+            file_key = f"processes/{process_id}/{folder}/{upload_id}_{safe_name}"
 
             url = self.s3_client.generate_presigned_url(
                 "put_object",
@@ -240,8 +272,9 @@ class ProcessService:
                 "DOC_TYPE": doc_type,
                 "STATUS": "PENDING",
                 "CONTENT_TYPE": f["file_type"],
+                "FILE_UPLOAD_ID": upload_id,
             }
-            self.repository.put_item(pk, f"FILE#{safe_name}", file_data)
+            self.repository.put_item(pk, file_sk, file_data)
 
             results.append({
                 "file_name": safe_name,
@@ -728,28 +761,65 @@ class ProcessService:
         )
         return url
 
-    def update_file_metadata(self, process_id: str, file_name: str, metadados: Dict[str, Any]) -> Dict[str, Any]:
-        """Atualiza metadados JSON de um arquivo"""
+    def update_file_metadata(
+        self,
+        process_id: str,
+        file_name: str,
+        metadados: Dict[str, Any],
+        file_key: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Atualiza metadados JSON de um arquivo.
+
+        Com vários anexos com o mesmo nome, passe ``file_key`` (retorno do presigned
+        ou da consulta do processo) para identificar o item correto.
+        """
         import re
-        
+
         pk = f'PROCESS#{process_id}'
         safe_name = re.sub(r'[^a-zA-Z0-9._-]', '_', file_name)
-        sk = f'FILE#{safe_name}'
-        
-        # Verificar se o arquivo existe
+
         items = self.repository.query_by_pk(pk)
-        file_item = next((item for item in items if item['SK'] == sk), None)
-        
+
+        if file_key:
+            file_item = next(
+                (
+                    item
+                    for item in items
+                    if item['SK'].startswith('FILE#')
+                    and item.get('FILE_KEY') == file_key
+                ),
+                None,
+            )
+            sk = file_item['SK'] if file_item else None
+        else:
+            matches = [
+                item
+                for item in items
+                if item['SK'].startswith('FILE#')
+                and item.get('FILE_NAME') == safe_name
+            ]
+            if not matches:
+                file_item = None
+                sk = None
+            elif len(matches) == 1:
+                file_item = matches[0]
+                sk = file_item['SK']
+            else:
+                raise ValueError(
+                    f"Vários arquivos com o nome {file_name!r} neste processo; "
+                    "informe file_key (retornado na URL pré-assinada ou ao consultar o processo)."
+                )
+
         if not file_item:
             raise ValueError(f"Arquivo {file_name} não encontrado no processo {process_id}")
-        
+
         # Atualizar metadados
         self.repository.update_item(pk, sk, {
             'METADADOS': json.dumps(metadados)
         })
-        
-        logger.info(f"Metadados atualizados para arquivo {file_name} no processo {process_id}")
-        
+
+        logger.info(f"Metadados atualizados para arquivo {file_name} ({sk}) no processo {process_id}")
+
         return {
             'success': True,
             'message': 'Metadados atualizados com sucesso',

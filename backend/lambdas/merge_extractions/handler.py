@@ -87,8 +87,10 @@ def handler(event, context):
     for sk, it in items_by_sk.items():
         if not sk.startswith("TEXTRACT#"):
             continue
+        suffix = sk[len("TEXTRACT#") :] if sk.startswith("TEXTRACT#") else ""
         doc: dict = {
             "file_name": it.get("FILE_NAME", ""),
+            "file_upload_id": suffix or None,
             "raw_text": it.get("RAW_TEXT", ""),
             "tables": [],
             "job_id": it.get("JOB_ID", ""),
@@ -145,6 +147,7 @@ def handler(event, context):
             "per_document": [
                 {
                     "file_name": d.get("file_name", ""),
+                    "file_upload_id": d.get("file_upload_id"),
                     "protheus_hints": d.get("protheus_hints") or {},
                     "tables_count": len(d.get("tables") or []),
                     "job_id": d.get("job_id") or "",

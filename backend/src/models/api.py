@@ -56,13 +56,37 @@ class DocsPresignedUrlRequest(BaseModel):
             }
         }
 
+class DynamicPresignedUrlRequest(BaseModel):
+    """Corpo para POST /process/presigned-url/{upload_kind} — o rótulo de tipo do upload vem do path."""
+
+    process_id: str = Field(..., description="ID do processo (UUID gerado pelo cliente)")
+    file_name: str = Field(..., description="Nome do arquivo")
+    file_type: str = Field(
+        ...,
+        description="Content-Type (MIME) do arquivo no PUT para o S3",
+        example="application/pdf",
+    )
+    metadados: Optional[Dict[str, Any]] = Field(
+        default=None, description="Metadados adicionais do arquivo (JSON)"
+    )
+
+    class Config:
+        schema_extra = {
+            "example": {
+                "process_id": "7d48cd96-c099-48dd-bbb6-d4fe8b2de318",
+                "file_name": "anexo.pdf",
+                "file_type": "application/pdf",
+                "metadados": {},
+            }
+        }
+
 class PresignedUrlResponse(BaseModel):
     upload_url: str
     file_key: str
     file_name: str
     content_type: str
     doc_type: str
-    
+
     class Config:
         schema_extra = {
             "example": {
@@ -70,7 +94,7 @@ class PresignedUrlResponse(BaseModel):
                 "file_key": "processes/7d48cd96-c099-48dd-bbb6-d4fe8b2de318/danfe/nota_fiscal.xml",
                 "file_name": "nota_fiscal.xml",
                 "content_type": "application/xml",
-                "doc_type": "DANFE"
+                "doc_type": "DANFE",
             }
         }
 
@@ -80,7 +104,7 @@ class DocsPresignedUrlResponse(BaseModel):
     file_name: str
     content_type: str
     doc_type: str
-    
+
     class Config:
         schema_extra = {
             "example": {
@@ -88,7 +112,7 @@ class DocsPresignedUrlResponse(BaseModel):
                 "file_key": "processes/7d48cd96-c099-48dd-bbb6-d4fe8b2de318/docs/pedido.pdf",
                 "file_name": "pedido.pdf",
                 "content_type": "application/pdf",
-                "doc_type": "ADDITIONAL"
+                "doc_type": "ADDITIONAL",
             }
         }
 
@@ -229,6 +253,7 @@ ALLOWED_CONTENT_TYPES = {
     "application/pdf",
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     "image/png", "image/jpeg", "image/tiff",
+    "text/plain",
 }
 
 
@@ -290,18 +315,26 @@ class UpdateFileMetadataRequest(BaseModel):
     process_id: str = Field(..., description="ID do processo")
     file_name: str = Field(..., description="Nome do arquivo")
     metadados: Dict[str, Any] = Field(..., description="Novos metadados JSON para o arquivo")
-    
+    file_key: Optional[str] = Field(
+        default=None,
+        description=(
+            "Obrigatório se houver mais de um anexo com o mesmo file_name: use o file_key "
+            "devolvido no presigned ou na consulta do processo."
+        ),
+    )
+
     class Config:
         schema_extra = {
             "example": {
                 "process_id": "7d48cd96-c099-48dd-bbb6-d4fe8b2de318",
                 "file_name": "pedido_compra.pdf",
+                "file_key": "processes/7d48cd96-c099-48dd-bbb6-d4fe8b2de318/docs/a1b2_pedido_compra.pdf",
                 "metadados": {
                     "moeda": "BRL",
                     "pedidoFornecedor": "369763",
                     "pedidoErp": "023037",
-                    "itens": []
-                }
+                    "itens": [],
+                },
             }
         }
 
@@ -310,7 +343,7 @@ class UpdateFileMetadataResponse(BaseModel):
     message: str
     file_name: str
     metadados: Dict[str, Any]
-    
+
     class Config:
         schema_extra = {
             "example": {
@@ -319,7 +352,7 @@ class UpdateFileMetadataResponse(BaseModel):
                 "file_name": "pedido_compra.pdf",
                 "metadados": {
                     "moeda": "BRL",
-                    "pedidoFornecedor": "369763"
-                }
+                    "pedidoFornecedor": "369763",
+                },
             }
         }

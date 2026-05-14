@@ -10,11 +10,9 @@ Input (from Step Functions):
 Behaviour:
   1. Query all FILE# items for the process.
   2. Skip files already classified as NF-e XML (ends with .xml — parse_xml handles those).
-  3. For PDF / IMAGE files: call Textract AnalyzeDocument (sync, ≤ 5 pages) or
-     StartDocumentAnalysis (async) depending on page count.  MVP uses sync only.
-  4. DOCX: marked REJECTED (Textract does not support DOCX natively).
-     Future: convert to PDF first.
-  5. Persist raw text + tables per file under TEXTRACT#{safe_name}.
+  3. Para PDF / IMAGE: Textract AnalyzeDocument ou StartDocumentAnalysis.
+  4. Para .txt: lê UTF-8 do S3 (sem Textract), grava mesmo schema TEXTRACT# (merge + Bedrock iguais ao PDF).
+  5. DOCX: marcado REJECTED (Textract não suporta DOCX nativamente).
 
 Output:
   { "process_id": "...", "extracted_count": N, "rejected": [...] }
@@ -46,7 +44,16 @@ dynamodb = boto3.resource("dynamodb")
 table = dynamodb.Table(os.environ["TABLE_NAME"])
 
 TEXTRACT_SUPPORTED_EXTENSIONS = {".pdf", ".png", ".jpg", ".jpeg", ".tiff", ".tif"}
+PLAIN_TEXT_EXTENSIONS = {".txt"}
 TEXTRACT_MAX_SYNC_BYTES = 10 * 1024 * 1024  # 10 MB sync limit
+PLAIN_TEXT_MAX_BYTES = TEXTRACT_MAX_SYNC_BYTES
+
+
+def _textract_result_sk(file_sk: str, fname: str) -> str:
+    """SK único por anexo; compatível com FILE#<nome legado>."""
+    if file_sk.startswith("FILE#"):
+        return f"TEXTRACT#{file_sk[5:]}"
+    return f"TEXTRACT#{fname}"
 
 
 def _ext(name: str) -> str:
@@ -138,8 +145,55 @@ def _extract_text_and_tables(blocks: list[dict]) -> tuple[str, list[dict]]:
     return "\n".join(lines), tables
 
 
+def _persist_extraction_like_textract(
+    pk: str,
+    file_sk: str,
+    fname: str,
+    fkey: str,
+    raw_text: str,
+    tables_data: list,
+    job_id: str,
+    timestamp: int,
+) -> None:
+    """Grava TEXTRACT#* + STATUS EXTRACTED no FILE# — mesmo formato que Textract (merge/Bedrock)."""
+    sk = _textract_result_sk(file_sk, fname)
+    hints = hints_from_textract_text(raw_text)
+    textract_item: dict = {
+        "PK": pk,
+        "SK": sk,
+        "FILE_NAME": fname,
+        "FILE_KEY": fkey,
+        "JOB_ID": job_id,
+        "TABLE_COUNT": len(tables_data),
+        "TABLES_DATA": json.dumps(tables_data),
+        "RAW_TEXT": raw_text,
+        "TIMESTAMP": timestamp,
+    }
+    if hints:
+        textract_item["PROTHEUS_HINTS"] = json.dumps(hints, ensure_ascii=False)
+    table.put_item(Item=textract_item)
+    table.update_item(
+        Key={"PK": pk, "SK": file_sk},
+        UpdateExpression="SET #st = :st",
+        ExpressionAttributeNames={"#st": "STATUS"},
+        ExpressionAttributeValues={":st": "EXTRACTED"},
+    )
+
+
+def _extract_plain_text_from_s3(bucket: str, fkey: str, max_bytes: int) -> str:
+    head = s3.head_object(Bucket=bucket, Key=fkey)
+    size = head["ContentLength"]
+    if size > max_bytes:
+        raise ValueError(
+            f"Arquivo texto excede {max_bytes} bytes; reduza o .txt ou aumente o limite."
+        )
+    obj = s3.get_object(Bucket=bucket, Key=fkey)
+    raw_bytes = obj["Body"].read()
+    return raw_bytes.decode("utf-8", errors="replace")
+
+
 def handle_single_textract(event, context):
-    """Um anexo não-XML com Textract (Step Functions Map)."""
+    """Um anexo não-XML: .txt (UTF-8) ou Textract para PDF/imagem (Step Functions Map)."""
     process_id = event["process_id"]
     bucket = os.environ["BUCKET_NAME"]
     pk = f"PROCESS#{process_id}"
@@ -151,6 +205,33 @@ def handle_single_textract(event, context):
     logger.info("extract_documents single: %s", fname)
 
     ext = _ext(fname)
+
+    if ext in PLAIN_TEXT_EXTENSIONS:
+        try:
+            raw_text = _extract_plain_text_from_s3(bucket, fkey, PLAIN_TEXT_MAX_BYTES)
+            _persist_extraction_like_textract(
+                pk, fi_sk, fname, fkey, raw_text, [], "plaintext", timestamp
+            )
+            logger.info("Plain text extracted: %s (%d chars)", fname, len(raw_text))
+            return {
+                "process_id": process_id,
+                "file_name": fname,
+                "extracted_count": 1,
+                "rejected": [],
+            }
+        except Exception as exc:
+            logger.error("Plain text extract failed for %s: %s", fname, exc, exc_info=True)
+            table.update_item(
+                Key={"PK": pk, "SK": fi_sk},
+                UpdateExpression="SET #st = :st, extraction_error = :err",
+                ExpressionAttributeNames={"#st": "STATUS"},
+                ExpressionAttributeValues={
+                    ":st": "EXTRACTION_FAILED",
+                    ":err": str(exc)[:500],
+                },
+            )
+            raise
+
     if ext not in TEXTRACT_SUPPORTED_EXTENSIONS:
         logger.warning("Unsupported for Textract: %s (ext=%s)", fname, ext)
         table.update_item(
@@ -181,28 +262,8 @@ def handle_single_textract(event, context):
             job_id, resp = _run_textract_async(bucket, fkey)
             raw_text, tables_data = _extract_text_and_tables(resp.get("Blocks", []))
 
-        sk = f"TEXTRACT#{fname}"
-        hints = hints_from_textract_text(raw_text)
-        textract_item: dict = {
-            "PK": pk,
-            "SK": sk,
-            "FILE_NAME": fname,
-            "FILE_KEY": fkey,
-            "JOB_ID": job_id,
-            "TABLE_COUNT": len(tables_data),
-            "TABLES_DATA": json.dumps(tables_data),
-            "RAW_TEXT": raw_text,
-            "TIMESTAMP": timestamp,
-        }
-        if hints:
-            textract_item["PROTHEUS_HINTS"] = json.dumps(hints, ensure_ascii=False)
-        table.put_item(Item=textract_item)
-
-        table.update_item(
-            Key={"PK": pk, "SK": fi_sk},
-            UpdateExpression="SET #st = :st",
-            ExpressionAttributeNames={"#st": "STATUS"},
-            ExpressionAttributeValues={":st": "EXTRACTED"},
+        _persist_extraction_like_textract(
+            pk, fi_sk, fname, fkey, raw_text, tables_data, job_id, timestamp
         )
 
         return {
@@ -256,13 +317,36 @@ def handler(event, context):
     for fi in file_items:
         fname = fi["FILE_NAME"]
         fkey = fi["FILE_KEY"]
+        fi_sk = fi["SK"]
         ext = _ext(fname)
+
+        if ext in PLAIN_TEXT_EXTENSIONS:
+            logger.info("Reading plain text: %s (%s)", fname, fkey)
+            try:
+                raw_text = _extract_plain_text_from_s3(bucket, fkey, PLAIN_TEXT_MAX_BYTES)
+                _persist_extraction_like_textract(
+                    pk, fi_sk, fname, fkey, raw_text, [], "plaintext", timestamp
+                )
+                extracted_count += 1
+                logger.info("Plain text done for %s (%d chars)", fname, len(raw_text))
+            except Exception as exc:
+                logger.error("Plain text failed for %s: %s", fname, exc, exc_info=True)
+                table.update_item(
+                    Key={"PK": pk, "SK": fi_sk},
+                    UpdateExpression="SET #st = :st, extraction_error = :err",
+                    ExpressionAttributeNames={"#st": "STATUS"},
+                    ExpressionAttributeValues={
+                        ":st": "EXTRACTION_FAILED",
+                        ":err": str(exc)[:500],
+                    },
+                )
+            continue
 
         if ext not in TEXTRACT_SUPPORTED_EXTENSIONS:
             logger.warning("Unsupported for Textract: %s (ext=%s)", fname, ext)
             rejected.append(fname)
             table.update_item(
-                Key={"PK": pk, "SK": fi["SK"]},
+                Key={"PK": pk, "SK": fi_sk},
                 UpdateExpression="SET #st = :st, rejection_reason = :rr",
                 ExpressionAttributeNames={"#st": "STATUS"},
                 ExpressionAttributeValues={
@@ -286,38 +370,23 @@ def handler(event, context):
                 job_id, resp = _run_textract_async(bucket, fkey)
                 raw_text, tables_data = _extract_text_and_tables(resp.get("Blocks", []))
 
-            sk = f"TEXTRACT#{fname}"
-            hints = hints_from_textract_text(raw_text)
-            textract_item: dict = {
-                "PK": pk,
-                "SK": sk,
-                "FILE_NAME": fname,
-                "FILE_KEY": fkey,
-                "JOB_ID": job_id,
-                "TABLE_COUNT": len(tables_data),
-                "TABLES_DATA": json.dumps(tables_data),
-                "RAW_TEXT": raw_text,
-                "TIMESTAMP": timestamp,
-            }
-            if hints:
-                textract_item["PROTHEUS_HINTS"] = json.dumps(hints, ensure_ascii=False)
-            table.put_item(Item=textract_item)
-
-            table.update_item(
-                Key={"PK": pk, "SK": fi["SK"]},
-                UpdateExpression="SET #st = :st",
-                ExpressionAttributeNames={"#st": "STATUS"},
-                ExpressionAttributeValues={":st": "EXTRACTED"},
+            _persist_extraction_like_textract(
+                pk, fi_sk, fname, fkey, raw_text, tables_data, job_id, timestamp
             )
 
             extracted_count += 1
-            logger.info("Textract done for %s (job=%s, lines=%d, tables=%d)",
-                        fname, job_id, raw_text.count("\n") + 1, len(tables_data))
+            logger.info(
+                "Textract done for %s (job=%s, lines=%d, tables=%d)",
+                fname,
+                job_id,
+                raw_text.count("\n") + 1,
+                len(tables_data),
+            )
 
         except Exception as exc:
             logger.error("Textract failed for %s: %s", fname, exc, exc_info=True)
             table.update_item(
-                Key={"PK": pk, "SK": fi["SK"]},
+                Key={"PK": pk, "SK": fi_sk},
                 UpdateExpression="SET #st = :st, extraction_error = :err",
                 ExpressionAttributeNames={"#st": "STATUS"},
                 ExpressionAttributeValues={

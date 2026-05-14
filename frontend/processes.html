@@ -73,7 +73,7 @@
 
                         <div class="details-card">
                             <h4>📄 NF-e / documentos fiscais (DANFE)</h4>
-                            <p style="color: #666; font-size: 0.9em; margin-bottom: 10px;">Todos os anexos do processo (NF XML/PDF, boleto, imagens, etc.) entram aqui — mesma pasta <code>danfe</code> na API.</p>
+                            <p style="color: #666; font-size: 0.9em; margin-bottom: 10px;">Todos os anexos do processo (NF XML/PDF, boleto, imagens, etc.) ficam na pasta <code>danfe</code> na API. Ficheiros <strong>.xml</strong> usam o fluxo de NF-e; <strong>PDF e restantes</strong> usam o fluxo DANFE (não o de XML).</p>
                             <div class="upload-area">
                                 <input type="file" id="danfeInput" accept=".pdf,.xml,.png,.jpg,.jpeg,.tiff,.tif" multiple onchange="handleDanfeSelect()">
                                 <label for="danfeInput" class="upload-label">

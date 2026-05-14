@@ -1,7 +1,9 @@
 import logging
+import re
 from fastapi import APIRouter, HTTPException
 from src.models.api import (
     XmlPresignedUrlRequest, DocsPresignedUrlRequest, DocsPresignedUrlResponse,
+    DynamicPresignedUrlRequest,
     ProcessStartRequest, ProcessStartResponse,
     ProcessResponse, UpdateFileMetadataRequest, UpdateFileMetadataResponse,
     PedidoCompraMetadataRequest, PedidoCompraMetadataResponse,
@@ -99,6 +101,53 @@ async def get_batch_presigned_urls(request: BatchPresignedUrlRequest):
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         logger.exception("[batch_presigned] Erro inesperado")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+_UPLOAD_KIND_PATH_RE = re.compile(r"^[a-zA-Z0-9_-]{1,64}$")
+
+
+@router.post(
+    "/presigned-url/{upload_kind}",
+    summary="Presigned URL por tipo (path)",
+    description=(
+        "Mesmo fluxo do XML/docs: `upload_kind=xml` ou `danfe` → DANFE/pasta `danfe` (NF-e XML ou PDF/imagem na mesma pasta); "
+        "qualquer outro valor (ex.: `additional`, `pdf`, `boleto`) → ADDITIONAL/pasta docs. "
+        "O segmento do path é gravado em DynamoDB (`UPLOAD_ROUTE_KIND`) e devolvido na resposta (`upload_route_kind`). "
+        "Rotas fixas `/presigned-url/xml`, `/presigned-url/docs` e `/presigned-url/batch` permanecem."
+    ),
+)
+async def get_presigned_url_by_path_kind(
+    upload_kind: str, request: DynamicPresignedUrlRequest
+):
+    raw = (upload_kind or "").strip()
+    if not _UPLOAD_KIND_PATH_RE.match(raw):
+        raise HTTPException(
+            status_code=400,
+            detail="upload_kind inválido: use 1–64 caracteres (letras, números, _ e -)",
+        )
+    normalized = raw.lower()
+    doc_type = "DANFE" if normalized in ("xml", "danfe") else "ADDITIONAL"
+    logger.info(
+        "[presigned-url/%s] process_id=%s file_name=%s doc_type=%s",
+        normalized,
+        request.process_id,
+        request.file_name,
+        doc_type,
+    )
+    try:
+        return service.generate_presigned_url(
+            request.process_id,
+            request.file_name,
+            request.file_type,
+            doc_type,
+            request.metadados,
+            upload_route_kind=normalized,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.exception("[presigned-url/%s] erro inesperado", normalized)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -276,7 +325,12 @@ async def update_file_metadata(request: UpdateFileMetadataRequest):
     
     try:
         logger.info("[update_file_metadata] Chamando service.update_file_metadata...")
-        result = service.update_file_metadata(request.process_id, request.file_name, request.metadados)
+        result = service.update_file_metadata(
+            request.process_id,
+            request.file_name,
+            request.metadados,
+            file_key=request.file_key,
+        )
         logger.info(f"[update_file_metadata] Metadados atualizados com sucesso!")
         logger.info(f"[update_file_metadata] Resposta: {result}")
         logger.info("=" * 80)
@@ -286,7 +340,9 @@ async def update_file_metadata(request: UpdateFileMetadataRequest):
         logger.error(f"[update_file_metadata] Tipo do erro: {type(e).__name__}")
         logger.exception("[update_file_metadata] Traceback completo:")
         logger.info("=" * 80)
-        raise HTTPException(status_code=404, detail=str(e))
+        msg = str(e)
+        status = 400 if msg.startswith("Vários arquivos") else 404
+        raise HTTPException(status_code=status, detail=msg)
     except Exception as e:
         logger.error(f"[update_file_metadata] Erro inesperado: {str(e)}")
         logger.error(f"[update_file_metadata] Tipo do erro: {type(e).__name__}")

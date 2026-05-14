@@ -120,6 +120,30 @@ def _merge_uso_consumo_protheus_item(item: dict, item_rb):
     return item
 
 
+def _quantidade_uso_consumo_pedido(rb_item, quantidade_xml_linha: float) -> float:
+    """
+    Uso e consumo: quantidade efetiva a partir do metadado (requestBody.itens[].quantidade).
+
+    - Se o item do pedido existir e tiver a chave ``quantidade``: usa o valor numérico;
+      se for inválida, ausente ou <= 0, usa 1.
+    - Se o item existir mas **não** tiver a chave ``quantidade``: 1 (regra de negócio).
+    - Sem item de pedido correspondente: mantém a quantidade da linha (XML/outro) se > 0,
+      senão 1.
+    """
+    q_xml = float(quantidade_xml_linha or 0)
+    if rb_item is not None and isinstance(rb_item, dict):
+        if "quantidade" not in rb_item:
+            return 1.0
+        try:
+            q = float(rb_item.get("quantidade"))
+        except (TypeError, ValueError):
+            return 1.0
+        if q <= 0:
+            return 1.0
+        return q
+    return q_xml if q_xml > 0 else 1.0
+
+
 def _safe_float(val, default=0.0):
     if val is None or val == "":
         return default
@@ -2040,14 +2064,6 @@ def lambda_handler(event, context):
             codigo_produto = produto_info['codigo_produto']
             quantidade = produto_info['quantidade']
             lote = produto_info.get('lote')
-            
-            # Valor unitário Protheus: total da NF/boleto (prioridade) ou linha XML / IA
-            valor_unitario = _valor_unitario_payload(
-                produto_xml,
-                float(quantidade or 0),
-                valor_total_doc,
-                n_linhas_payload,
-            )
             unidade = produto_xml.get('unidade', '').strip()
             
             # Se não encontrou código do produto, tentar buscar novamente
@@ -2075,8 +2091,7 @@ def lambda_handler(event, context):
             print(f"[8.{idx}] Processando produto:")
             print(f"[8.{idx}.3] Código do produto: {codigo_produto}")
             print(f"[8.{idx}.4] Nome: {produto_xml.get('descricao', 'N/A')[:50]}...")
-            print(f"[8.{idx}.5] Quantidade: {quantidade}")
-            print(f"[8.{idx}.6] Valor unitário: {valor_unitario}")
+            print(f"[8.{idx}.5] Quantidade (linha antes de regra UC): {quantidade}")
             print(f"[8.{idx}.7] Lote: {lote}")
             print(f"[8.{idx}.8] pedidoDeCompra: {pedido_de_compra}")
             
@@ -2234,6 +2249,27 @@ def lambda_handler(event, context):
                 codigo_operacao = str(cfop_mapping.get('operacao', '') or '').strip()
                 print(f"[8.{idx}.12.op] codigoOperacao do CFOP mapping (operacao): {codigo_operacao}")
             
+            if uso_merge:
+                rb_uc_qty = _find_rb_item_uso_consumo(
+                    request_body_data, codigo_produto, len(payload["itens"])
+                )
+                q_antes = float(quantidade or 0)
+                quantidade = _quantidade_uso_consumo_pedido(rb_uc_qty, q_antes)
+                if q_antes != quantidade:
+                    print(
+                        f"[8.{idx}.12.uc-qty] Uso e consumo: quantidade ajustada "
+                        f"({q_antes} → {quantidade}) conforme metadado do pedido"
+                    )
+
+            # Valor unitário Protheus: após quantidade final (incl. regra uso e consumo)
+            valor_unitario = _valor_unitario_payload(
+                produto_xml,
+                float(quantidade or 0),
+                valor_total_doc,
+                n_linhas_payload,
+            )
+            print(f"[8.{idx}.6] Valor unitário (após quantidade final): {valor_unitario}")
+
             # Montar item do payload
             item = {
                 "codigoProduto": codigo_produto,
@@ -2341,6 +2377,11 @@ def lambda_handler(event, context):
                 }
                 
                 qtd_fb = float(produto.get('quantidade', 0))
+                if uso_merge:
+                    rb_uc_fb = _find_rb_item_uso_consumo(
+                        request_body_data, codigo, idx - 1
+                    )
+                    qtd_fb = _quantidade_uso_consumo_pedido(rb_uc_fb, qtd_fb)
                 vu_fb = _valor_unitario_payload(
                     produto,
                     qtd_fb,

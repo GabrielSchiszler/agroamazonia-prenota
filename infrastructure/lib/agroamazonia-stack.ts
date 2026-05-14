@@ -69,6 +69,17 @@ export class AgroAmazoniaStack extends cdk.Stack {
       '10.255.0.0/24',
       '10.65.0.0/24'
     ];
+
+    // Upload/download direto no S3 via URL pré-assinada a partir do browser exige CORS no bucket
+    // (preflight OPTIONS + PUT com Content-Type). Origens alinhadas ao Fast Dash por ambiente.
+    const rawDocumentsCorsOrigins: string[] = [
+      'http://localhost:8080',
+      'http://127.0.0.1:8080',
+      `https://fast-dash-${this.envName}.agroamazonia.com`
+    ];
+    if (this.envName === 'hml') {
+      rawDocumentsCorsOrigins.push('https://fast-dash-hml.agroamazonia.io');
+    }
     
     const rawDocumentsBucket = new s3.Bucket(this, 'RawDocumentsBucket', {
       bucketName: `bucket-agroamazonia-raw-documents-${this.envName}-${accountId}`,
@@ -80,8 +91,17 @@ export class AgroAmazoniaStack extends cdk.Stack {
       // Usar apenas políticas de bucket para controle de acesso
       objectOwnership: s3.ObjectOwnership.BUCKET_OWNER_ENFORCED,
       removalPolicy: cdk.RemovalPolicy.RETAIN,
-      // Remover CORS público - acesso será apenas via IPs permitidos
-      // CORS removido para garantir privacidade total
+      cors: [{
+        allowedMethods: [
+          s3.HttpMethods.GET,
+          s3.HttpMethods.PUT,
+          s3.HttpMethods.HEAD
+        ],
+        allowedOrigins: rawDocumentsCorsOrigins,
+        allowedHeaders: ['*'],
+        exposedHeaders: ['ETag', 'x-amz-request-id', 'x-amz-id-2'],
+        maxAge: 3000
+      }],
       lifecycleRules: [{
         transitions: [{
           storageClass: s3.StorageClass.INTELLIGENT_TIERING,
@@ -661,7 +681,8 @@ export class AgroAmazoniaStack extends cdk.Stack {
       payload: sfn.TaskInput.fromObject({
         'process_id.$': '$.process_id',
         'file_name.$': '$.attachment.file_name',
-        'file_key.$': '$.attachment.file_key'
+        'file_key.$': '$.attachment.file_key',
+        'file_sk.$': '$.attachment.file_sk',
       }),
       outputPath: '$.Payload',
       resultPath: '$'
@@ -669,7 +690,7 @@ export class AgroAmazoniaStack extends cdk.Stack {
 
     const extractTextractSingleTask = new tasks.LambdaInvoke(attachmentsMap, 'ExtractTextractSingle', {
       stateName: 'MapItem_TextractOCR',
-      comment: 'Iteração Map: um PDF/imagem → TEXTRACT# (XML não passa aqui).',
+      comment: 'Iteração Map: PDF/imagem → Textract; .txt → leitura UTF-8 no S3 (mesmo item TEXTRACT#).',
       lambdaFunction: extractDocumentsLambda,
       payload: sfn.TaskInput.fromObject({
         'process_id.$': '$.process_id',

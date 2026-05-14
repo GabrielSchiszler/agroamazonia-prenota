@@ -1,5 +1,6 @@
 """
 Lista FILE# com FILE_KEY para o Step Functions Map: cada item tem handler xml | textract | skip.
+Arquivos .txt usam o mesmo ramo textract (extract_documents lê UTF-8 do S3, sem API Textract).
 """
 
 from __future__ import annotations
@@ -17,6 +18,7 @@ dynamodb = boto3.resource("dynamodb")
 table = dynamodb.Table(os.environ["TABLE_NAME"])
 
 TEXTRACT_SUPPORTED = {".pdf", ".png", ".jpg", ".jpeg", ".tiff", ".tif"}
+PLAIN_TEXT_EXTENSIONS = {".txt"}
 
 
 def _ext(name: str) -> str:
@@ -54,7 +56,7 @@ def handler(event, context):
             )
             continue
         ext = _ext(fname)
-        if ext in TEXTRACT_SUPPORTED:
+        if ext in TEXTRACT_SUPPORTED or ext in PLAIN_TEXT_EXTENSIONS:
             attachments.append(
                 {
                     "file_sk": sk,

@@ -4,6 +4,21 @@ function normalizeApiUrl(url) {
     return url.toString().replace(/\/+$/, ''); // Remove todas as barras no final
 }
 
+/** MIME para presigned + PUT no S3: deve bater com o que o backend assina. Se file.type vier vazio, infere pela extensão. */
+function inferMimeTypeForUpload(file) {
+    const raw = file && file.type ? String(file.type).split(';')[0].trim() : '';
+    if (raw) return raw;
+    const name = (file && file.name) ? file.name.toLowerCase() : '';
+    if (name.endsWith('.pdf')) return 'application/pdf';
+    if (name.endsWith('.xml')) return 'application/xml';
+    if (name.endsWith('.png')) return 'image/png';
+    if (name.endsWith('.jpg') || name.endsWith('.jpeg')) return 'image/jpeg';
+    if (name.endsWith('.tif') || name.endsWith('.tiff')) return 'image/tiff';
+    if (name.endsWith('.docx')) return 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+    if (name.endsWith('.txt')) return 'text/plain';
+    return 'application/octet-stream';
+}
+
 let API_URL = normalizeApiUrl(localStorage.getItem('apiUrl') || window.ENV?.API_URL);
 let API_KEY = localStorage.getItem('apiKey') || window.ENV?.API_KEY;
 let selectedProcess = null;
@@ -1375,9 +1390,11 @@ function allFiscalFilesList(proc) {
 function renderFiscalFileRow(f) {
     const statusClass = f.status === 'UPLOADED' ? 'uploaded' : 'pending';
     const statusIcon = f.status === 'UPLOADED' ? '✅' : '⏳';
-    const downloadBtn = f.status === 'UPLOADED' && f.file_key
-        ? `<button onclick="downloadFile('${f.file_key}', '${f.file_name}')" style="padding: 4px 8px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 0.85em;">📥 Baixar</button>`
-        : '';
+    // Presigned grava PENDING → S3 evento UPLOADED → pipeline pode ir a EXTRACTED etc.; download só precisa de file_key.
+    const downloadBtn =
+        f.file_key && !f.metadata_only
+            ? `<button type="button" onclick="downloadFile(${JSON.stringify(f.file_key)}, ${JSON.stringify(f.file_name)})" style="padding: 4px 8px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 0.85em;">📥 Baixar</button>`
+            : '';
     const docType = f.doc_type || 'DANFE';
     const badge = docType === 'DANFE'
         ? '<span style="font-size:0.75em;color:#666;">DANFE</span>'
@@ -1617,11 +1634,21 @@ async function uploadFile(file, docType, fileInput, userMetadata = null, batchMo
     if (!file || !selectedProcess) return;
 
     try {
-        const contentType = file.type || 'application/octet-stream';
-        
+        const contentType = inferMimeTypeForUpload(file);
+
         let urlResponse, upload_url;
-        
+        let putContentType = contentType;
+
         if (docType === 'DANFE') {
+            const lower = (file.name || '').toLowerCase();
+            const isXml =
+                lower.endsWith('.xml') ||
+                contentType === 'application/xml' ||
+                contentType === 'text/xml';
+            const presignedPath = isXml
+                ? '/process/presigned-url/xml'
+                : '/process/presigned-url/danfe';
+
             const requestBody = {
                 process_id: selectedProcess.process_id,
                 file_name: file.name,
@@ -1633,7 +1660,7 @@ async function uploadFile(file, docType, fileInput, userMetadata = null, batchMo
                 requestBody.metadados = userMetadata;
             }
             
-            urlResponse = await fetch(`${API_URL}/process/presigned-url/xml`, {
+            urlResponse = await fetch(`${API_URL}${presignedPath}`, {
                 method: 'POST',
                 headers: { 
                     'Content-Type': 'application/json',
@@ -1642,8 +1669,9 @@ async function uploadFile(file, docType, fileInput, userMetadata = null, batchMo
                 body: JSON.stringify(requestBody)
             });
             if (!urlResponse.ok) throw new Error('Falha ao gerar URL');
-            const data = await urlResponse.json();
-            upload_url = data.upload_url;
+            const dataXml = await urlResponse.json();
+            upload_url = dataXml.upload_url;
+            putContentType = dataXml.content_type || contentType;
         } else {
             // Preparar metadados: usar metadados do usuário se fornecidos, senão gerar automáticos
             let metadados = userMetadata;
@@ -1670,15 +1698,16 @@ async function uploadFile(file, docType, fileInput, userMetadata = null, batchMo
                 })
             });
             if (!urlResponse.ok) throw new Error('Falha ao gerar URL');
-            const data = await urlResponse.json();
-            upload_url = data.upload_url;
+            const dataDocs = await urlResponse.json();
+            upload_url = dataDocs.upload_url;
+            putContentType = dataDocs.content_type || contentType;
         }
 
         await new Promise((resolve, reject) => {
             const xhr = new XMLHttpRequest();
             xhr.open('PUT', upload_url, true);
-            xhr.setRequestHeader('Content-Type', contentType);
-            xhr.onload = () => xhr.status === 200 ? resolve() : reject(new Error('Falha no upload'));
+            xhr.setRequestHeader('Content-Type', putContentType);
+            xhr.onload = () => (xhr.status >= 200 && xhr.status < 300) ? resolve() : reject(new Error('Falha no upload'));
             xhr.onerror = () => reject(new Error('Erro de rede'));
             xhr.send(file);
         });

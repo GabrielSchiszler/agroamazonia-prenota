@@ -90,6 +90,14 @@ def parse_generic_xml_summary(xml_content: str) -> dict:
     }
 
 
+def _parsed_xml_sk_suffix(event: dict) -> str:
+    """Chave estável por anexo: upload_id (FILE#…) ou nome (compat Step Functions antigo)."""
+    file_sk = event.get("file_sk")
+    if file_sk:
+        return file_sk[5:] if str(file_sk).startswith("FILE#") else str(file_sk)
+    return event["file_name"]
+
+
 def handle_single_xml_attachment(event, pk, process_id, bucket):
     """Um anexo .xml (Step Functions Map): grava PARSED_XML=; merge escolhe NF-e principal."""
     file_name = event["file_name"]
@@ -107,7 +115,8 @@ def handle_single_xml_attachment(event, pk, process_id, bucket):
         logger.error("parse_xml single failed %s: %s", file_name, e)
         raise
 
-    sk = f"PARSED_XML={file_name}"
+    suffix = _parsed_xml_sk_suffix(event)
+    sk = f"PARSED_XML={suffix}"
     table.put_item(
         Item={
             "PK": pk,
@@ -152,7 +161,7 @@ def handler(event, context):
         xml_content = xml_raw.decode('utf-8')
         parsed_data = parse_nfe_xml(xml_content)
 
-        sk = f"PARSED_XML={xml_file['FILE_NAME']}"
+        sk = f"PARSED_XML={xml_file['SK'][5:]}" if str(xml_file.get('SK', '')).startswith('FILE#') else f"PARSED_XML={xml_file['FILE_NAME']}"
         parsed_json = json.dumps(parsed_data)
         logger.info(f"Parsed data size: {len(parsed_json)} bytes")
 
@@ -173,9 +182,12 @@ def handler(event, context):
             and item.get('FILE_NAME', '').lower().endswith('.xml')
             and item.get('FILE_KEY')
         ]
-        primary_name = xml_file['FILE_NAME']
+        primary_sk = xml_file.get("SK")
+        primary_key = xml_file.get("FILE_KEY")
         for cand in xml_candidates:
-            if cand['FILE_NAME'] == primary_name:
+            if cand.get("SK") == primary_sk:
+                continue
+            if primary_key and cand.get("FILE_KEY") == primary_key:
                 continue
             ck = cand['FILE_KEY']
             logger.info(f"Parsing secondary XML: {cand['FILE_NAME']}")
@@ -195,7 +207,8 @@ def handler(event, context):
                 logger.warning("XML secundário inválido: %s — %s", cand['FILE_NAME'], e)
                 continue
 
-            sec_sk = f"PARSED_XML={cand['FILE_NAME']}"
+            csuffix = cand["SK"][5:] if str(cand.get("SK", "")).startswith("FILE#") else cand["FILE_NAME"]
+            sec_sk = f"PARSED_XML={csuffix}"
             table.put_item(Item={
                 'PK': pk,
                 'SK': sec_sk,

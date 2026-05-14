@@ -43,3 +43,31 @@ def test_merge_prioriza_id_sobre_codigoProduto():
     rb = {"id": "26480", "codigoProduto": "AHYMC0000000001", "codigoOperacao": "1B"}
     out = _merge_uso_consumo_protheus_item(dict(item), rb)
     assert out["codigoProduto"] == "26480"
+
+
+def test_quantidade_uc_sem_chave_no_pedido_retorna_1():
+    from send_to_protheus.handler import _quantidade_uso_consumo_pedido
+
+    rb = {"codigoProduto": "CHU00047UN00010", "valorUnitario": 575.06}
+    assert _quantidade_uso_consumo_pedido(rb, 0.0) == 1.0
+
+
+def test_quantidade_uc_zero_no_metadado_retorna_1():
+    from send_to_protheus.handler import _quantidade_uso_consumo_pedido
+
+    rb = {"codigoProduto": "X", "quantidade": 0}
+    assert _quantidade_uso_consumo_pedido(rb, 10.0) == 1.0
+
+
+def test_quantidade_uc_positivo_no_metadado_preserva():
+    from send_to_protheus.handler import _quantidade_uso_consumo_pedido
+
+    rb = {"codigoProduto": "X", "quantidade": 3}
+    assert _quantidade_uso_consumo_pedido(rb, 1.0) == 3.0
+
+
+def test_quantidade_uc_sem_item_pedido_usa_xml_se_positivo():
+    from send_to_protheus.handler import _quantidade_uso_consumo_pedido
+
+    assert _quantidade_uso_consumo_pedido(None, 5.0) == 5.0
+    assert _quantidade_uso_consumo_pedido(None, 0.0) == 1.0

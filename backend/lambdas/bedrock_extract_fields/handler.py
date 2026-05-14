@@ -266,17 +266,22 @@ def handler(event, context):
             raw = _invoke_bedrock(sprompt)
             parsed = _parse_bedrock_json(raw or "")
             fn = (doc.get("file_name") or "").strip() or "sem_nome"
+            uid = (doc.get("file_upload_id") or "").strip()
+            storage_key = uid if uid else fn
             if parsed:
-                table.put_item(Item={
+                bedrock_item: dict[str, Any] = {
                     "PK": pk,
-                    "SK": f"BEDROCK_EXTRACTION#{fn}",
+                    "SK": f"BEDROCK_EXTRACTION#{storage_key}",
                     "FILE_NAME": fn,
                     "EXTRACTED_FIELDS": json.dumps(parsed, ensure_ascii=False, default=str),
                     "TIMESTAMP": ts,
-                })
-                per_file_extracted.append((fn, parsed))
+                }
+                if uid:
+                    bedrock_item["FILE_UPLOAD_ID"] = uid
+                table.put_item(Item=bedrock_item)
+                per_file_extracted.append((storage_key, parsed))
             else:
-                logger.warning("Bedrock per-file inválido ou vazio: %s", fn)
+                logger.warning("Bedrock per-file inválido ou vazio: %s", storage_key)
 
         if per_file_extracted:
             extracted = _merge_bedrock_extractions([d for _, d in per_file_extracted])
@@ -326,13 +331,16 @@ def handler(event, context):
             if isinstance(pd, dict):
                 pd["documento_entrada_protheus"] = extracted
                 pd["_campos_estruturados_fonte"] = "bedrock"
-                by_fn = {fn: d for fn, d in per_file_extracted}
+                by_key = {k: d for k, d in per_file_extracted}
                 for row in pd.get("per_document") or []:
                     if not isinstance(row, dict):
                         continue
+                    rid = (row.get("file_upload_id") or "").strip()
                     rfn = row.get("file_name")
-                    if rfn and rfn in by_fn:
-                        row["documento_entrada_protheus"] = by_fn[rfn]
+                    if rid and rid in by_key:
+                        row["documento_entrada_protheus"] = by_key[rid]
+                    elif rfn and rfn in by_key:
+                        row["documento_entrada_protheus"] = by_key[rfn]
                 table.put_item(Item={
                     "PK": pk,
                     "SK": "PARSED_OCR=textract_merged",
