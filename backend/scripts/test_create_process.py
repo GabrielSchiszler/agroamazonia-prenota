@@ -2,13 +2,31 @@
 """
 Script para criar um processo de teste com documentos
 
-Uso:
-    python3 test_create_process.py --api-url <URL> --api-key <KEY> [--xml-file <arquivo.xml>] [--start]
+Autenticação e HML: mesmo padrão de test_process_multilot_opteraduo_aws.py
+  (OAuth2 client_credentials + Bearer; x-api-key opcional; User-Agent estilo navegador).
 
-Ou criar um arquivo .env com:
-    API_URL=https://ovyt3c2b2c.execute-api.us-east-1.amazonaws.com/v1
-    API_KEY=agroamazonia_key_<seu_codigo>
+Uso:
+    cd backend/scripts
+    python3 test_create_process.py --api-url <URL> [--api-key ...] [--xml-file ...] [--start]
+
+Homologação (igual ao multilot — vars em ../.env.homolog ou export):
+    python3 test_create_process.py --homolog [--start]
+
+    # Ou explícito:
+    python3 test_create_process.py \\
+      --env-file ../.env.homolog \\
+      --api-url 'https://api-hml.agroamazonia.com/fast/v1' \\
+      --start
+
+Prioridade: argumentos CLI > variáveis no shell (os.environ) > arquivo --env-file
+> defaults de dev.
+
+Variáveis úteis: API_URL, API_KEY,
+  OAUTH2_FRONTEND_TOKEN_URL, OAUTH2_FRONTEND_CLIENT_ID,
+  OAUTH2_FRONTEND_CLIENT_SECRET, OAUTH2_FRONTEND_SCOPE
 """
+
+from __future__ import annotations
 
 import requests
 import uuid
@@ -20,6 +38,181 @@ import random
 import re
 from pathlib import Path
 from io import BytesIO
+
+# HML — mesmo padrão do frontend (app.js) e test_ritm_stg.py: …/fast/v1 + /process/…
+HOMOLOG_API_URL = "https://api-hml.agroamazonia.com/fast/v1"
+SCRIPT_DIR = Path(__file__).resolve().parent
+BACKEND_ROOT = SCRIPT_DIR.parent
+
+_DEFAULT_BROWSER_UA = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+)
+
+
+def _load_env_file(path: Path) -> dict[str, str]:
+    """Lê KEY=VAL de um .env (ignora comentários; suporta export). Igual ao multilot."""
+    out: dict[str, str] = {}
+    if not path.is_file():
+        return out
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        line = line.replace("export ", "", 1)
+        k, _, v = line.partition("=")
+        k, v = k.strip(), v.strip().strip('"').strip("'")
+        out[k] = v
+    return out
+
+
+def _cfg_str(
+    arg_val: str | None,
+    file_env: dict[str, str],
+    env_key: str,
+    default: str | None = None,
+) -> str | None:
+    """Prioridade: CLI > variável no shell > arquivo .env > default."""
+    if arg_val is not None and str(arg_val).strip():
+        return str(arg_val).strip()
+    v = os.environ.get(env_key)
+    if v is not None and str(v).strip():
+        return v.strip()
+    v = file_env.get(env_key)
+    if v is not None and str(v).strip():
+        return str(v).strip()
+    return default
+
+
+def fetch_oauth2_token(
+    token_url: str,
+    client_id: str,
+    client_secret: str,
+    scope: str,
+) -> str:
+    """Mesmo fluxo que frontend/auth.js (grant_type=client_credentials)."""
+    r = requests.post(
+        token_url,
+        data={
+            "grant_type": "client_credentials",
+            "client_id": client_id,
+            "client_secret": client_secret,
+            "scope": scope,
+        },
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+        timeout=60,
+    )
+    if not r.ok:
+        raise RuntimeError(f"OAuth2 token HTTP {r.status_code}: {r.text[:500]}")
+    data = r.json()
+    token = data.get("access_token") or data.get("accessToken") or data.get("token")
+    if not token:
+        raise RuntimeError(f"Resposta OAuth2 sem access_token: {data}")
+    return str(token)
+
+
+def _browser_like_headers(
+    file_env: dict[str, str],
+    args: argparse.Namespace,
+) -> dict[str, str]:
+    if getattr(args, "no_browser_ua", False):
+        return {}
+    ua = _cfg_str(
+        getattr(args, "user_agent", None),
+        file_env,
+        "AGRO_API_USER_AGENT",
+        _DEFAULT_BROWSER_UA,
+    )
+    if not ua:
+        return {}
+    return {
+        "User-Agent": ua,
+        "Accept": "*/*",
+        "Accept-Language": "pt-BR,pt;q=0.9,en;q=0.8",
+    }
+
+
+def build_auth_headers(
+    file_env: dict[str, str],
+    args: argparse.Namespace,
+) -> dict[str, str]:
+    """
+    Headers JSON: Bearer (OAuth) e/ou x-api-key — alinhado ao multilot / frontend.
+    """
+    api_key = _cfg_str(args.api_key, file_env, "API_KEY")
+    base = {"Content-Type": "application/json", **_browser_like_headers(file_env, args)}
+
+    cid = _cfg_str(args.oauth_client_id, file_env, "OAUTH2_FRONTEND_CLIENT_ID")
+    csec = _cfg_str(args.oauth_client_secret, file_env, "OAUTH2_FRONTEND_CLIENT_SECRET")
+    if cid and csec:
+        token_url = _cfg_str(
+            args.oauth_token_url,
+            file_env,
+            "OAUTH2_FRONTEND_TOKEN_URL",
+            "https://api-auth-hml.agroamazonia.io/oauth2/token",
+        )
+        assert token_url
+        scope = _cfg_str(
+            args.oauth_scope,
+            file_env,
+            "OAUTH2_FRONTEND_SCOPE",
+            "App_Fast/HML",
+        )
+        assert scope
+        token = fetch_oauth2_token(token_url, cid, csec, scope)
+        parts = [f"OAuth2 Bearer ({len(token)} chars)"]
+        out = {**base, "Authorization": f"Bearer {token}"}
+        if api_key:
+            out["x-api-key"] = api_key
+            parts.append("x-api-key")
+        else:
+            parts.append("(sem API_KEY — se 403, exporte API_KEY do config.js)")
+        print(f"Autenticação: {' + '.join(parts)}")
+        return out
+
+    if api_key:
+        print("Autenticação: x-api-key")
+        return {**base, "x-api-key": api_key}
+
+    raise RuntimeError(
+        "Defina OAuth2 (OAUTH2_FRONTEND_CLIENT_ID + OAUTH2_FRONTEND_CLIENT_SECRET) "
+        "ou API_KEY / --api-key. Mesmas variáveis do frontend (config.js / .env.homolog)."
+    )
+
+
+def _process_http_base(api_url: str, path_prefix: str) -> str:
+    """Monta a base …/process. path_prefix vazio = {api_url}/process (HML/front com …/v1)."""
+    api_url = api_url.rstrip("/")
+    p = (path_prefix or "").strip().strip("/")
+    if p:
+        return f"{api_url}/{p}/process"
+    return f"{api_url}/process"
+
+
+def _normalize_cloudfront_api_url(url: str) -> str:
+    """Front/CDK às vezes usam …/fast sem /v1; rotas reais são …/fast/v1/process/…"""
+    u = url.rstrip("/")
+    if "api-hml.agroamazonia.com" in u and u.endswith("/fast"):
+        return f"{u}/v1"
+    return url
+
+
+def _looks_like_url(value: str | None) -> bool:
+    if not value or not isinstance(value, str):
+        return False
+    v = value.strip().lower()
+    return v.startswith("http://") or v.startswith("https://")
+
+
+def _describe_auth(auth_headers: dict[str, str]) -> str:
+    if "Authorization" in auth_headers and "x-api-key" in auth_headers:
+        return "Bearer + x-api-key"
+    if "Authorization" in auth_headers:
+        return "Bearer"
+    if "x-api-key" in auth_headers:
+        return "x-api-key"
+    return "custom"
+
 
 try:
     from reportlab.pdfgen import canvas
@@ -48,277 +241,214 @@ def create_empty_pdf():
 
 
 def create_xml_file(xml_path: str):
-    """Cria arquivo XML com o XML fornecido do TIMAC AGRO"""
+    """Cria arquivo XML de teste (modelo SP / NF-e 4.00) com vDesc no item para validar parse e envio."""
     
     if os.path.exists(xml_path):
         print(f"ℹ️  Arquivo XML já existe: {xml_path} - será recriado")
     
+    # Modelo alinhado à NF Boehringer / TOPLINE (exemplo real); <vDesc> no <prod> para teste valor_desconto → Protheus.
     xml_content = '''<?xml version="1.0" encoding="utf-8"?>
 <nfeProc xmlns="http://www.portalfiscal.inf.br/nfe" versao="4.00">
-  <protNFe>
-    <infProt>
-      <nProt>243250401092571</nProt>
-      <digVal>uDFG3AOUbDv+HpkHatR+kzsOcjo</digVal>
-      <dhRecbto>2025-12-21T19:13:28-03:00</dhRecbto>
-      <chNFe>43251202329713000200550040004742931458693440</chNFe>
-      <xMotivo>Autorizado o uso da NF-e</xMotivo>
+  <protNFe versao="4.00">
+    <infProt Id="Id135261194585475">
+      <tpAmb>1</tpAmb>
+      <chNFe>35260357600249000155552010004485281516323523</chNFe>
+      <dhRecbto>2026-03-30T08:48:51-03:00</dhRecbto>
+      <nProt>135261194585475</nProt>
+      <digVal>yl9d4vqkbv4ITOy5s6r8oA18sEo=</digVal>
       <cStat>100</cStat>
+      <xMotivo>Autorizado o uso da NF-e</xMotivo>
     </infProt>
   </protNFe>
-  <NFe>
-    <infNFe Id="NFe43251202329713000200550040004742931458693440">
+  <NFe xmlns="http://www.portalfiscal.inf.br/nfe">
+    <infNFe Id="NFe35260357600249000155552010004485281516323523" versao="4.00">
       <ide>
-        <tpNF>1</tpNF>
+        <cUF>35</cUF>
+        <cNF>51632352</cNF>
+        <natOp>VENDA PROD. ESTAB. Ñ DEVA POR ELE TRANSITAR</natOp>
         <mod>55</mod>
-        <indPres>9</indPres>
-        <tpImp>1</tpImp>
-        <nNF>474293</nNF>
-        <cMunFG>4315602</cMunFG>
-        <procEmi>0</procEmi>
-        <finNFe>1</finNFe>
-        <dhEmi>2025-12-21T19:12:51-03:00</dhEmi>
-        <tpAmb>1</tpAmb>
-        <indFinal>0</indFinal>
-        <dhSaiEnt>2025-12-21T19:12:51-03:00</dhSaiEnt>
+        <serie>201</serie>
+        <nNF>448528</nNF>
+        <dhEmi>2026-03-30T08:48:41-03:00</dhEmi>
+        <tpNF>1</tpNF>
         <idDest>2</idDest>
+        <cMunFG>3536505</cMunFG>
+        <tpImp>1</tpImp>
         <tpEmis>1</tpEmis>
-        <cDV>0</cDV>
-        <cUF>43</cUF>
-        <serie>4</serie>
-        <natOp>VENDA PROD ESTABELECIMENTO</natOp>
-        <cNF>45869344</cNF>
-        <verProc>12.1.2410 | 3.0</verProc>
+        <cDV>3</cDV>
+        <tpAmb>1</tpAmb>
+        <finNFe>1</finNFe>
+        <indFinal>0</indFinal>
+        <indPres>9</indPres>
         <indIntermed>0</indIntermed>
+        <procEmi>0</procEmi>
+        <verProc>SAP DRC</verProc>
       </ide>
       <emit>
-        <xNome>TIMAC AGRO INDUSTRIA E COMERCIO DE FERTILIZANTES LTDA</xNome>
-        <IM>432060</IM>
-        <CRT>3</CRT>
-        <xFant>RIO GRANDE</xFant>
-        <CNPJ>02329713000200</CNPJ>
+        <CNPJ>57600249000155</CNPJ>
+        <xNome>BOEHRINGER INGELHEIM ANIMAL HEALTH DO BRASIL LTDA</xNome>
+        <xFant>BOEHRINGER INGELHEIM ANIMAL HE</xFant>
         <enderEmit>
-          <xCpl>KM 002 CONJ.B</xCpl>
-          <fone>5321258100</fone>
-          <UF>RS</UF>
-          <xPais>BRASIL</xPais>
+          <xLgr>Avenida Doutor Roberto Moreira</xLgr>
+          <nro>5005</nro>
+          <xBairro>Recanto dos Pássaros</xBairro>
+          <cMun>3536505</cMun>
+          <xMun>Paulinia</xMun>
+          <UF>SP</UF>
+          <CEP>13148914</CEP>
           <cPais>1058</cPais>
-          <xLgr>ALMT. MAXIMIANO FONSECA</xLgr>
-          <xMun>RIO GRANDE</xMun>
-          <nro>1550</nro>
-          <cMun>4315602</cMun>
-          <xBairro>Zona Portuaria</xBairro>
-          <CEP>96204040</CEP>
+          <xPais>Brasil</xPais>
+          <fone>551935785000</fone>
         </enderEmit>
-        <IE>1000194164</IE>
+        <IE>513002758110</IE>
+        <CRT>3</CRT>
       </emit>
       <dest>
-        <xNome>AGRO AMAZONIA PRODUTOS AGROPECUARIOS S.A.</xNome>
-        <IM>1</IM>
-        <CNPJ>13563680000365</CNPJ>
+        <CNPJ>13563680002813</CNPJ>
+        <xNome>AGRO AMAZONIA PRODUTOS AGROPECUARIO S.A.</xNome>
         <enderDest>
-          <fone>55669938866</fone>
-          <UF>MT</UF>
-          <xPais>BRASIL</xPais>
+          <xLgr>AV CAPITAO SILVIO</xLgr>
+          <nro>1481</nro>
+          <xBairro>APOIO RODOVIARIO SUL</xBairro>
+          <cMun>1100189</cMun>
+          <xMun>ARIQUEMES</xMun>
+          <UF>RO</UF>
+          <CEP>76876728</CEP>
           <cPais>1058</cPais>
-          <xLgr>AV ITRIO CORREA DA COST</xLgr>
-          <xMun>RONDONOPOLIS</xMun>
-          <nro>1647</nro>
-          <cMun>5107602</cMun>
-          <xBairro>VILA SALMEM</xBairro>
-          <CEP>78745160</CEP>
+          <xPais>Brasil</xPais>
+          <fone>8837285942</fone>
         </enderDest>
-        <IE>130614270</IE>
         <indIEDest>1</indIEDest>
+        <IE>00000004619439</IE>
       </dest>
       <det>
         <nItem>1</nItem>
         <prod>
-          <cEAN>SEM GTIN</cEAN>
-          <cProd>26480</cProd>
-          <qCom>40.0000</qCom>
-          <cEANTrib>SEM GTIN</cEANTrib>
-          <vUnTrib>4228.0000000000</vUnTrib>
-          <qTrib>40.0000</qTrib>
-          <vProd>169120.00</vProd>
-          <nFCI>ED5E9C4B-8507-4990-B51A-306C1209C47A</nFCI>
-          <xProd>FERTILIZANTE TOP PHOS 280 HP B1</xProd>
-          <vUnCom>4228.0000000000</vUnCom>
+          <cProd>000000000000181509</cProd>
+          <cEAN>7898659784753</cEAN>
+          <xProd>TOPLINE 5L X4 #BR - S/APLICADOR</xProd>
+          <NCM>38089199</NCM>
+          <CFOP>6105</CFOP>
+          <uCom>PC</uCom>
+          <qCom>23.0000</qCom>
+          <vUnCom>2012.2200000000</vUnCom>
+          <vProd>46281.06</vProd>
+          <vDesc>4100.50</vDesc>
+          <cEANTrib>7898659784753</cEANTrib>
+          <uTrib>PC</uTrib>
+          <qTrib>23.0000</qTrib>
+          <vUnTrib>2012.2200000000</vUnTrib>
           <indTot>1</indTot>
-          <uTrib>TON</uTrib>
-          <NCM>31055900</NCM>
-          <uCom>TON</uCom>
-          <CFOP>6101</CFOP>
+          <xPed>Pedido Ariqueme</xPed>
+          <nFCI>AE46CE13-B7A6-4551-B40C-E4E6FD871C30</nFCI>
+          <rastro>
+            <nLote>115/25</nLote>
+            <qLote>23.000</qLote>
+            <dFab>2025-10-07</dFab>
+            <dVal>2028-10-07</dVal>
+          </rastro>
         </prod>
         <imposto>
-          <IBSCBS>
-            <CST>515</CST>
-            <cClassTrib>515001</cClassTrib>
-            <gIBSCBS>
-              <vIBS>0.00</vIBS>
-              <gCBS>
-                <gDif>
-                  <pDif>100.0000</pDif>
-                  <vDif>584.48</vDif>
-                </gDif>
-                <pCBS>0.9000</pCBS>
-                <vCBS>0.00</vCBS>
-                <gRed>
-                  <pAliqEfet>0.3600</pAliqEfet>
-                  <pRedAliq>60.0000</pRedAliq>
-                </gRed>
-              </gCBS>
-              <gIBSUF>
-                <gDif>
-                  <pDif>100.0000</pDif>
-                  <vDif>64.94</vDif>
-                </gDif>
-                <pIBSUF>0.1000</pIBSUF>
-                <gRed>
-                  <pAliqEfet>0.0400</pAliqEfet>
-                  <pRedAliq>60.0000</pRedAliq>
-                </gRed>
-                <vIBSUF>0.00</vIBSUF>
-              </gIBSUF>
-              <vBC>162355.54</vBC>
-              <gIBSMun>
-                <gDif>
-                  <pDif>100.0000</pDif>
-                  <vDif>0.00</vDif>
-                </gDif>
-                <pIBSMun>0.0000</pIBSMun>
-                <vIBSMun>0.00</vIBSMun>
-                <gRed>
-                  <pAliqEfet>0.0000</pAliqEfet>
-                  <pRedAliq>60.0000</pRedAliq>
-                </gRed>
-              </gIBSMun>
-            </gIBSCBS>
-          </IBSCBS>
+          <vTotTrib>1181.06</vTotTrib>
           <ICMS>
             <ICMS20>
-              <modBC>3</modBC>
-              <pRedBC>42.8600</pRedBC>
               <orig>5</orig>
               <CST>20</CST>
-              <vBC>96635.17</vBC>
-              <vICMS>6764.46</vICMS>
+              <modBC>3</modBC>
+              <pRedBC>60.0000</pRedBC>
+              <vBC>16872.22</vBC>
               <pICMS>7.0000</pICMS>
+              <vICMS>1181.06</vICMS>
             </ICMS20>
           </ICMS>
           <IPI>
-            <IPINT>
-              <CST>53</CST>
-            </IPINT>
             <cEnq>999</cEnq>
+            <IPINT>
+              <CST>51</CST>
+            </IPINT>
           </IPI>
-          <COFINS>
-            <COFINSNT>
-              <CST>06</CST>
-            </COFINSNT>
-          </COFINS>
           <PIS>
             <PISNT>
               <CST>06</CST>
             </PISNT>
           </PIS>
+          <COFINS>
+            <COFINSNT>
+              <CST>06</CST>
+            </COFINSNT>
+          </COFINS>
         </imposto>
-        <vItem>169120.00</vItem>
-        <infAdProd>RS 000155-0.000048 FERTILIZANTE MINERAL COMPLEXO.7% S-SO4 %N: 3,000 %P2O5 Total: 28,000 %P2O5 SOL CNA + H2O: 22,000 %P2O5 SOL H2O: 18,000%CA: 17,000%S: 7,000 Nat. Fisica: GRANULADO RESOLUCAO DO SENADO FEDERAL 13/2012. NUMERO DA FCI ED5E9C4B-8507-4990-B51A-306C1209C47A, CONTEUDO DA IMPORTACAO: 0,00</infAdProd>
+        <infAdProd>-LT: 11525 -Dt.Prod: 07102025 -Dt.Valid: 07102028</infAdProd>
+        <vItem>42180.56</vItem>
       </det>
       <total>
-        <vNFTot>169120.00</vNFTot>
         <ICMSTot>
-          <vCOFINS>0.00</vCOFINS>
-          <vBCST>0.00</vBCST>
+          <vBC>16872.22</vBC>
+          <vICMS>1181.06</vICMS>
           <vICMSDeson>0.00</vICMSDeson>
-          <vProd>169120.00</vProd>
-          <vSeg>0.00</vSeg>
           <vFCP>0.00</vFCP>
-          <vFCPST>0.00</vFCPST>
-          <vNF>169120.00</vNF>
-          <vPIS>0.00</vPIS>
-          <vIPIDevol>0.00</vIPIDevol>
-          <vBC>96635.17</vBC>
+          <vBCST>0.00</vBCST>
           <vST>0.00</vST>
-          <vICMS>6764.46</vICMS>
-          <vII>0.00</vII>
+          <vFCPST>0.00</vFCPST>
           <vFCPSTRet>0.00</vFCPSTRet>
-          <vDesc>0.00</vDesc>
-          <vOutro>0.00</vOutro>
-          <vIPI>0.00</vIPI>
+          <vProd>46281.06</vProd>
           <vFrete>0.00</vFrete>
+          <vSeg>0.00</vSeg>
+          <vDesc>4100.50</vDesc>
+          <vII>0.00</vII>
+          <vIPI>0.00</vIPI>
+          <vIPIDevol>0.00</vIPIDevol>
+          <vPIS>0.00</vPIS>
+          <vCOFINS>0.00</vCOFINS>
+          <vOutro>0.00</vOutro>
+          <vNF>42180.56</vNF>
+          <vTotTrib>1181.06</vTotTrib>
         </ICMSTot>
-        <IBSCBSTot>
-          <gCBS>
-            <vDevTrib>0.00</vDevTrib>
-            <vCredPres>0.00</vCredPres>
-            <vCredPresCondSus>0.00</vCredPresCondSus>
-            <vCBS>0.00</vCBS>
-            <vDif>584.48</vDif>
-          </gCBS>
-          <vBCIBSCBS>162355.54</vBCIBSCBS>
-          <gIBS>
-            <vIBS>0.00</vIBS>
-            <gIBSUF>
-              <vDevTrib>0.00</vDevTrib>
-              <vIBSUF>0.00</vIBSUF>
-              <vDif>64.94</vDif>
-            </gIBSUF>
-            <vCredPres>0.00</vCredPres>
-            <vCredPresCondSus>0.00</vCredPresCondSus>
-            <gIBSMun>
-              <vDevTrib>0.00</vDevTrib>
-              <vIBSMun>0.00</vIBSMun>
-              <vDif>0.00</vDif>
-            </gIBSMun>
-          </gIBS>
-        </IBSCBSTot>
+        <vNFTot>42180.56</vNFTot>
       </total>
       <transp>
         <modFrete>0</modFrete>
-        <vol>
-          <marca>TOP-PHOS</marca>
-          <pesoL>40000.000</pesoL>
-          <esp>BIG-BAG 1000KG</esp>
-          <qVol>40</qVol>
-          <nVol>1/40</nVol>
-          <pesoB>40088.000</pesoB>
-        </vol>
         <transporta>
-          <xNome>COOCATRANS S.A</xNome>
-          <UF>RS</UF>
-          <xEnder>RUA ANTONIO ARAUJO,1046</xEnder>
-          <xMun>PASSO FUNDO</xMun>
-          <CNPJ>06308626000570</CNPJ>
-          <IE>0910381526</IE>
+          <CNPJ>02905424000120</CNPJ>
+          <xNome>AGV LOGISTICA S.A</xNome>
+          <IE>714031345113</IE>
+          <xEnder>R EDGAR MARCHIORI 255</xEnder>
+          <xMun>VINHEDO</xMun>
+          <UF>SP</UF>
         </transporta>
+        <vol>
+          <qVol>23</qVol>
+          <pesoL>517.500</pesoL>
+          <pesoB>519.800</pesoB>
+        </vol>
       </transp>
       <cobr>
         <fat>
-          <vOrig>169120.00</vOrig>
-          <nFat>02474293401</nFat>
-          <vDesc>0.00</vDesc>
-          <vLiq>169120.00</vLiq>
+          <nFat>0000448528</nFat>
+          <vOrig>46281.06</vOrig>
+          <vDesc>4100.50</vDesc>
+          <vLiq>42180.56</vLiq>
         </fat>
         <dup>
-          <dVenc>2026-07-20</dVenc>
           <nDup>001</nDup>
-          <vDup>169120.00</vDup>
+          <dVenc>2026-07-28</dVenc>
+          <vDup>42180.56</vDup>
         </dup>
       </cobr>
       <pag>
         <detPag>
-          <vPag>169120.00</vPag>
           <tPag>15</tPag>
-          <indPag>1</indPag>
+          <vPag>42180.56</vPag>
         </detPag>
       </pag>
       <infAdic>
-        <infCpl>LOTE:331/25 FABRIC:06/12/2025 VALID:18 MESES COD INTERNO:JDJ4I94 LACRES:656641 ATE 656648 BASE DE CALCULO REDUZIDA CFE RICMS RS LIVRO I, ART 23, INC LXXXIX , ALINEA B. PIS/PASEP E COFINS TRIBUTADOS A ALIQUOTA ZERO PARA USO EXCLUSIVO COMO FER TILIZANTE CFE ART 1 DA LEI 10.925/04. IPI NAO TRIBUTADO CFE CAPITULO 31 DA TIPI END. COBR.: AVENIDA ITRIO CORREA DA COST, 1647 BAIRRO: VILA SALMEM CEP: 78745-160 CIDADE: RONDONOPOLIS UF: MT END. ENTREGA - RAZAO SOCIAL: AGRO AMAZONIA PRODUTOS AGROPECUARIOS ENDERECO: AV ITRIO CORREA DA COST,1647 BAIRRO: VILA SALMEM CEP: 78745-160 CIDADE: RONDONOPOLIS UF: MT CNPJ: 013.563.680/0003-65 INS. ESTADUAL: 130614270 PEDIDO: 582992 NR. ORDEM DE CARREGAMENTO: 653603 DETALHES CALCULO ICMS: PCT ICMS 7,00% PCT RED BASE ICMS 42,86% VALOR BASE ICMS 96635,17 VALOR ICMS 6764,46</infCpl>
+        <infCpl>PED DO CLIENTE: Pedido Ariquemes — XML de teste create_process (vDesc no item).</infCpl>
       </infAdic>
+      <compra>
+        <xPed>Pedido Ariquemes</xPed>
+      </compra>
     </infNFe>
   </NFe>
-  <versao>4.00</versao>
 </nfeProc>
 '''
     
@@ -329,24 +459,24 @@ def create_xml_file(xml_path: str):
 
 
 def get_metadata_json():
-    """Retorna o JSON de metadados do pedido de compra 582992"""
+    """Metadados alinhados ao XML de teste (Boehringer / TOPLINE, destino Ariquemes)."""
     return {
         "header": {
             "tenantId": "00,010101"
         },
         "requestBody": {
-            "cnpjEmitente": "02329713000200",
-            "cnpjDestinatario": "13563680000365",
+            "cnpjEmitente": "57600249000155",
+            "cnpjDestinatario": "13563680002813",
             "itens": [
                 {
-                    "codigoProduto": "26480",
-                    "produto": "FERTILIZANTE TOP PHOS 280 HP B1",
-                    "quantidade": 40.0,
-                    "valorUnitario": 4228.0,
-                    "valorTotal": 169120.0,
-                    "unidadeMedida": "TON",
+                    "codigoProduto": "000000000000181509",
+                    "produto": "TOPLINE 5L X4 #BR - S/APLICADOR",
+                    "quantidade": 23.0,
+                    "valorUnitario": 2012.22,
+                    "valorTotal": 46281.06,
+                    "unidadeMedida": "PC",
                     "pedidoDeCompra": {
-                        "pedidoErp": "582992",
+                        "pedidoErp": "1131195295",
                         "itemPedidoErp": "0001"
                     }
                 }
@@ -366,14 +496,22 @@ def upload_file_to_s3(presigned_url: str, file_content: bytes, content_type: str
     return response
 
 
-def test_create_process(api_url: str, api_key: str, xml_file: str = None, start_process: bool = False):
+def test_create_process(
+    api_url: str,
+    auth_headers: dict[str, str],
+    xml_file: str | None = None,
+    start_process: bool = False,
+    path_prefix: str = "",
+) -> str | None:
     """Cria um processo de teste com documentos - SEMPRE gera um novo processo único"""
-    
+    http_base = _process_http_base(api_url, path_prefix)
+
     print("="*80)
     print("TESTE DE CRIAÇÃO DE PROCESSO COM DOCUMENTOS")
     print("="*80)
     print(f"\nAPI URL: {api_url}")
-    print(f"API Key: {api_key[:20]}..." if len(api_key) > 20 else f"API Key: {api_key}")
+    print(f"HTTP base: {http_base}")
+    print(f"Auth: {_describe_auth(auth_headers)}")
     print()
     
     # SEMPRE gerar um novo process_id único (nunca reutilizar)
@@ -420,8 +558,9 @@ def test_create_process(api_url: str, api_key: str, xml_file: str = None, start_
     
     try:
         check_response = requests.get(
-            f"{api_url}/api/process/{process_id}",
-            headers={'x-api-key': api_key}
+            f"{http_base}/{process_id}",
+            headers=auth_headers,
+            timeout=60,
         )
         if check_response.ok:
             existing_data = check_response.json()
@@ -448,21 +587,25 @@ def test_create_process(api_url: str, api_key: str, xml_file: str = None, start_
     print(f"   Arquivo: {xml_filename}")
     
     xml_url_response = requests.post(
-        f"{api_url}/api/process/presigned-url/xml",
-        headers={
-            'Content-Type': 'application/json',
-            'x-api-key': api_key
-        },
+        f"{http_base}/presigned-url/xml",
+        headers=auth_headers,
         json={
             'process_id': process_id,
             'file_name': xml_filename,
             'file_type': 'application/xml'
-        }
+        },
+        timeout=60,
     )
     
     if not xml_url_response.ok:
         print(f"❌ Erro ao obter URL para XML: {xml_url_response.status_code}")
         print(xml_url_response.text)
+        if xml_url_response.status_code == 403:
+            print(
+                "Dica 403: exporte API_KEY (config.js / deploy) junto com OAuth; "
+                "WAF pode bloquear sem User-Agent — não use --no-browser-ua.",
+                file=sys.stderr,
+            )
         return None
     
     xml_url_data = xml_url_response.json()
@@ -497,15 +640,13 @@ def test_create_process(api_url: str, api_key: str, xml_file: str = None, start_
     metadata = get_metadata_json()
     
     metadata_response = requests.post(
-        f"{api_url}/api/process/metadados/pedido",
-        headers={
-            'Content-Type': 'application/json',
-            'x-api-key': api_key
-        },
+        f"{http_base}/metadados/pedido",
+        headers=auth_headers,
         json={
             'process_id': process_id,
             'metadados': metadata
-        }
+        },
+        timeout=60,
     )
     
     if not metadata_response.ok:
@@ -531,8 +672,9 @@ def test_create_process(api_url: str, api_key: str, xml_file: str = None, start_
     
     try:
         process_response = requests.get(
-            f"{api_url}/api/process/{process_id}",
-            headers={'x-api-key': api_key}
+            f"{http_base}/{process_id}",
+            headers=auth_headers,
+            timeout=60,
         )
         
         if process_response.ok:
@@ -577,14 +719,12 @@ def test_create_process(api_url: str, api_key: str, xml_file: str = None, start_
         
         try:
             start_response = requests.post(
-                f"{api_url}/api/process/start",
-                headers={
-                    'Content-Type': 'application/json',
-                    'x-api-key': api_key
-                },
+                f"{http_base}/start",
+                headers=auth_headers,
                 json={
                     'process_id': process_id
-                }
+                },
+                timeout=60,
             )
             
             if start_response.ok:
@@ -608,68 +748,151 @@ def test_create_process(api_url: str, api_key: str, xml_file: str = None, start_
     print(f"   - XML (DANFE): {xml_filename}")
     print(f"   - Metadados do pedido de compra: vinculados")
     print(f"\n🔗 URLs:")
-    print(f"   - Ver processo: GET {api_url}/api/process/{process_id}")
-    print(f"   - Iniciar processamento: POST {api_url}/api/process/start")
+    print(f"   - Ver processo: GET {http_base}/{process_id}")
+    print(f"   - Iniciar processamento: POST {http_base}/start")
     print(f"     Body: {{\"process_id\": \"{process_id}\"}}")
     print(f"\n💡 Dica: Cada execução deste script cria um processo completamente novo!")
     
     return process_id
 
 
-def main():
-    parser = argparse.ArgumentParser(description='Cria um processo de teste com documentos')
-    parser.add_argument('--api-url', help='URL base da API (padrão: https://kv8riifhmh.execute-api.us-east-1.amazonaws.com/v1)')
-    parser.add_argument('--api-key', help='Chave de API (padrão: agroamazonia_key_UPXsb8Hb8sjbxWBQqouzYnTL5w-V_dJx)')
-    parser.add_argument('--xml-file', help='Caminho para arquivo XML (padrão: test_nfe.xml)')
-    parser.add_argument('--start', action='store_true', help='Iniciar processamento após criar')
-    parser.add_argument('--env-file', default='.env', help='Arquivo .env para carregar variáveis (padrão: .env)')
-    
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        description="Cria um processo de teste com documentos",
+        epilog=(
+            "Exemplo homolog (OAuth2 + vars em ../.env.homolog), igual ao multilot:\n"
+            "  python3 test_create_process.py --env-file ../.env.homolog "
+            f"--api-url '{HOMOLOG_API_URL}' --start\n\n"
+            "Atalho --homolog (sobrepõe com backend/.env.homolog depois do --env-file):\n"
+            "  python3 test_create_process.py --homolog --start\n\n"
+            "Só x-api-key:\n"
+            f"  python3 test_create_process.py --api-url '{HOMOLOG_API_URL}' "
+            "--api-key 'agroamazonia_key_...' --start"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument(
+        "--api-url",
+        help="Base URL da API (HML: …/fast/v1 como no frontend; dev execute-api: …/v1/api)",
+    )
+    parser.add_argument("--api-key", help="Header x-api-key (se não usar só OAuth2)")
+    parser.add_argument(
+        "--oauth-token-url",
+        help="URL do token OAuth2 (default: OAUTH2_FRONTEND_TOKEN_URL ou auth hml)",
+    )
+    parser.add_argument("--oauth-client-id", help="OAUTH2_FRONTEND_CLIENT_ID")
+    parser.add_argument("--oauth-client-secret", help="OAUTH2_FRONTEND_CLIENT_SECRET")
+    parser.add_argument("--oauth-scope", help="OAUTH2_FRONTEND_SCOPE")
+    parser.add_argument(
+        "--user-agent",
+        help="User-Agent nas requisições (default: navegador; env: AGRO_API_USER_AGENT)",
+    )
+    parser.add_argument(
+        "--no-browser-ua",
+        action="store_true",
+        help="Não enviar User-Agent estilo navegador",
+    )
+    parser.add_argument("--xml-file", help="Caminho para arquivo XML (padrão: nome único test_nfe_*.xml)")
+    parser.add_argument("--start", action="store_true", help="Iniciar processamento após criar")
+    parser.add_argument(
+        "--api-path-prefix",
+        default=os.environ.get("PROCESS_API_PATH_PREFIX", ""),
+        help=(
+            'Segmento extra antes de /process (padrão vazio = …/v1/process, igual ao front). '
+            'Use "api" para gateways no estilo …/v1/api/process (ex.: multilot opteraduo AWS).'
+        ),
+    )
+    parser.add_argument(
+        "--env-file",
+        default=str(SCRIPT_DIR / ".env"),
+        help="Arquivo .env; export no shell tem prioridade sobre o arquivo.",
+    )
+    parser.add_argument(
+        "--homolog",
+        action="store_true",
+        help=(
+            f"Depois do --env-file, carrega {BACKEND_ROOT / '.env.homolog'} "
+            f"e usa API_URL padrão {HOMOLOG_API_URL} se API_URL não estiver definida"
+        ),
+    )
+
     args = parser.parse_args()
-    
-    # Valores padrão (dev environment)
-    default_api_url = 'https://gx3eyeb4i1.execute-api.us-east-1.amazonaws.com/v1'
-    default_api_key = 'agroamazonia_key_UPXsb8Hb8sjbxWBQqouzYnTL5w-V_dJx'
-    
-    # Tentar carregar do arquivo .env se existir
-    api_url = args.api_url
-    api_key = args.api_key
-    
-    if os.path.exists(args.env_file):
-        print(f"Carregando variáveis do arquivo {args.env_file}...")
-        with open(args.env_file, 'r') as f:
-            for line in f:
-                line = line.strip()
-                if line and not line.startswith('#') and '=' in line:
-                    # Remover 'export ' se presente
-                    line = line.replace('export ', '')
-                    key, value = line.split('=', 1)
-                    value = value.strip('"\'')
-                    
-                    if key == 'API_URL' and not api_url:
-                        api_url = value
-                    elif key == 'API_KEY' and not api_key:
-                        api_key = value
-    
-    # Usar valores padrão se não fornecidos
+
+    # Execute-api costuma expor …/v1/api/process (prefixo api na URL base)
+    default_api_url = "https://gx3eyeb4i1.execute-api.us-east-1.amazonaws.com/v1/api"
+    default_api_key = "agroamazonia_key_UPXsb8Hb8sjbxWBQqouzYnTL5w-V_dJx"
+
+    merged_env: dict[str, str] = {}
+    env_path = Path(args.env_file)
+    if not env_path.is_absolute():
+        env_path = Path.cwd() / env_path
+    if env_path.is_file():
+        print(f"Carregando {env_path}...")
+        merged_env.update(_load_env_file(env_path))
+
+    if args.homolog:
+        hf = BACKEND_ROOT / ".env.homolog"
+        if hf.is_file():
+            print(f"Carregando {hf} (--homolog)...")
+            merged_env.update(_load_env_file(hf))
+        else:
+            print(
+                f"⚠️  {hf} não encontrado; use --env-file ../.env.homolog ou export das variáveis.",
+                file=sys.stderr,
+            )
+
+    api_url = _cfg_str(args.api_url, merged_env, "API_URL")
+    api_key_only = _cfg_str(args.api_key, merged_env, "API_KEY")
+
+    if api_key_only and _looks_like_url(api_key_only):
+        if not api_url:
+            api_url = api_key_only.strip()
+            args.api_key = None
+            api_key_only = _cfg_str(args.api_key, merged_env, "API_KEY")
+            print(
+                "Aviso: URL em --api-key; usando como API_URL. "
+                "Com OAuth2 use OAUTH2_* no .env; com API key use o valor x-api-key.",
+                file=sys.stderr,
+            )
+        else:
+            print(
+                "ERRO: --api-key parece ser uma URL. Use --api-url para a base.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+
+    if not api_url and args.homolog:
+        api_url = HOMOLOG_API_URL
+        print(f"ℹ️  API URL homolog (default): {api_url}")
+
     if not api_url:
         api_url = default_api_url
-        print(f"ℹ️  Usando API URL padrão: {api_url}")
-    if not api_key:
-        api_key = default_api_key
-        print(f"ℹ️  Usando API Key padrão: {api_key[:30]}...")
-    
-    # Executar teste
+        print(f"ℹ️  Usando API URL padrão (dev): {api_url}")
+
+    api_url = _normalize_cloudfront_api_url(api_url)
+
+    try:
+        auth_headers = build_auth_headers(merged_env, args)
+    except RuntimeError as e:
+        if args.homolog:
+            print(str(e), file=sys.stderr)
+            sys.exit(1)
+        auth_headers = {
+            "Content-Type": "application/json",
+            **_browser_like_headers(merged_env, args),
+            "x-api-key": default_api_key,
+        }
+        print("Autenticação: x-api-key (fallback dev — sem OAuth/API_KEY no .env)")
+
     process_id = test_create_process(
         api_url=api_url,
-        api_key=api_key,
+        auth_headers=auth_headers,
         xml_file=args.xml_file,
-        start_process=args.start
+        start_process=args.start,
+        path_prefix=args.api_path_prefix,
     )
-    
-    if process_id:
-        sys.exit(0)
-    else:
-        sys.exit(1)
+
+    sys.exit(0 if process_id else 1)
 
 
 if __name__ == '__main__':

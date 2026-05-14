@@ -315,15 +315,16 @@ function createDailyProcessesChart(data) {
     if (!chartEl) return; // Elemento não existe, não criar gráfico
     
     const ctx = chartEl.getContext('2d');
-    const periodData = data.period || data.last_7_days || [];
+    const raw = data.period || data.last_7_days || [];
+    // Ordem cronológica: mais antiga → mais recente (igual com ou sem filtro de datas)
+    const periodData = [...raw].sort((a, b) => String(a.date).localeCompare(String(b.date)));
     
     if (dailyProcessesChart) dailyProcessesChart.destroy();
     
-    // Formatar datas para exibição
     const labels = periodData.map(d => {
         const date = parseDateLocal(d.date);
         return date.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
-    }).reverse();
+    });
     
     dailyProcessesChart = new Chart(ctx, {
         type: 'bar',
@@ -331,21 +332,38 @@ function createDailyProcessesChart(data) {
             labels: labels,
             datasets: [{
                 label: 'Sucessos',
-                data: periodData.map(d => d.success).reverse(),
+                data: periodData.map(d => d.success),
                 backgroundColor: 'rgba(16, 185, 129, 0.8)',
                 borderColor: '#10b981',
                 borderWidth: 2,
-                borderRadius: 6
+                borderRadius: 6,
+                order: 3,
+                yAxisID: 'y'
             }, {
                 label: 'Falhas',
-                data: periodData.map(d => d.failed).reverse(),
+                data: periodData.map(d => d.failed),
                 backgroundColor: 'rgba(239, 68, 68, 0.8)',
                 borderColor: '#ef4444',
                 borderWidth: 2,
-                borderRadius: 6
+                borderRadius: 6,
+                order: 4,
+                yAxisID: 'y'
+            }, {
+                label: 'Taxa de acerto (%)',
+                data: periodData.map(d => Number(d.success_rate) || 0),
+                type: 'line',
+                borderColor: '#0ea5e9',
+                backgroundColor: 'rgba(14, 165, 233, 0.15)',
+                borderWidth: 2,
+                tension: 0.35,
+                fill: false,
+                pointRadius: 4,
+                pointHoverRadius: 6,
+                yAxisID: 'y1',
+                order: 1
             }, {
                 label: 'Total',
-                data: periodData.map(d => d.total).reverse(),
+                data: periodData.map(d => d.total),
                 type: 'line',
                 borderColor: '#667eea',
                 backgroundColor: 'rgba(102, 126, 234, 0.1)',
@@ -353,7 +371,9 @@ function createDailyProcessesChart(data) {
                 tension: 0.4,
                 fill: false,
                 pointRadius: 5,
-                pointHoverRadius: 7
+                pointHoverRadius: 7,
+                order: 0,
+                yAxisID: 'y'
             }]
         },
         options: {
@@ -374,17 +394,54 @@ function createDailyProcessesChart(data) {
                     backgroundColor: 'rgba(0, 0, 0, 0.8)',
                     padding: 12,
                     titleFont: { size: 14, weight: 'bold' },
-                    bodyFont: { size: 13 }
+                    bodyFont: { size: 13 },
+                    callbacks: {
+                        afterBody: function(items) {
+                            const idx = items[0]?.dataIndex;
+                            if (idx == null || !periodData[idx]) return '';
+                            const row = periodData[idx];
+                            const t = row.total || 0;
+                            const s = row.success || 0;
+                            if (t <= 0) return '';
+                            const pct = ((s / t) * 100).toFixed(1);
+                            return `Resumo: ${s} / ${t} ok (${pct}%)`;
+                        }
+                    }
                 }
             },
             scales: {
                 y: {
                     beginAtZero: true,
+                    position: 'left',
+                    title: {
+                        display: true,
+                        text: 'Quantidade de processos',
+                        font: { size: 11 }
+                    },
                     grid: {
                         color: 'rgba(0, 0, 0, 0.05)'
                     },
                     ticks: {
                         font: { size: 11 }
+                    }
+                },
+                y1: {
+                    beginAtZero: true,
+                    max: 100,
+                    position: 'right',
+                    grid: {
+                        drawOnChartArea: false
+                    },
+                    title: {
+                        display: true,
+                        text: '% acertos (dia)',
+                        font: { size: 11 }
+                    },
+                    ticks: {
+                        font: { size: 11 },
+                        callback: function(value) {
+                            return value + '%';
+                        }
                     }
                 },
                 x: {
@@ -681,32 +738,40 @@ function createTypeChart(data) {
 
 function createFailedRulesChart(data) {
     const chartEl = document.getElementById('failedRulesChart');
-    if (!chartEl) return; // Elemento não existe, não criar gráfico
+    if (!chartEl) return;
     const ctx = chartEl.getContext('2d');
-    
-    // Determinar se há filtro de período ativo
+
     const hasPeriodFilter = currentStartDate && currentEndDate;
-    
+
     let failedRules;
     if (hasPeriodFilter) {
-        // Com filtro de período (inclui "hoje") → usar dados do período
         failedRules = data.failed_rules || {};
     } else {
-        // Sem filtro → usar dados de hoje
         failedRules = data.today?.failed_rules || {};
     }
-    
+
     if (failedRulesChart) failedRulesChart.destroy();
-    
+
     const labels = Object.keys(failedRules);
     const values = Object.values(failedRules);
-    
-    // Se não há regras que falharam, criar gráfico vazio
-    if (labels.length === 0) {
+
+    const ruleTranslations = {
+        'validar_produtos': 'Validar Produtos',
+        'validar_cnpj_fornecedor': 'Validar CNPJ Fornecedor',
+        'validar_numero_pedido': 'Validar Número Pedido',
+        'validar_valor_total': 'Validar Valor Total',
+        'validar_data_emissao': 'Validar Data Emissão',
+        'validar_cfop_chave': 'Validar CFOP Chave',
+        'Outros': 'Outros (lambda / integração / sem regra nomeada)'
+    };
+
+    const totalFailedAttributed = values.reduce((a, b) => a + (Number(b) || 0), 0);
+
+    if (labels.length === 0 || totalFailedAttributed === 0) {
         failedRulesChart = new Chart(ctx, {
             type: 'bar',
             data: {
-                labels: ['Nenhuma regra falhou'],
+                labels: ['Nenhuma falha por regra neste recorte'],
                 datasets: [{
                     data: [0],
                     backgroundColor: ['rgba(16, 185, 129, 0.8)']
@@ -721,28 +786,22 @@ function createFailedRulesChart(data) {
         });
         return;
     }
-    
-    // Ordenar por valor (maior para menor) e pegar top 10
-    const sorted = labels.map((label, i) => ({ label, value: values[i] }))
-        .sort((a, b) => b.value - a.value)
-        .slice(0, 10);
-    
-    // Traduzir nomes de regras
-    const ruleTranslations = {
-        'validar_produtos': 'Validar Produtos',
-        'validar_cnpj_fornecedor': 'Validar CNPJ Fornecedor',
-        'validar_numero_pedido': 'Validar Número Pedido',
-        'validar_valor_total': 'Validar Valor Total',
-        'validar_data_emissao': 'Validar Data Emissão',
-        'validar_cfop_chave': 'Validar CFOP Chave'
-    };
-    
+
+    const sorted = labels
+        .map((label, i) => ({ label, value: Number(values[i]) || 0 }))
+        .sort((a, b) => {
+            const ao = a.label === 'Outros';
+            const bo = b.label === 'Outros';
+            if (ao !== bo) return ao ? 1 : -1;
+            return b.value - a.value;
+        });
+
     failedRulesChart = new Chart(ctx, {
         type: 'bar',
         data: {
             labels: sorted.map(item => ruleTranslations[item.label] || item.label),
             datasets: [{
-                label: 'Falhas',
+                label: 'Ocorrências',
                 data: sorted.map(item => item.value),
                 backgroundColor: 'rgba(239, 68, 68, 0.8)',
                 borderColor: '#ef4444',
@@ -758,10 +817,14 @@ function createFailedRulesChart(data) {
                 legend: { display: false },
                 tooltip: {
                     backgroundColor: 'rgba(0, 0, 0, 0.8)',
-                        padding: 10,
+                    padding: 10,
                     callbacks: {
                         label: function(context) {
-                            return `Falhas: ${context.parsed.x}`;
+                            return `Ocorrências: ${context.parsed.x}`;
+                        },
+                        footer: function(items) {
+                            const sum = items.reduce((a, it) => a + (it.parsed.x || 0), 0);
+                            return `Soma exibida: ${sum}`;
                         }
                     }
                 }
@@ -770,7 +833,7 @@ function createFailedRulesChart(data) {
                 x: {
                     beginAtZero: true,
                     grid: { color: 'rgba(0, 0, 0, 0.05)' },
-                    ticks: { font: { size: 11 }, stepSize: 1 }
+                    ticks: { font: { size: 11 }, precision: 0 }
                 },
                 y: {
                     grid: { display: false },
@@ -783,18 +846,18 @@ function createFailedRulesChart(data) {
 
 function createFailedRulesByDayChart(data) {
     const chartEl = document.getElementById('failedRulesByDayChart');
-    if (!chartEl) return; // Elemento não existe, não criar gráfico
+    if (!chartEl) return;
     const ctx = chartEl.getContext('2d');
-    const periodData = data.period || data.last_7_days || [];
-    
+    const raw = data.period || data.last_7_days || [];
+    const periodData = [...raw].sort((a, b) => String(a.date).localeCompare(String(b.date)));
+
     if (failedRulesByDayChart) failedRulesByDayChart.destroy();
-    
-    // Coletar todas as regras que falharam no período
+
     const allRules = new Set();
     periodData.forEach(day => {
         Object.keys(day.failed_rules || {}).forEach(rule => allRules.add(rule));
     });
-    
+
     if (allRules.size === 0) {
         failedRulesByDayChart = new Chart(ctx, {
             type: 'bar',
@@ -814,18 +877,32 @@ function createFailedRulesByDayChart(data) {
         });
         return;
     }
-    
-    // Traduzir nomes de regras
+
     const ruleTranslations = {
         'validar_produtos': 'Validar Produtos',
         'validar_cnpj_fornecedor': 'Validar CNPJ Fornecedor',
         'validar_numero_pedido': 'Validar Número Pedido',
         'validar_valor_total': 'Validar Valor Total',
         'validar_data_emissao': 'Validar Data Emissão',
-        'validar_cfop_chave': 'Validar CFOP Chave'
+        'validar_cfop_chave': 'Validar CFOP Chave',
+        'Outros': 'Outros (lambda / integração / sem regra nomeada)'
     };
-    
-    const rulesArray = Array.from(allRules);
+
+    let rulesArray = Array.from(allRules).filter(r => r !== 'Outros');
+    rulesArray.sort((a, b) => a.localeCompare(b));
+    if (allRules.has('Outros')) {
+        rulesArray.push('Outros');
+    }
+
+    const MAX_RULES = 18;
+    if (rulesArray.length > MAX_RULES) {
+        const outrosAtEnd = rulesArray[rulesArray.length - 1] === 'Outros';
+        const sliceEnd = outrosAtEnd ? MAX_RULES - 1 : MAX_RULES;
+        const head = rulesArray.slice(0, sliceEnd);
+        if (outrosAtEnd) head.push('Outros');
+        rulesArray = head;
+    }
+
     const colorPalette = [
         'rgba(239, 68, 68, 0.8)',
         'rgba(245, 158, 11, 0.8)',
@@ -836,23 +913,21 @@ function createFailedRulesByDayChart(data) {
         'rgba(251, 146, 60, 0.8)',
         'rgba(99, 102, 241, 0.8)'
     ];
-    
-    // Formatar datas
+
     const dates = periodData.map(d => {
         const date = parseDateLocal(d.date);
         return date.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
-    }).reverse();
-    
-    // Criar datasets para cada regra
-    const datasets = rulesArray.slice(0, 8).map((rule, index) => ({
+    });
+
+    const datasets = rulesArray.map((rule, index) => ({
         label: ruleTranslations[rule] || rule,
-        data: periodData.map(d => (d.failed_rules || {})[rule] || 0).reverse(),
+        data: periodData.map(d => (d.failed_rules || {})[rule] || 0),
         backgroundColor: colorPalette[index % colorPalette.length],
         borderColor: colorPalette[index % colorPalette.length].replace('0.8', '1'),
         borderWidth: 2,
         borderRadius: 4
     }));
-    
+
     failedRulesByDayChart = new Chart(ctx, {
         type: 'bar',
         data: {
@@ -875,125 +950,19 @@ function createFailedRulesByDayChart(data) {
                     mode: 'index',
                     intersect: false,
                     backgroundColor: 'rgba(0, 0, 0, 0.8)',
-                    padding: 10
-                }
-            },
-            scales: {
-                x: {
-                    stacked: true,
-                    grid: { display: false },
-                    ticks: { font: { size: 11 } }
-                },
-                y: {
-                    stacked: true,
-                    beginAtZero: true,
-                    grid: { color: 'rgba(0, 0, 0, 0.05)' },
-                    ticks: { font: { size: 11 }, stepSize: 1 }
-                }
-            },
-            interaction: {
-                mode: 'index',
-                intersect: false
-            }
-        }
-    });
-}
-
-function createFailedRulesByDayChart(data) {
-    const chartEl = document.getElementById('failedRulesByDayChart');
-    if (!chartEl) return; // Elemento não existe, não criar gráfico
-    const ctx = chartEl.getContext('2d');
-    const periodData = data.period || data.last_7_days || [];
-    
-    if (failedRulesByDayChart) failedRulesByDayChart.destroy();
-    
-    // Coletar todas as regras que falharam no período
-    const allRules = new Set();
-    periodData.forEach(day => {
-        Object.keys(day.failed_rules || {}).forEach(rule => allRules.add(rule));
-    });
-    
-    if (allRules.size === 0) {
-        failedRulesByDayChart = new Chart(ctx, {
-            type: 'bar',
-            data: {
-                labels: ['Nenhuma regra falhou no período'],
-                datasets: [{
-                    data: [0],
-                    backgroundColor: ['rgba(16, 185, 129, 0.8)']
-                }]
-            },
-            options: {
-                responsive: true,
-                maintainAspectRatio: false,
-                plugins: { legend: { display: false } },
-                scales: { y: { beginAtZero: true } }
-            }
-        });
-        return;
-    }
-    
-    // Traduzir nomes de regras
-    const ruleTranslations = {
-        'validar_produtos': 'Validar Produtos',
-        'validar_cnpj_fornecedor': 'Validar CNPJ Fornecedor',
-        'validar_numero_pedido': 'Validar Número Pedido',
-        'validar_valor_total': 'Validar Valor Total',
-        'validar_data_emissao': 'Validar Data Emissão',
-        'validar_cfop_chave': 'Validar CFOP Chave'
-    };
-    
-    const rulesArray = Array.from(allRules);
-    const colorPalette = [
-        'rgba(239, 68, 68, 0.8)',
-        'rgba(245, 158, 11, 0.8)',
-        'rgba(139, 92, 246, 0.8)',
-        'rgba(236, 72, 153, 0.8)',
-        'rgba(6, 182, 212, 0.8)',
-        'rgba(34, 197, 94, 0.8)',
-        'rgba(251, 146, 60, 0.8)',
-        'rgba(99, 102, 241, 0.8)'
-    ];
-    
-    // Formatar datas
-    const dates = periodData.map(d => {
-        const date = parseDateLocal(d.date);
-        return date.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
-    }).reverse();
-    
-    // Criar datasets para cada regra
-    const datasets = rulesArray.slice(0, 8).map((rule, index) => ({
-        label: ruleTranslations[rule] || rule,
-        data: periodData.map(d => (d.failed_rules || {})[rule] || 0).reverse(),
-        backgroundColor: colorPalette[index % colorPalette.length],
-        borderColor: colorPalette[index % colorPalette.length].replace('0.8', '1'),
-        borderWidth: 2,
-        borderRadius: 4
-    }));
-    
-    failedRulesByDayChart = new Chart(ctx, {
-        type: 'bar',
-        data: {
-            labels: dates,
-            datasets: datasets
-        },
-        options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            plugins: {
-                legend: {
-                    position: 'top',
-                    labels: {
-                        usePointStyle: true,
-                        padding: 12,
-                        font: { size: 11, weight: '600' }
+                    padding: 10,
+                    callbacks: {
+                        footer: function(items) {
+                            let sum = 0;
+                            items.forEach(it => {
+                                sum += Number(it.parsed?.y ?? it.parsed ?? 0) || 0;
+                            });
+                            const di = items[0]?.dataIndex;
+                            const failedDay = di != null && periodData[di] ? periodData[di].failed : null;
+                            const extra = failedDay != null ? ` | Falhas no dia (métrica): ${failedDay}` : '';
+                            return `Soma pilhas (dia): ${sum}${extra}`;
+                        }
                     }
-                },
-                tooltip: {
-                    mode: 'index',
-                    intersect: false,
-                    backgroundColor: 'rgba(0, 0, 0, 0.8)',
-                    padding: 10
                 }
             },
             scales: {
@@ -1006,7 +975,7 @@ function createFailedRulesByDayChart(data) {
                     stacked: true,
                     beginAtZero: true,
                     grid: { color: 'rgba(0, 0, 0, 0.05)' },
-                    ticks: { font: { size: 11 }, stepSize: 1 }
+                    ticks: { font: { size: 11 }, precision: 0 }
                 }
             },
             interaction: {
