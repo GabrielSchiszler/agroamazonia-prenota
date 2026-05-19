@@ -7,6 +7,69 @@ from decimal import Decimal
 dynamodb = boto3.resource('dynamodb')
 table = dynamodb.Table(os.environ['TABLE_NAME'])
 
+# Texto retorno Protheus quando a nota fica como pré-nota (classificação pendente) — alinhado ao PTP / SNS.
+PRENOTA_MESSAGE_SNIPPET = "documento de entrada criado como pré-nota"
+
+
+def _coerce_dict(value):
+    if value is None:
+        return None
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str):
+        try:
+            return json.loads(value)
+        except (json.JSONDecodeError, TypeError):
+            return None
+    return None
+
+
+def protheus_response_indicates_prenota(event: dict, metadata_item: dict | None = None) -> bool:
+    """True se a resposta Protheus indica documento gravado como pré-nota (mensagem padrão)."""
+    texts = []
+
+    def collect_from_obj(obj: dict):
+        m = obj.get("message")
+        if m is not None:
+            texts.append(str(m))
+        body = obj.get("body")
+        if isinstance(body, dict) and body.get("message") is not None:
+            texts.append(str(body["message"]))
+
+    pr = _coerce_dict(event.get("protheus_response"))
+    if pr:
+        collect_from_obj(pr)
+
+    pr2 = event.get("protheus_result")
+    if isinstance(pr2, dict):
+        payload = pr2.get("Payload")
+        if isinstance(payload, dict):
+            inner = _coerce_dict(payload.get("protheus_response"))
+            if inner:
+                collect_from_obj(inner)
+
+    if metadata_item:
+        inner = _coerce_dict(metadata_item.get("protheus_response"))
+        if inner:
+            collect_from_obj(inner)
+
+    needle = PRENOTA_MESSAGE_SNIPPET.lower()
+    for t in texts:
+        if needle in t.lower():
+            return True
+    return False
+
+
+def _truthy_prenota_flag(val) -> bool:
+    if val is None:
+        return False
+    if isinstance(val, bool):
+        return val
+    if isinstance(val, (int, float)):
+        return val != 0
+    return str(val).strip().lower() in ("true", "1", "yes", "sim")
+
+
 def lambda_handler(event, context):
     """
     Atualiza métricas de processamento no DynamoDB.
@@ -162,7 +225,19 @@ def lambda_handler(event, context):
     # Determinar status (fonte única: campo 'status' do evento)
     status = event_status if event_status else 'SUCCESS'
     print(f"Status determinado: {status}")
-    
+
+    meta_item = None
+    if metadata_response and "Item" in metadata_response:
+        meta_item = metadata_response["Item"]
+
+    is_prenota = status == "SUCCESS" and protheus_response_indicates_prenota(event, meta_item)
+    print(f"Pré-nota (IA) no sucesso: {is_prenota}")
+
+    previous_is_prenota = False
+    if previous_metrics_status == "SUCCESS" and meta_item is not None:
+        previous_is_prenota = _truthy_prenota_flag(meta_item.get("METRICS_IS_PRENOTA"))
+        print(f"Métricas anteriores eram pré-nota: {previous_is_prenota}")
+
     # Calcular tempo de processamento
     end_time = datetime.now(timezone.utc)
     processing_time = 0
@@ -268,11 +343,24 @@ def lambda_handler(event, context):
             print(f"[DEDUPLICAÇÃO] Removendo métricas do dia {prev_date_key} e mês {prev_month_key}...")
             
             # Decrementar métricas diárias anteriores
-            decrement_daily_metrics(prev_date_key, previous_metrics_status, process_type, previous_failed_rules, previous_processing_time)
+            decrement_daily_metrics(
+                prev_date_key,
+                previous_metrics_status,
+                process_type,
+                previous_failed_rules,
+                previous_processing_time,
+                previous_is_prenota,
+            )
             print(f"✓ Métricas diárias anteriores decrementadas")
             
             # Decrementar métricas mensais anteriores
-            decrement_monthly_metrics(prev_month_key, previous_metrics_status, process_type, previous_processing_time)
+            decrement_monthly_metrics(
+                prev_month_key,
+                previous_metrics_status,
+                process_type,
+                previous_processing_time,
+                previous_is_prenota,
+            )
             print(f"✓ Métricas mensais anteriores decrementadas")
         
         # ============================================
@@ -280,19 +368,21 @@ def lambda_handler(event, context):
         # ============================================
         print("Chamando update_daily_metrics...")
         # Atualizar métricas diárias
-        update_daily_metrics(date_key, status, processing_time, error_type, hour, process_type, failed_rules)
+        update_daily_metrics(
+            date_key, status, processing_time, error_type, hour, process_type, failed_rules, is_prenota
+        )
         print("✓ update_daily_metrics concluído")
         
         print("Chamando update_monthly_metrics...")
         # Atualizar métricas mensais
-        update_monthly_metrics(month_key, status, processing_time, process_type)
+        update_monthly_metrics(month_key, status, processing_time, process_type, is_prenota)
         print("✓ update_monthly_metrics concluído")
         
         # ============================================
         # Salvar informações de métricas no processo (para deduplicação futura)
         # ============================================
         print("Salvando informações de métricas no processo...")
-        save_metrics_status(process_id, status, date_key, failed_rules, processing_time)
+        save_metrics_status(process_id, status, date_key, failed_rules, processing_time, is_prenota)
         print("✓ Informações de métricas salvas no processo")
         
         print("="*80)
@@ -317,25 +407,27 @@ def lambda_handler(event, context):
         'previous_status': previous_metrics_status
     }
 
-def save_metrics_status(process_id, status, date_key, failed_rules, processing_time=0):
+def save_metrics_status(process_id, status, date_key, failed_rules, processing_time=0, is_prenota=False):
     """Salva informações de métricas no processo para suportar deduplicação em reprocessamento"""
     
     pk = f"PROCESS#{process_id}"
     timestamp = datetime.now(timezone.utc).isoformat()
+    prenota_flag = bool(is_prenota) if status == "SUCCESS" else False
     
     try:
         table.update_item(
             Key={'PK': pk, 'SK': 'METADATA'},
-            UpdateExpression='SET METRICS_STATUS = :status, METRICS_DATE = :date, METRICS_FAILED_RULES = :rules, METRICS_UPDATED_AT = :timestamp, METRICS_PROCESSING_TIME = :proc_time',
+            UpdateExpression='SET METRICS_STATUS = :status, METRICS_DATE = :date, METRICS_FAILED_RULES = :rules, METRICS_UPDATED_AT = :timestamp, METRICS_PROCESSING_TIME = :proc_time, METRICS_IS_PRENOTA = :prenota',
             ExpressionAttributeValues={
                 ':status': status,
                 ':date': date_key,
                 ':rules': json.dumps(failed_rules if failed_rules else []),
                 ':timestamp': timestamp,
-                ':proc_time': Decimal(str(round(processing_time, 2)))
+                ':proc_time': Decimal(str(round(processing_time, 2))),
+                ':prenota': prenota_flag,
             }
         )
-        print(f"[save_metrics_status] Métricas salvas: status={status}, date={date_key}, rules={failed_rules}, processing_time={processing_time}s")
+        print(f"[save_metrics_status] Métricas salvas: status={status}, date={date_key}, rules={failed_rules}, processing_time={processing_time}s, prenota={prenota_flag}")
     except Exception as e:
         print(f"[save_metrics_status] Erro ao salvar: {e}")
         # Não falhar o processo por causa disso
@@ -343,11 +435,22 @@ def save_metrics_status(process_id, status, date_key, failed_rules, processing_t
         traceback.print_exc()
 
 
-def decrement_daily_metrics(date_key, status, process_type, failed_rules=None, previous_processing_time=0):
+def decrement_daily_metrics(
+    date_key,
+    status,
+    process_type,
+    failed_rules=None,
+    previous_processing_time=0,
+    previous_is_prenota=False,
+):
     """Decrementa métricas diárias (usado em reprocessamento para evitar duplicação)"""
     
     print(f"\n[decrement_daily_metrics] Decrementando métricas para {date_key}")
-    print(f"[decrement_daily_metrics] Status: {status}, Process type: {process_type}, Failed rules: {failed_rules}, Previous time: {previous_processing_time}s")
+    print(
+        f"[decrement_daily_metrics] Status: {status}, Process type: {process_type}, "
+        f"Failed rules: {failed_rules}, Previous time: {previous_processing_time}s, "
+        f"previous_is_prenota: {previous_is_prenota}"
+    )
     
     if failed_rules is None:
         failed_rules = []
@@ -386,6 +489,13 @@ def decrement_daily_metrics(date_key, status, process_type, failed_rules=None, p
         # Decrementar contador de status
         if status == 'SUCCESS':
             add_parts.append('success_count :dec')
+            if previous_is_prenota:
+                sp = int(existing_item.get('success_prenota_count', 0) or 0)
+                if sp > 0:
+                    add_parts.append('success_prenota_count :dec')
+                    print(f"[decrement_daily_metrics] Decrementando success_prenota_count (atual {sp})")
+                else:
+                    print("[decrement_daily_metrics] success_prenota_count já 0 — skip pré-nota")
         elif status == 'FAILED':
             add_parts.append('failed_count :dec')
         
@@ -446,11 +556,16 @@ def decrement_daily_metrics(date_key, status, process_type, failed_rules=None, p
         # Não falhar - apenas log
 
 
-def decrement_monthly_metrics(month_key, status, process_type, previous_processing_time=0):
+def decrement_monthly_metrics(
+    month_key, status, process_type, previous_processing_time=0, previous_is_prenota=False
+):
     """Decrementa métricas mensais (usado em reprocessamento para evitar duplicação)"""
     
     print(f"\n[decrement_monthly_metrics] Decrementando métricas para {month_key}")
-    print(f"[decrement_monthly_metrics] Status: {status}, Process type: {process_type}, Previous time: {previous_processing_time}s")
+    print(
+        f"[decrement_monthly_metrics] Status: {status}, Process type: {process_type}, "
+        f"Previous time: {previous_processing_time}s, previous_is_prenota: {previous_is_prenota}"
+    )
     
     try:
         # Verificar se o item existe
@@ -484,6 +599,10 @@ def decrement_monthly_metrics(month_key, status, process_type, previous_processi
         # Decrementar contador de status
         if status == 'SUCCESS':
             add_parts.append('success_count :dec')
+            if previous_is_prenota:
+                sp = int(existing_item.get('success_prenota_count', 0) or 0)
+                if sp > 0:
+                    add_parts.append('success_prenota_count :dec')
         elif status == 'FAILED':
             add_parts.append('failed_count :dec')
         
@@ -513,7 +632,16 @@ def decrement_monthly_metrics(month_key, status, process_type, previous_processi
         # Não falhar - apenas log
 
 
-def update_daily_metrics(date_key, status, processing_time, error_type, hour, process_type='UNKNOWN', failed_rules=None):
+def update_daily_metrics(
+    date_key,
+    status,
+    processing_time,
+    error_type,
+    hour,
+    process_type='UNKNOWN',
+    failed_rules=None,
+    is_prenota=False,
+):
     """Atualiza métricas diárias"""
     
     print(f"\n[update_daily_metrics] Iniciando atualização para {date_key}")
@@ -525,6 +653,7 @@ def update_daily_metrics(date_key, status, processing_time, error_type, hour, pr
     print(f"  - hour: {hour}")
     print(f"  - process_type: {process_type}")
     print(f"  - failed_rules: {failed_rules}")
+    print(f"  - is_prenota: {is_prenota}")
     
     if failed_rules is None:
         failed_rules = []
@@ -547,6 +676,7 @@ def update_daily_metrics(date_key, status, processing_time, error_type, hour, pr
                     'SK': 'SUMMARY',
                     'total_count': 0,
                     'success_count': 0,
+                    'success_prenota_count': 0,
                     'failed_count': 0,
                     'total_time': Decimal('0'),
                     'processes_by_hour': {},
@@ -581,6 +711,9 @@ def update_daily_metrics(date_key, status, processing_time, error_type, hour, pr
             if 'failed_rules' not in existing_item:
                 set_parts.append('failed_rules = :empty_map')
                 needs_map_init = True
+            if 'success_prenota_count' not in existing_item:
+                set_parts.append('success_prenota_count = :zero')
+                needs_map_init = True
             
             if needs_map_init:
                 # Criar mapas faltantes em uma atualização separada (antes de usar ADD)
@@ -588,7 +721,7 @@ def update_daily_metrics(date_key, status, processing_time, error_type, hour, pr
                 table.update_item(
                     Key={'PK': f'METRICS#{date_key}', 'SK': 'SUMMARY'},
                     UpdateExpression='SET ' + ', '.join(set_parts),
-                    ExpressionAttributeValues={':empty_map': {}}
+                    ExpressionAttributeValues={':empty_map': {}, ':zero': 0}
                 )
                 print(f"[update_daily_metrics] ✓ Mapas inicializados")
         
@@ -611,6 +744,9 @@ def update_daily_metrics(date_key, status, processing_time, error_type, hour, pr
         if status == 'SUCCESS':
             add_parts.append('success_count :succ')
             expr_values[':succ'] = 1
+            if is_prenota:
+                add_parts.append('success_prenota_count :pren')
+                expr_values[':pren'] = 1
         elif status == 'FAILED':
             add_parts.append('failed_count :fail')
             expr_values[':fail'] = 1
@@ -706,7 +842,7 @@ def update_daily_metrics(date_key, status, processing_time, error_type, hour, pr
         print(f'Erro específico em update_daily_metrics: {e}')
         raise
 
-def update_monthly_metrics(month_key, status, processing_time, process_type='UNKNOWN'):
+def update_monthly_metrics(month_key, status, processing_time, process_type='UNKNOWN', is_prenota=False):
     """Atualiza métricas mensais"""
     
     try:
@@ -723,6 +859,7 @@ def update_monthly_metrics(month_key, status, processing_time, process_type='UNK
                     'SK': 'MONTHLY_SUMMARY',
                     'total_count': 0,
                     'success_count': 0,
+                    'success_prenota_count': 0,
                     'failed_count': 0,
                     'total_time': Decimal('0'),
                     'processes_by_type': {}
@@ -744,6 +881,9 @@ def update_monthly_metrics(month_key, status, processing_time, process_type='UNK
         if status == 'SUCCESS':
             add_parts.append('success_count :succ')
             expr_values[':succ'] = 1
+            if is_prenota:
+                add_parts.append('success_prenota_count :pren')
+                expr_values[':pren'] = 1
         elif status == 'FAILED':
             add_parts.append('failed_count :fail')
             expr_values[':fail'] = 1
