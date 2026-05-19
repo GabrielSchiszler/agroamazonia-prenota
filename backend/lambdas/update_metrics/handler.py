@@ -718,10 +718,18 @@ def update_daily_metrics(
             if needs_map_init:
                 # Criar mapas faltantes em uma atualização separada (antes de usar ADD)
                 print(f"[update_daily_metrics] Inicializando mapas faltantes: {', '.join(set_parts)}")
+                # DynamoDB exige que cada chave em ExpressionAttributeValues apareça na expressão.
+                # Só faltar success_prenota_count gera SET ... = :zero sem :empty_map — não enviar :empty_map.
+                init_expr_values = {}
+                joined = ' '.join(set_parts)
+                if ':empty_map' in joined:
+                    init_expr_values[':empty_map'] = {}
+                if ':zero' in joined:
+                    init_expr_values[':zero'] = 0
                 table.update_item(
                     Key={'PK': f'METRICS#{date_key}', 'SK': 'SUMMARY'},
                     UpdateExpression='SET ' + ', '.join(set_parts),
-                    ExpressionAttributeValues={':empty_map': {}, ':zero': 0}
+                    ExpressionAttributeValues=init_expr_values,
                 )
                 print(f"[update_daily_metrics] ✓ Mapas inicializados")
         
