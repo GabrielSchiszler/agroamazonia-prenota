@@ -500,7 +500,12 @@ export class AgroAmazoniaStack extends cdk.Stack {
     documentTable.grantReadWriteData(extractDocumentsLambda);
     rawDocumentsBucket.grantRead(extractDocumentsLambda);
     extractDocumentsLambda.addToRolePolicy(new iam.PolicyStatement({
-      actions: ['textract:AnalyzeDocument', 'textract:StartDocumentAnalysis', 'textract:GetDocumentAnalysis'],
+      actions: [
+        'textract:AnalyzeDocument',
+        'textract:DetectDocumentText',
+        'textract:StartDocumentAnalysis',
+        'textract:GetDocumentAnalysis',
+      ],
       resources: ['*']
     }));
     extractDocumentsLambda.addToRolePolicy(new iam.PolicyStatement({

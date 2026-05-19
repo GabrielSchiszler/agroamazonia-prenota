@@ -10,9 +10,12 @@ Input (from Step Functions):
 Behaviour:
   1. Query all FILE# items for the process.
   2. Skip files already classified as NF-e XML (ends with .xml — parse_xml handles those).
-  3. Para PDF / IMAGE: Textract AnalyzeDocument ou StartDocumentAnalysis.
-  4. Para .txt: lê UTF-8 do S3 (sem Textract), grava mesmo schema TEXTRACT# (merge + Bedrock iguais ao PDF).
-  5. DOCX: marcado REJECTED (Textract não suporta DOCX nativamente).
+  3. Para PDF / IMAGE: Textract AnalyzeDocument (TABLES+FORMS) ou StartDocumentAnalysis; se o PDF
+     for rejeitado com UnsupportedDocumentException, tenta DetectDocumentText (só texto, sem tabelas).
+  4. Antes do Textract, PDFs são inspecionados em bytes (heurística XFA/Encrypt etc.) e o resultado vai
+     para os logs CloudWatch para comparar com outros anexos que funcionam.
+  5. Para .txt: lê UTF-8 do S3 (sem Textract), grava mesmo schema TEXTRACT# (merge + Bedrock iguais ao PDF).
+  6. DOCX: marcado REJECTED (Textract não suporta DOCX nativamente).
 
 Output:
   { "process_id": "...", "extracted_count": N, "rejected": [...] }
@@ -27,7 +30,9 @@ import time
 from datetime import datetime
 
 import boto3
+from botocore.exceptions import ClientError
 
+from utils.pdf_textract_precheck import diagnose_pdf_bytes
 from utils.protheus_hints import hints_from_textract_text
 
 logger = logging.getLogger()
@@ -66,6 +71,9 @@ def _run_textract_sync(bucket: str, key: str):
 
     O bucket de documentos costuma estar em sa-east-1; o endpoint Textract em outra região
     não aceita S3Object cross-region — por isso baixamos o objeto e enviamos Bytes.
+
+    Se AnalyzeDocument devolver UnsupportedDocumentException (PDF XFA, encriptado,
+    formato exótico), tenta DetectDocumentText (só texto, sem tabelas) como fallback.
     """
     obj = s3.get_object(Bucket=bucket, Key=key)
     body = obj["Body"].read()
@@ -74,11 +82,55 @@ def _run_textract_sync(bucket: str, key: str):
             f"Arquivo excede {TEXTRACT_MAX_SYNC_BYTES} bytes para AnalyzeDocument síncrono; "
             "use cópia para bucket de staging (TEXTRACT_ASYNC_STAGING_BUCKET) ou reduza o PDF."
         )
-    resp = textract.analyze_document(
-        Document={"Bytes": body},
-        FeatureTypes=["TABLES", "FORMS"],
-    )
-    return resp
+
+    diag: dict | None = None
+    if _ext(key) == ".pdf" or body[:5] == b"%PDF-":
+        diag = diagnose_pdf_bytes(body)
+        logger.info(
+            "PDF pre-Textract key=%s diagnóstico=%s",
+            key,
+            json.dumps(diag, ensure_ascii=False, default=str),
+        )
+
+    try:
+        resp = textract.analyze_document(
+            Document={"Bytes": body},
+            FeatureTypes=["TABLES", "FORMS"],
+        )
+        resp["_textract_mode"] = "analyze_document"
+        return resp
+    except ClientError as e:
+        code = (e.response or {}).get("Error", {}).get("Code", "")
+        if code != "UnsupportedDocumentException":
+            raise
+        logger.warning(
+            "AnalyzeDocument UnsupportedDocumentException key=%s; "
+            "tentando DetectDocumentText. diag=%s",
+            key,
+            json.dumps(diag, ensure_ascii=False, default=str) if diag else "n/a",
+        )
+        try:
+            resp2 = textract.detect_document_text(Document={"Bytes": body})
+            resp2["_textract_mode"] = "detect_document_text_fallback"
+            logger.info(
+                "DetectDocumentText OK após falha AnalyzeDocument key=%s blocks=%s",
+                key,
+                len(resp2.get("Blocks") or []),
+            )
+            return resp2
+        except ClientError as e2:
+            code2 = (e2.response or {}).get("Error", {}).get("Code", "")
+            logger.error(
+                "DetectDocumentText também falhou key=%s code=%s diag=%s",
+                key,
+                code2,
+                json.dumps(diag, ensure_ascii=False, default=str) if diag else "n/a",
+            )
+            raise RuntimeError(
+                f"Textract rejeitou o PDF (AnalyzeDocument e DetectDocumentText). "
+                f"AnalyzeDocument={code}; DetectDocumentText={code2}. "
+                f"Diagnóstico: {json.dumps(diag, ensure_ascii=False, default=str) if diag else 'n/a'}"
+            ) from e2
 
 
 def _run_textract_async(bucket: str, key: str):
@@ -154,6 +206,7 @@ def _persist_extraction_like_textract(
     tables_data: list,
     job_id: str,
     timestamp: int,
+    textract_mode: str | None = None,
 ) -> None:
     """Grava TEXTRACT#* + STATUS EXTRACTED no FILE# — mesmo formato que Textract (merge/Bedrock)."""
     sk = _textract_result_sk(file_sk, fname)
@@ -169,6 +222,8 @@ def _persist_extraction_like_textract(
         "RAW_TEXT": raw_text,
         "TIMESTAMP": timestamp,
     }
+    if textract_mode:
+        textract_item["TEXTRACT_MODE"] = textract_mode
     if hints:
         textract_item["PROTHEUS_HINTS"] = json.dumps(hints, ensure_ascii=False)
     table.put_item(Item=textract_item)
@@ -256,14 +311,16 @@ def handle_single_textract(event, context):
 
         if size <= TEXTRACT_MAX_SYNC_BYTES:
             resp = _run_textract_sync(bucket, fkey)
+            mode = resp.pop("_textract_mode", None)
             raw_text, tables_data = _extract_text_and_tables(resp.get("Blocks", []))
             job_id = "sync"
         else:
             job_id, resp = _run_textract_async(bucket, fkey)
+            mode = resp.pop("_textract_mode", None)
             raw_text, tables_data = _extract_text_and_tables(resp.get("Blocks", []))
 
         _persist_extraction_like_textract(
-            pk, fi_sk, fname, fkey, raw_text, tables_data, job_id, timestamp
+            pk, fi_sk, fname, fkey, raw_text, tables_data, job_id, timestamp, textract_mode=mode
         )
 
         return {
@@ -364,14 +421,16 @@ def handler(event, context):
 
             if size <= TEXTRACT_MAX_SYNC_BYTES:
                 resp = _run_textract_sync(bucket, fkey)
+                mode = resp.pop("_textract_mode", None)
                 raw_text, tables_data = _extract_text_and_tables(resp.get("Blocks", []))
                 job_id = "sync"
             else:
                 job_id, resp = _run_textract_async(bucket, fkey)
+                mode = resp.pop("_textract_mode", None)
                 raw_text, tables_data = _extract_text_and_tables(resp.get("Blocks", []))
 
             _persist_extraction_like_textract(
-                pk, fi_sk, fname, fkey, raw_text, tables_data, job_id, timestamp
+                pk, fi_sk, fname, fkey, raw_text, tables_data, job_id, timestamp, textract_mode=mode
             )
 
             extracted_count += 1
