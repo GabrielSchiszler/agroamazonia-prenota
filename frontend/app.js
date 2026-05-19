@@ -49,11 +49,15 @@ document.addEventListener('DOMContentLoaded', async function() {
         document.getElementById('apiUrl').value = API_URL;
     }
 
-    // Carregar regras disponíveis do backend primeiro
+    // Carregar regras disponíveis do backend primeiro (página de regras)
     loadAvailableRules().then(() => {
-        showRules('AGROQUIMICOS');
+        if (document.getElementById('rulesDisplay')) {
+            showRules('AGROQUIMICOS');
+        }
     });
-    loadProcesses();
+    if (document.getElementById('processesList')) {
+        loadProcesses();
+    }
     loadDashboardMetrics();
 });
 
@@ -236,6 +240,10 @@ function updateMetricCards(data) {
     const totalLabelEl = document.getElementById('totalLabel');
     const successLabelEl = document.getElementById('successLabel');
     const failedLabelEl = document.getElementById('failedLabel');
+    const prenotaTodayEl = document.getElementById('prenotaToday');
+    const classifiedTodayEl = document.getElementById('classifiedToday');
+    const prenotaLabelEl = document.getElementById('prenotaLabel');
+    const classifiedLabelEl = document.getElementById('classifiedLabel');
     
     // Se nenhum elemento existir, não fazer nada (não estamos na página do dashboard)
     if (!totalTodayEl && !successTodayEl && !failedTodayEl) {
@@ -250,6 +258,8 @@ function updateMetricCards(data) {
     const hasPeriodFilter = currentStartDate && currentEndDate;
     
     let total, success, failed, successRate, avgTime, periodLabel;
+    let prenota = 0;
+    let classified = 0;
     
     if (hasPeriodFilter) {
         // Filtro de período ativo → usar summary do período (inclui "hoje")
@@ -258,6 +268,8 @@ function updateMetricCards(data) {
         failed = summary.failed ?? 0;
         successRate = summary.success_rate ?? 0;
         avgTime = summary.avg_processing_time ?? 0;
+        prenota = summary.success_prenota ?? 0;
+        classified = summary.success_classified ?? Math.max(0, success - prenota);
         
         const startDate = parseDateLocal(currentStartDate);
         const endDate = parseDateLocal(currentEndDate);
@@ -273,17 +285,23 @@ function updateMetricCards(data) {
         failed = todayData.failed_count ?? 0;
         successRate = todayData.success_rate ?? 0;
         avgTime = todayData.avg_processing_time ?? 0;
+        prenota = todayData.success_prenota_count ?? 0;
+        classified = todayData.success_classified_count ?? Math.max(0, success - prenota);
         periodLabel = 'Hoje';
     }
     
     // Atualizar valores apenas se os elementos existirem
     if (totalTodayEl) totalTodayEl.textContent = total;
     if (successTodayEl) successTodayEl.textContent = success;
+    if (prenotaTodayEl) prenotaTodayEl.textContent = prenota;
+    if (classifiedTodayEl) classifiedTodayEl.textContent = classified;
     if (failedTodayEl) failedTodayEl.textContent = failed;
     if (successRateEl) successRateEl.textContent = successRate.toFixed(1) + '%';
     
     if (totalLabelEl) totalLabelEl.textContent = `Processos ${periodLabel}`;
-    if (successLabelEl) successLabelEl.textContent = `Sucessos ${periodLabel}`;
+    if (successLabelEl) successLabelEl.textContent = `Sucessos (total) ${periodLabel}`;
+    if (prenotaLabelEl) prenotaLabelEl.textContent = `Pré-notas ${periodLabel}`;
+    if (classifiedLabelEl) classifiedLabelEl.textContent = `Classificadas ${periodLabel}`;
     if (failedLabelEl) failedLabelEl.textContent = `Falhas ${periodLabel}`;
     
     // Formatar tempo médio de processamento
@@ -331,13 +349,25 @@ function createDailyProcessesChart(data) {
         data: {
             labels: labels,
             datasets: [{
-                label: 'Sucessos',
-                data: periodData.map(d => d.success),
-                backgroundColor: 'rgba(16, 185, 129, 0.8)',
-                borderColor: '#10b981',
+                label: 'Classificadas',
+                data: periodData.map(d =>
+                    d.success_classified ??
+                    Math.max(0, (d.success || 0) - (d.success_prenota || 0))
+                ),
+                backgroundColor: 'rgba(5, 150, 105, 0.85)',
+                borderColor: '#059669',
                 borderWidth: 2,
                 borderRadius: 6,
                 order: 3,
+                yAxisID: 'y'
+            }, {
+                label: 'Pré-notas',
+                data: periodData.map(d => d.success_prenota ?? 0),
+                backgroundColor: 'rgba(245, 158, 11, 0.85)',
+                borderColor: '#f59e0b',
+                borderWidth: 2,
+                borderRadius: 6,
+                order: 4,
                 yAxisID: 'y'
             }, {
                 label: 'Falhas',
@@ -346,7 +376,7 @@ function createDailyProcessesChart(data) {
                 borderColor: '#ef4444',
                 borderWidth: 2,
                 borderRadius: 6,
-                order: 4,
+                order: 5,
                 yAxisID: 'y'
             }, {
                 label: 'Taxa de acerto (%)',
@@ -470,17 +500,21 @@ function createSuccessErrorRateChart(data) {
     // Determinar se há filtro de período ativo
     const hasPeriodFilter = currentStartDate && currentEndDate;
     
-    let total, success, failed;
+    let total, success, failed, prenota, classified;
     if (hasPeriodFilter) {
         const summary = data.summary || {};
         total = summary.total ?? 0;
         success = summary.success ?? 0;
         failed = summary.failed ?? 0;
+        prenota = summary.success_prenota ?? 0;
+        classified = summary.success_classified ?? Math.max(0, success - prenota);
     } else {
         const todayData = data.today || {};
         total = todayData.total_count ?? 0;
         success = todayData.success_count ?? 0;
         failed = todayData.failed_count ?? 0;
+        prenota = todayData.success_prenota_count ?? 0;
+        classified = todayData.success_classified_count ?? Math.max(0, success - prenota);
     }
     
     if (successErrorRateChart) successErrorRateChart.destroy();
@@ -488,15 +522,17 @@ function createSuccessErrorRateChart(data) {
     successErrorRateChart = new Chart(ctx, {
         type: 'doughnut',
         data: {
-            labels: ['Sucessos', 'Falhas'],
+            labels: ['Entrada classificada', 'Pré-notas', 'Falhas'],
             datasets: [{
-                data: [success, failed],
+                data: [classified, prenota, failed],
                 backgroundColor: [
-                    'rgba(16, 185, 129, 0.9)',
+                    'rgba(5, 150, 105, 0.9)',
+                    'rgba(245, 158, 11, 0.9)',
                     'rgba(239, 68, 68, 0.9)'
                 ],
                 borderColor: [
-                    '#10b981',
+                    '#059669',
+                    '#f59e0b',
                     '#ef4444'
                 ],
                 borderWidth: 3,
@@ -1026,10 +1062,11 @@ function createNewProcess() {
 }
 
 async function loadProcesses(silent = false) {
+    const list = document.getElementById('processesList');
+    if (!list) {
+        return;
+    }
     try {
-        const list = document.getElementById('processesList');
-        
-        // Mostrar loading
         if (!silent) {
             list.innerHTML = `
                 <div style="grid-column: 1 / -1; text-align: center; padding: 60px 20px;">

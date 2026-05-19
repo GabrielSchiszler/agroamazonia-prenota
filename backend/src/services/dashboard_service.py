@@ -48,10 +48,14 @@ class DashboardService:
                         daily_metrics.get('failed_rules', {}),
                         daily_metrics.get('failed_count', 0),
                     )
+                    sp = int(daily_metrics.get('success_prenota_count', 0) or 0)
+                    sc = max(0, int(daily_metrics.get('success_count', 0) or 0) - sp)
                     period_days.append({
                         'date': date,
                         'total': total_count,
                         'success': daily_metrics.get('success_count', 0),
+                        'success_prenota': sp,
+                        'success_classified': sc,
                         'failed': daily_metrics.get('failed_count', 0),
                         'success_rate': daily_metrics.get('success_rate', 0),
                         'avg_processing_time': avg_time,
@@ -63,6 +67,8 @@ class DashboardService:
                         'date': date,
                         'total': 0,
                         'success': 0,
+                        'success_prenota': 0,
+                        'success_classified': 0,
                         'failed': 0,
                         'success_rate': 0,
                         'avg_processing_time': 0,
@@ -93,14 +99,19 @@ class DashboardService:
 
             # Calcular tempo médio do período
             avg_processing_time_period = (total_time_period / total_count_period) if total_count_period > 0 else 0
-            
+            sum_success = sum(d['success'] for d in period_days)
+            sum_prenota = sum(d.get('success_prenota', 0) for d in period_days)
+            sum_classified = sum(d.get('success_classified', 0) for d in period_days)
+
             return {
                 'period': period_days,
                 'summary': {
                     'total': sum(d['total'] for d in period_days),
-                    'success': sum(d['success'] for d in period_days),
+                    'success': sum_success,
+                    'success_prenota': sum_prenota,
+                    'success_classified': sum_classified,
                     'failed': sum(d['failed'] for d in period_days),
-                    'success_rate': round((sum(d['success'] for d in period_days) / sum(d['total'] for d in period_days) * 100) if sum(d['total'] for d in period_days) > 0 else 0, 2),
+                    'success_rate': round((sum_success / sum(d['total'] for d in period_days) * 100) if sum(d['total'] for d in period_days) > 0 else 0, 2),
                     'avg_processing_time': round(avg_processing_time_period, 2)
                 },
                 'processes_by_type': processes_by_type_period,
@@ -136,10 +147,14 @@ class DashboardService:
                         daily_metrics.get('failed_rules', {}),
                         daily_metrics.get('failed_count', 0),
                     )
+                    sp = int(daily_metrics.get('success_prenota_count', 0) or 0)
+                    sc = max(0, int(daily_metrics.get('success_count', 0) or 0) - sp)
                     last_7_days.append({
                         'date': date,
                         'total': total_count,
                         'success': daily_metrics.get('success_count', 0),
+                        'success_prenota': sp,
+                        'success_classified': sc,
                         'failed': daily_metrics.get('failed_count', 0),
                         'success_rate': daily_metrics.get('success_rate', 0),
                         'avg_processing_time': avg_time,
@@ -166,15 +181,20 @@ class DashboardService:
                 )
 
             avg_processing_time_week = (total_time_week / total_count_week) if total_count_week > 0 else 0
+            sum_success_w = sum(d['success'] for d in last_7_days)
+            sum_prenota_w = sum(d.get('success_prenota', 0) for d in last_7_days)
+            sum_classified_w = sum(d.get('success_classified', 0) for d in last_7_days)
 
             return {
                 'today': today_metrics,
                 'last_7_days': last_7_days,
                 'summary': {
                     'total_week': sum(d['total'] for d in last_7_days),
-                    'success_week': sum(d['success'] for d in last_7_days),
+                    'success_week': sum_success_w,
+                    'success_prenota_week': sum_prenota_w,
+                    'success_classified_week': sum_classified_w,
                     'failed_week': sum(d['failed'] for d in last_7_days),
-                    'success_rate_week': round((sum(d['success'] for d in last_7_days) / sum(d['total'] for d in last_7_days) * 100) if sum(d['total'] for d in last_7_days) > 0 else 0, 2),
+                    'success_rate_week': round((sum_success_w / sum(d['total'] for d in last_7_days) * 100) if sum(d['total'] for d in last_7_days) > 0 else 0, 2),
                     'avg_processing_time': round(avg_processing_time_week, 2)
                 },
                 'processes_by_type_week': processes_by_type_week,
@@ -249,6 +269,8 @@ class DashboardService:
                     'date': date,
                     'total_count': 0,
                     'success_count': 0,
+                    'success_prenota_count': 0,
+                    'success_classified_count': 0,
                     'failed_count': 0,
                     'success_rate': 0,
                     'avg_processing_time': 0,
@@ -263,6 +285,8 @@ class DashboardService:
             # Converter Decimal para float
             total_count = int(item.get('total_count', 0))
             success_count = int(item.get('success_count', 0))
+            success_prenota_count = int(item.get('success_prenota_count', 0) or 0)
+            success_classified_count = max(0, success_count - success_prenota_count)
             failed_count = int(item.get('failed_count', 0))
             total_time = float(item.get('total_time', 0))
             
@@ -326,6 +350,8 @@ class DashboardService:
                 'date': date,
                 'total_count': total_count,
                 'success_count': success_count,
+                'success_prenota_count': success_prenota_count,
+                'success_classified_count': success_classified_count,
                 'failed_count': failed_count,
                 'success_rate': round(success_rate, 2),
                 'avg_processing_time': round(avg_time, 2),
