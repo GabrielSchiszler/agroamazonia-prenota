@@ -3,7 +3,6 @@ import * as s3 from 'aws-cdk-lib/aws-s3';
 import * as s3deploy from 'aws-cdk-lib/aws-s3-deployment';
 import * as cloudfront from 'aws-cdk-lib/aws-cloudfront';
 import * as origins from 'aws-cdk-lib/aws-cloudfront-origins';
-import * as iam from 'aws-cdk-lib/aws-iam';
 import * as lambda from 'aws-cdk-lib/aws-lambda';
 import * as certificatemanager from 'aws-cdk-lib/aws-certificatemanager';
 import * as wafv2 from 'aws-cdk-lib/aws-wafv2';
@@ -107,9 +106,15 @@ export class FrontendStack extends cdk.Stack {
     
     console.log(`[FrontendStack] OAC Name: ${oacName}`);
     console.log(`[FrontendStack] OAC ID: ${oacId}`);
-    
-    // Usar o ID do OAC diretamente (não criar um construct, apenas referenciar)
-    // Isso evita tentar criar o OAC que já existe
+
+    // OAC já existe na conta: importar por ID (não criar recurso CFN para o OAC).
+    // NÃO usar origins.S3Origin com originAccessControlId — o S3Origin deprecated ainda gera OAI
+    // por origem e BucketPolicy com S3CanonicalUserId (causava falha em PRD).
+    const importedS3OriginAccessControl = cloudfront.S3OriginAccessControl.fromOriginAccessControlId(
+      this,
+      'ImportedS3OriginAccessControl',
+      oacId
+    );
 
     // S3 Bucket para frontend (website estático)
     // Nota: bucket names devem ser únicos globalmente, então incluímos account
@@ -131,6 +136,10 @@ export class FrontendStack extends cdk.Stack {
         allowedHeaders: ['*'],
         maxAge: 3000
       }]
+    });
+
+    const frontendS3Origin = origins.S3BucketOrigin.withOriginAccessControl(frontendBucket, {
+      originAccessControl: importedS3OriginAccessControl,
     });
 
     // Lambda@Edge Functions para autenticação
@@ -198,14 +207,12 @@ export class FrontendStack extends cdk.Stack {
       console.warn(`[FrontendStack] ⚠️  Exemplo: export WAF_ARN=arn:aws:wafv2:us-east-1:835671581949:global/webacl/waf-cloudfront/9385afad-40cd-4aa5-a944-2a6c72ed3cbd`);
     }
 
-    // CloudFront Distribution com OAC, Lambda@Edge, WAF e domínio customizado
-    // Nota: A distribuição existente pode ter OAI configurado, então precisamos
-    // garantir que apenas OAC seja usado (não ambos)
+    // CloudFront Distribution com OAC (S3BucketOrigin), Lambda@Edge, WAF e domínio customizado
     const distribution = new cloudfront.Distribution(this, 'FrontendDistribution', {
+      // Desativar IPv6 (equivalente a Connectivity → IPv6 → Off na consola)
+      enableIpv6: false,
       defaultBehavior: {
-        origin: new origins.S3Origin(frontendBucket, {
-          originAccessControlId: oacId!
-        }),
+        origin: frontendS3Origin,
         viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
         allowedMethods: cloudfront.AllowedMethods.ALLOW_GET_HEAD,
         cachedMethods: cloudfront.CachedMethods.CACHE_GET_HEAD,
@@ -250,9 +257,7 @@ export class FrontendStack extends cdk.Stack {
       additionalBehaviors: {
         // Paths de autenticação (ordem de prioridade: parseauth > refreshauth > signout)
         '/parseauth*': {
-          origin: new origins.S3Origin(frontendBucket, {
-            originAccessControlId: oacId!
-          }),
+          origin: frontendS3Origin,
           viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
           allowedMethods: cloudfront.AllowedMethods.ALLOW_GET_HEAD,
           cachedMethods: cloudfront.CachedMethods.CACHE_GET_HEAD,
@@ -270,9 +275,7 @@ export class FrontendStack extends cdk.Stack {
           ]
         },
         '/refreshauth*': {
-          origin: new origins.S3Origin(frontendBucket, {
-            originAccessControlId: oacId!
-          }),
+          origin: frontendS3Origin,
           viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
           allowedMethods: cloudfront.AllowedMethods.ALLOW_GET_HEAD,
           cachedMethods: cloudfront.CachedMethods.CACHE_GET_HEAD,
@@ -286,9 +289,7 @@ export class FrontendStack extends cdk.Stack {
           ]
         },
         '/signout*': {
-          origin: new origins.S3Origin(frontendBucket, {
-            originAccessControlId: oacId!
-          }),
+          origin: frontendS3Origin,
           viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
           allowedMethods: cloudfront.AllowedMethods.ALLOW_GET_HEAD,
           cachedMethods: cloudfront.CachedMethods.CACHE_GET_HEAD,
@@ -303,9 +304,7 @@ export class FrontendStack extends cdk.Stack {
         },
         // Behaviors antigos: assets, HTML e JS (sem Lambda@Edge)
         '/assets/*': {
-          origin: new origins.S3Origin(frontendBucket, {
-            originAccessControlId: oacId!
-          }),
+          origin: frontendS3Origin,
           viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
           allowedMethods: cloudfront.AllowedMethods.ALLOW_GET_HEAD,
           cachedMethods: cloudfront.CachedMethods.CACHE_GET_HEAD,
@@ -314,9 +313,7 @@ export class FrontendStack extends cdk.Stack {
           // Sem Lambda@Edge (viewer request/response)
         },
         '*.html': {
-          origin: new origins.S3Origin(frontendBucket, {
-            originAccessControlId: oacId!
-          }),
+          origin: frontendS3Origin,
           viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
           allowedMethods: cloudfront.AllowedMethods.ALLOW_GET_HEAD,
           cachedMethods: cloudfront.CachedMethods.CACHE_GET_HEAD,
@@ -325,9 +322,7 @@ export class FrontendStack extends cdk.Stack {
           // Sem Lambda@Edge (viewer request/response)
         },
         '*.js': {
-          origin: new origins.S3Origin(frontendBucket, {
-            originAccessControlId: oacId!
-          }),
+          origin: frontendS3Origin,
           viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
           allowedMethods: cloudfront.AllowedMethods.ALLOW_GET_HEAD,
           cachedMethods: cloudfront.CachedMethods.CACHE_GET_HEAD,
@@ -369,46 +364,15 @@ export class FrontendStack extends cdk.Stack {
       ...(webAclArn ? { webAclId: webAclArn } : {})
     });
     
-    // Forçar atualização do WAF usando Cfn construct (garante que o WAF seja aplicado mesmo se removido manualmente)
-    const cfnDistribution = distribution.node.defaultChild as cloudfront.CfnDistribution;
     if (webAclArn) {
-      // Forçar atualização do WAF via override para garantir que seja aplicado
-      // O campo WebACLId espera o ARN completo
-      // Usar addPropertyOverride para garantir que o valor seja sempre aplicado
+      const cfnDistribution = distribution.node.defaultChild as cloudfront.CfnDistribution;
+      // Forçar atualização do WAF via override para garantir que o valor seja sempre aplicado
       cfnDistribution.addPropertyOverride('DistributionConfig.WebACLId', webAclArn);
       console.log(`[FrontendStack] WAF forçado via override: ${webAclArn}`);
     }
-    
-    // Forçar remoção do OAI (legacy) da distribuição existente usando Cfn construct
-    // Isso é necessário quando migrando de OAI para OAC
-    // O CloudFormation não permite ter ambos (OAI e OAC) ao mesmo tempo
-    // IMPORTANTE: S3OriginConfig ainda precisa existir, mas sem OriginAccessIdentity
-    
-    // Remover OriginAccessIdentity do S3OriginConfig e garantir OAC para todos os origins
-    // Origins 0-5: behaviors adicionais (parseauth, refreshauth, signout, assets, html, js)
-    for (let i = 0; i <= 5; i++) {
-      cfnDistribution.addOverride(`Properties.DistributionConfig.Origins.${i}.S3OriginConfig.OriginAccessIdentity`, undefined);
-      cfnDistribution.addOverride(`Properties.DistributionConfig.Origins.${i}.OriginAccessControlId`, oacId!);
-    }
-    
-    // Origin 6: default behavior (último na ordem)
-    cfnDistribution.addOverride('Properties.DistributionConfig.Origins.6.S3OriginConfig.OriginAccessIdentity', undefined);
-    cfnDistribution.addOverride('Properties.DistributionConfig.Origins.6.OriginAccessControlId', oacId!);
-    
-    // Adicionar política do bucket para permitir acesso do OAC
-    // Nota: A política precisa ser adicionada após criar a distribuição para ter o ARN correto
-    frontendBucket.addToResourcePolicy(new iam.PolicyStatement({
-      sid: 'AllowCloudFrontOAC',
-      effect: iam.Effect.ALLOW,
-      principals: [new iam.ServicePrincipal('cloudfront.amazonaws.com')],
-      actions: ['s3:GetObject'],
-      resources: [frontendBucket.arnForObjects('*')],
-      conditions: {
-        StringEquals: {
-          'AWS:SourceArn': distribution.distributionArn
-        }
-      }
-    }));
+
+    // Bucket policy para OAC: S3BucketOrigin.withOriginAccessControl adiciona automaticamente
+    // (Principal cloudfront.amazonaws.com + condição AWS:SourceArn na distribuição).
 
     // Criar arquivo config.js dinâmico com a URL da API, API Key e OAuth2 Config
     // Este arquivo será gerado durante o deploy e sobrescreverá o config.js estático
