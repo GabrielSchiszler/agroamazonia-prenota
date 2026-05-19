@@ -7,11 +7,14 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 
-# Configurar logging
+# Configurar logging (Lambda: root já pode ter handlers — basicConfig sem force não altera nível)
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    force=True,
 )
+logging.getLogger().setLevel(logging.INFO)
+logging.getLogger("src").setLevel(logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Carregar variáveis de ambiente do .env
@@ -245,6 +248,10 @@ try:
         O API Gateway pode enviar paths como /ocr-prd/health, mas a rota real é /health.
         Este wrapper detecta e remove o prefixo antes de passar para o FastAPI.
         """
+        # Lambda + Mangum: reforçar nível a cada invocação (cold/warm e imports em ordem diferente)
+        logging.getLogger().setLevel(logging.INFO)
+        logging.getLogger("src").setLevel(logging.INFO)
+
         # Log completo do evento recebido do API Gateway
         logger.info("=" * 80)
         logger.info("[HANDLER] EVENTO RECEBIDO DO API GATEWAY:")

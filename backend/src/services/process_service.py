@@ -6,6 +6,12 @@ import logging
 from datetime import datetime
 from typing import Dict, Any, Optional
 from src.repositories.dynamodb_repository import DynamoDBRepository
+from src.utils.presigned_logging import (
+    emit_presigned_line,
+    presigned_batch_response_for_log,
+    presigned_put_response_for_log,
+    safe_presigned_url_preview,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -72,15 +78,20 @@ class ProcessService:
         upload_route_kind: Optional[str] = None,
     ) -> Dict[str, Any]:
         import re
-        
-        logger.info(f"[generate_presigned_url] Iniciando geração de URL pré-assinada")
-        logger.info(f"[generate_presigned_url] Parâmetros recebidos:")
-        logger.info(f"  - process_id: {process_id} (tipo: {type(process_id)}, length: {len(process_id) if process_id else 0})")
-        logger.info(f"  - file_name: {file_name} (tipo: {type(file_name)}, length: {len(file_name) if file_name else 0})")
-        logger.info(f"  - file_type: {file_type} (tipo: {type(file_type)})")
-        logger.info(f"  - doc_type: {doc_type} (tipo: {type(doc_type)})")
-        logger.info(f"  - upload_route_kind: {upload_route_kind}")
-        logger.info(f"  - metadados: {metadados} (tipo: {type(metadados)})")
+
+        trace = uuid.uuid4().hex[:16]
+        emit_presigned_line(
+            logger,
+            "[presigned] trace=%s fase=entrada op=put_object process_id=%s file_name=%r "
+            "file_type=%r doc_type=%s upload_route_kind=%s metadados_keys=%s",
+            trace,
+            process_id,
+            file_name,
+            file_type,
+            doc_type,
+            upload_route_kind,
+            list(metadados.keys()) if isinstance(metadados, dict) else type(metadados).__name__,
+        )
         
         try:
             # MIME principal (sem charset) — deve coincidir com o header Content-Type do PUT no S3 (assinatura SigV4).
@@ -90,58 +101,115 @@ class ProcessService:
             if not ft:
                 ft = "application/octet-stream"
             file_type = ft
+            emit_presigned_line(
+                logger,
+                "[presigned] trace=%s fase=normalizado content_type_s3=%r",
+                trace,
+                file_type,
+            )
 
             # Criar processo se não existir
             pk = f'PROCESS#{process_id}'
-            logger.info(f"[generate_presigned_url] Verificando se processo existe: {pk}")
+            emit_presigned_line(logger, "[presigned] trace=%s fase=dynamodb_pre query pk=%s", trace, pk)
             items = self.repository.query_by_pk_and_sk_prefix(pk, 'METADATA')
-            logger.info(f"[generate_presigned_url] Resultado da query: {len(items) if items else 0} itens encontrados")
+            emit_presigned_line(
+                logger,
+                "[presigned] trace=%s fase=dynamodb_pre metadata_items=%s",
+                trace,
+                len(items) if items else 0,
+            )
             
             if not items:
                 timestamp = int(datetime.now().timestamp())
-                logger.info(f"[generate_presigned_url] Criando novo processo com process_id: {process_id}, timestamp: {timestamp}")
+                emit_presigned_line(
+                    logger,
+                    "[presigned] trace=%s fase=dynamodb_criar_processo process_id=%s ts=%s",
+                    trace,
+                    process_id,
+                    timestamp,
+                )
                 try:
                     self.repository.put_item('PROCESS', f'PROCESS#{process_id}', {
                         'PROCESS_ID': process_id,
                         'TIMESTAMP': timestamp
                     })
-                    logger.info(f"[generate_presigned_url] Item PROCESS criado com sucesso")
-                    
                     self.repository.put_item(pk, 'METADATA', {
                         'STATUS': 'CREATED',
                         'TIMESTAMP': timestamp
                     })
-                    logger.info(f"[generate_presigned_url] Item METADATA criado com sucesso")
+                    emit_presigned_line(logger, "[presigned] trace=%s fase=dynamodb_criar_processo_ok", trace)
                 except Exception as e:
-                    logger.error(f"[generate_presigned_url] Erro ao criar processo no DynamoDB: {str(e)}")
-                    logger.exception("Traceback completo:")
+                    emit_presigned_line(
+                        logger,
+                        "[presigned] trace=%s fase=dynamodb_criar_processo_erro erro=%s",
+                        trace,
+                        str(e),
+                        is_error=True,
+                        exc_info=True,
+                    )
                     raise
             else:
-                logger.info(f"[generate_presigned_url] Processo já existe, não será criado novamente")
+                emit_presigned_line(logger, "[presigned] trace=%s fase=dynamodb_processo_ja_existia", trace)
             
-            logger.info(f"[generate_presigned_url] Processando nome do arquivo: {file_name}")
             safe_name = re.sub(r'[^a-zA-Z0-9._-]', '_', file_name)
-            logger.info(f"[generate_presigned_url] Nome seguro gerado: {safe_name}")
+            emit_presigned_line(
+                logger,
+                "[presigned] trace=%s fase=nome_arquivo original=%r safe=%r",
+                trace,
+                file_name,
+                safe_name,
+            )
 
             upload_id = _new_file_upload_id()
             file_sk = f"FILE#{upload_id}"
             folder = "danfe" if doc_type == "DANFE" else "docs"
             file_key = f"processes/{process_id}/{folder}/{upload_id}_{safe_name}"
-            logger.info(f"[generate_presigned_url] file_key gerado: {file_key}")
-            logger.info(f"[generate_presigned_url] bucket_name: {self.bucket_name}")
-            
-            logger.info(f"[generate_presigned_url] Gerando URL pré-assinada do S3...")
+            emit_presigned_line(
+                logger,
+                "[presigned] trace=%s fase=chave_s3 folder=%s upload_id=%s file_sk=%s key=%s bucket=%s",
+                trace,
+                folder,
+                upload_id,
+                file_sk,
+                file_key,
+                self.bucket_name,
+            )
+
+            s3_params = {
+                "Bucket": self.bucket_name,
+                "Key": file_key,
+                "ContentType": file_type,
+            }
+            expires_in = 3600
+            emit_presigned_line(
+                logger,
+                "[presigned] trace=%s fase=s3_generate_presigned op=put_object params=%s ExpiresIn=%s",
+                trace,
+                {k: v for k, v in s3_params.items()},
+                expires_in,
+            )
             try:
                 url = self.s3_client.generate_presigned_url(
-                    'put_object',
-                    Params={'Bucket': self.bucket_name, 'Key': file_key, 'ContentType': file_type},
-                    ExpiresIn=3600
+                    "put_object",
+                    Params=s3_params,
+                    ExpiresIn=expires_in,
                 )
-                logger.info(f"[generate_presigned_url] URL pré-assinada gerada com sucesso (length: {len(url) if url else 0})")
-                logger.info(f"[generate_presigned_url] URL (primeiros 100 chars): {url[:100] if url else 'None'}...")
+                emit_presigned_line(
+                    logger,
+                    "[presigned] trace=%s fase=s3_ok upload_url_chars=%s upload_url_preview=%s",
+                    trace,
+                    len(url) if url else 0,
+                    safe_presigned_url_preview(url),
+                )
             except Exception as e:
-                logger.error(f"[generate_presigned_url] Erro ao gerar URL pré-assinada do S3: {str(e)}")
-                logger.exception("Traceback completo:")
+                emit_presigned_line(
+                    logger,
+                    "[presigned] trace=%s fase=s3_erro erro=%s",
+                    trace,
+                    str(e),
+                    is_error=True,
+                    exc_info=True,
+                )
                 raise
             
             # Preparar dados do arquivo
@@ -157,17 +225,38 @@ class ProcessService:
             
             # Adicionar metadados se fornecidos
             if metadados:
-                logger.info(f"[generate_presigned_url] Adicionando metadados ao file_data")
-                file_data['METADADOS'] = json.dumps(metadados)
-                logger.info(f"[generate_presigned_url] Metadados serializados: {file_data['METADADOS']}")
-            
-            logger.info(f"[generate_presigned_url] Salvando file_data no DynamoDB: {file_data}")
+                file_data["METADADOS"] = json.dumps(metadados)
+                meta_preview = file_data["METADADOS"][:800] + (
+                    "…" if len(file_data["METADADOS"]) > 800 else ""
+                )
+                emit_presigned_line(
+                    logger,
+                    "[presigned] trace=%s fase=metadados_serializados chars=%s preview=%r",
+                    trace,
+                    len(file_data["METADADOS"]),
+                    meta_preview,
+                )
+
+            emit_presigned_line(
+                logger,
+                "[presigned] trace=%s fase=dynamodb_put pk=%s sk=%s keys=%s",
+                trace,
+                pk,
+                file_sk,
+                list(file_data.keys()),
+            )
             try:
                 self.repository.put_item(pk, file_sk, file_data)
-                logger.info(f"[generate_presigned_url] File data salvo no DynamoDB com sucesso")
+                emit_presigned_line(logger, "[presigned] trace=%s fase=dynamodb_put_ok", trace)
             except Exception as e:
-                logger.error(f"[generate_presigned_url] Erro ao salvar file_data no DynamoDB: {str(e)}")
-                logger.exception("Traceback completo:")
+                emit_presigned_line(
+                    logger,
+                    "[presigned] trace=%s fase=dynamodb_put_erro erro=%s",
+                    trace,
+                    str(e),
+                    is_error=True,
+                    exc_info=True,
+                )
                 raise
             
             result = {
@@ -179,14 +268,24 @@ class ProcessService:
             }
             if upload_route_kind:
                 result['upload_route_kind'] = upload_route_kind
-            logger.info(f"[generate_presigned_url] Resultado final gerado: {result}")
-            logger.info(f"[generate_presigned_url] Geração de URL pré-assinada concluída com sucesso")
+            emit_presigned_line(
+                logger,
+                "[presigned] trace=%s fase=saida payload_log=%s",
+                trace,
+                presigned_put_response_for_log(result),
+            )
             return result
             
         except Exception as e:
-            logger.error(f"[generate_presigned_url] Erro durante geração de URL pré-assinada: {str(e)}")
-            logger.error(f"[generate_presigned_url] Tipo do erro: {type(e).__name__}")
-            logger.exception("[generate_presigned_url] Traceback completo:")
+            emit_presigned_line(
+                logger,
+                "[presigned] trace=%s fase=falha_geral tipo=%s erro=%s",
+                trace,
+                type(e).__name__,
+                str(e),
+                is_error=True,
+                exc_info=True,
+            )
             raise
     
     def generate_presigned_urls_batch(
@@ -201,6 +300,16 @@ class ProcessService:
         """
         import re
         from src.models.api import MAX_FILES_PER_PROCESS, ALLOWED_CONTENT_TYPES, infer_doc_type_and_folder
+
+        trace = uuid.uuid4().hex[:16]
+        emit_presigned_line(
+            logger,
+            "[presigned_batch] trace=%s fase=entrada process_id=%s files_count=%s file_names=%s",
+            trace,
+            process_id,
+            len(files),
+            [x.get("file_name") for x in files],
+        )
 
         if len(files) > MAX_FILES_PER_PROCESS:
             raise ValueError(
@@ -230,6 +339,14 @@ class ProcessService:
 
         existing = self.repository.query_by_pk_and_sk_prefix(pk, "FILE#")
         existing_count = len(existing)
+        emit_presigned_line(
+            logger,
+            "[presigned_batch] trace=%s fase=limites existing_file_items=%s novos=%s max=%s",
+            trace,
+            existing_count,
+            len(files),
+            MAX_FILES_PER_PROCESS,
+        )
         if existing_count + len(files) > MAX_FILES_PER_PROCESS:
             raise ValueError(
                 f"Processo já tem {existing_count} arquivo(s); "
@@ -237,7 +354,7 @@ class ProcessService:
             )
 
         results: list[Dict[str, str]] = []
-        for f in files:
+        for idx, f in enumerate(files, start=1):
             safe_name = re.sub(r"[^a-zA-Z0-9._-]", "_", f["file_name"])
             upload_id = _new_file_upload_id()
             file_sk = f"FILE#{upload_id}"
@@ -256,14 +373,35 @@ class ProcessService:
                 )
             file_key = f"processes/{process_id}/{folder}/{upload_id}_{safe_name}"
 
+            s3_params = {
+                "Bucket": self.bucket_name,
+                "Key": file_key,
+                "ContentType": f["file_type"],
+            }
+            emit_presigned_line(
+                logger,
+                "[presigned_batch] trace=%s fase=item_pre_s3 idx=%s/%s doc_type=%s folder=%s "
+                "file_sk=%s params=%s ExpiresIn=3600",
+                trace,
+                idx,
+                len(files),
+                doc_type,
+                folder,
+                file_sk,
+                s3_params,
+            )
             url = self.s3_client.generate_presigned_url(
                 "put_object",
-                Params={
-                    "Bucket": self.bucket_name,
-                    "Key": file_key,
-                    "ContentType": f["file_type"],
-                },
+                Params=s3_params,
                 ExpiresIn=3600,
+            )
+            emit_presigned_line(
+                logger,
+                "[presigned_batch] trace=%s fase=item_pos_s3 idx=%s upload_url_chars=%s preview=%s",
+                trace,
+                idx,
+                len(url) if url else 0,
+                safe_presigned_url_preview(url),
             )
 
             file_data = {
@@ -275,6 +413,14 @@ class ProcessService:
                 "FILE_UPLOAD_ID": upload_id,
             }
             self.repository.put_item(pk, file_sk, file_data)
+            emit_presigned_line(
+                logger,
+                "[presigned_batch] trace=%s fase=item_dynamodb_ok idx=%s/%s file_key=%s",
+                trace,
+                idx,
+                len(files),
+                file_key,
+            )
 
             results.append({
                 "file_name": safe_name,
@@ -284,11 +430,14 @@ class ProcessService:
                 "doc_type": doc_type,
             })
 
-        logger.info(
-            "[generate_presigned_urls_batch] %d URLs geradas para processo %s",
-            len(results), process_id,
+        body = {"process_id": process_id, "files": results}
+        emit_presigned_line(
+            logger,
+            "[presigned_batch] trace=%s fase=saida resumo=%s",
+            trace,
+            presigned_batch_response_for_log(body),
         )
-        return {"process_id": process_id, "files": results}
+        return body
 
     def link_pedido_compra_metadata(self, process_id: str, metadados: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -754,10 +903,25 @@ class ProcessService:
     
     def generate_download_url(self, file_key: str) -> str:
         """Gera URL de download para arquivo no S3"""
+        trace = uuid.uuid4().hex[:16]
+        emit_presigned_line(
+            logger,
+            "[presigned_download] trace=%s fase=entrada op=get_object bucket=%s key=%r ExpiresIn=3600",
+            trace,
+            self.bucket_name,
+            file_key,
+        )
         url = self.s3_client.generate_presigned_url(
             'get_object',
             Params={'Bucket': self.bucket_name, 'Key': file_key},
             ExpiresIn=3600
+        )
+        emit_presigned_line(
+            logger,
+            "[presigned_download] trace=%s fase=saida url_chars=%s preview=%s",
+            trace,
+            len(url) if url else 0,
+            safe_presigned_url_preview(url),
         )
         return url
 

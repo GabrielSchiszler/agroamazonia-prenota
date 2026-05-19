@@ -10,6 +10,10 @@ from src.models.api import (
     BatchPresignedUrlRequest, BatchPresignedUrlResponse,
 )
 from src.services.process_service import ProcessService
+from src.utils.presigned_logging import (
+    presigned_batch_response_for_log,
+    presigned_put_response_for_log,
+)
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/process", tags=["Process"])
@@ -31,11 +35,10 @@ async def get_xml_presigned_url(request: XmlPresignedUrlRequest):
         result = service.generate_presigned_url(
             request.process_id, request.file_name, request.file_type, 'DANFE', request.metadados
         )
-        logger.info(f"[get_xml_presigned_url] URL gerada com sucesso!")
-        logger.info(f"[get_xml_presigned_url] file_key: {result.get('file_key')}")
-        logger.info(f"[get_xml_presigned_url] file_name: {result.get('file_name')}")
-        logger.info(f"[get_xml_presigned_url] upload_url (primeiros 100 chars): {result.get('upload_url', '')[:100]}...")
-        logger.info(f"[get_xml_presigned_url] Resposta completa: {result}")
+        logger.info(
+            "[get_xml_presigned_url] fase=saida payload_log=%s",
+            presigned_put_response_for_log(result),
+        )
         logger.info("=" * 80)
         return result
     except ValueError as e:
@@ -67,9 +70,10 @@ async def get_docs_presigned_url(request: DocsPresignedUrlRequest):
         result = service.generate_presigned_url(
             request.process_id, request.file_name, request.file_type, "ADDITIONAL", request.metadados
         )
-        logger.info(f"[get_docs_presigned_url] URL gerada com sucesso!")
-        logger.info(f"[get_docs_presigned_url] file_key: {result.get('file_key')}")
-        logger.info(f"[get_docs_presigned_url] Resposta completa: {result}")
+        logger.info(
+            "[get_docs_presigned_url] fase=saida payload_log=%s",
+            presigned_put_response_for_log(result),
+        )
         logger.info("=" * 80)
         return result
     except ValueError as e:
@@ -92,10 +96,19 @@ async def get_docs_presigned_url(request: DocsPresignedUrlRequest):
 )
 async def get_batch_presigned_urls(request: BatchPresignedUrlRequest):
     """Gera URLs pré-assinadas para N arquivos de uma vez (limite configurável)."""
-    logger.info("[batch_presigned] process_id=%s files=%d", request.process_id, len(request.files))
+    logger.info(
+        "[batch_presigned] fase=entrada process_id=%s files_count=%s names=%s",
+        request.process_id,
+        len(request.files),
+        [f.file_name for f in request.files],
+    )
     try:
         files_dicts = [f.model_dump(exclude_none=True) for f in request.files]
         result = service.generate_presigned_urls_batch(request.process_id, files_dicts)
+        logger.info(
+            "[batch_presigned] fase=saida resumo=%s",
+            presigned_batch_response_for_log(result),
+        )
         return BatchPresignedUrlResponse(**result)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -136,7 +149,7 @@ async def get_presigned_url_by_path_kind(
         doc_type,
     )
     try:
-        return service.generate_presigned_url(
+        out = service.generate_presigned_url(
             request.process_id,
             request.file_name,
             request.file_type,
@@ -144,6 +157,12 @@ async def get_presigned_url_by_path_kind(
             request.metadados,
             upload_route_kind=normalized,
         )
+        logger.info(
+            "[presigned-url/%s] fase=saida payload_log=%s",
+            normalized,
+            presigned_put_response_for_log(out),
+        )
+        return out
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
