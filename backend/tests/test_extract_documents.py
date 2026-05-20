@@ -11,6 +11,7 @@ Covers:
 import io
 import json
 import pytest
+from botocore.exceptions import ClientError
 from unittest.mock import patch, MagicMock
 
 
@@ -194,3 +195,39 @@ class TestExtractDocumentsHappyPath:
         mock_table.query.assert_not_called()
         mock_textract.analyze_document.assert_called_once()
         assert mock_table.put_item.call_args[1]["Item"]["SK"] == "TEXTRACT#doc.pdf"
+
+
+class TestExtractDocumentsRasterFallback:
+    """AnalyzeDocument + DetectDocumentText unsupported → raster PNG por página."""
+
+    @patch("utils.pdf_raster_textract_fallback.textract_line_blocks_from_pdf_via_raster")
+    @patch("extract_documents.handler.textract")
+    @patch("extract_documents.handler.s3")
+    @patch("extract_documents.handler.table")
+    def test_raster_fallback_after_both_unsupported_on_pdf(
+        self, mock_table, mock_s3, mock_textract, mock_raster,
+    ):
+        from extract_documents.handler import handler
+
+        def _unsupported(**kwargs):
+            raise ClientError(
+                {"Error": {"Code": "UnsupportedDocumentException", "Message": "x"}},
+                "Textract",
+            )
+
+        mock_textract.analyze_document.side_effect = _unsupported
+        mock_textract.detect_document_text.side_effect = _unsupported
+        mock_raster.return_value = [
+            {"BlockType": "LINE", "Id": "r0-L0", "Text": "Linha NFSe"},
+        ]
+
+        mock_table.query.return_value = {"Items": [_file_item("nfs-e.pdf")]}
+        mock_s3.head_object.return_value = {"ContentLength": 50_000}
+        mock_s3.get_object.return_value = {"Body": _pdf_body(50_000)}
+
+        result = handler({"process_id": "p1"}, None)
+        assert result["extracted_count"] == 1
+        mock_raster.assert_called_once()
+        saved = mock_table.put_item.call_args[1]["Item"]
+        assert "Linha NFSe" in saved["RAW_TEXT"]
+        assert saved.get("TEXTRACT_MODE") == "detect_document_text_raster_fallback"

@@ -12,6 +12,8 @@ Behaviour:
   2. Skip files already classified as NF-e XML (ends with .xml — parse_xml handles those).
   3. Para PDF / IMAGE: Textract AnalyzeDocument (TABLES+FORMS) ou StartDocumentAnalysis; se o PDF
      for rejeitado com UnsupportedDocumentException, tenta DetectDocumentText (só texto, sem tabelas).
+     Se DetectDocumentText no PDF original também falhar com UnsupportedDocumentException, rasteriza
+     cada página com PyMuPDF → PNG e chama DetectDocumentText por página (texto agregado; sem tabelas).
   4. Antes do Textract, PDFs são inspecionados em bytes (heurística XFA/Encrypt etc.) e o resultado vai
      para os logs CloudWatch para comparar com outros anexos que funcionam.
   5. Para .txt: lê UTF-8 do S3 (sem Textract), grava mesmo schema TEXTRACT# (merge + Bedrock iguais ao PDF).
@@ -74,6 +76,9 @@ def _run_textract_sync(bucket: str, key: str):
 
     Se AnalyzeDocument devolver UnsupportedDocumentException (PDF XFA, encriptado,
     formato exótico), tenta DetectDocumentText (só texto, sem tabelas) como fallback.
+
+    Se o PDF original também for rejeitado por DetectDocumentText (UnsupportedDocumentException), tenta rasterizar
+    páginas (PyMuPDF) e DetectDocumentText em cada PNG (NFSe / codecs internos incompatíveis).
     """
     obj = s3.get_object(Bucket=bucket, Key=key)
     body = obj["Body"].read()
@@ -120,17 +125,62 @@ def _run_textract_sync(bucket: str, key: str):
             return resp2
         except ClientError as e2:
             code2 = (e2.response or {}).get("Error", {}).get("Code", "")
-            logger.error(
-                "DetectDocumentText também falhou key=%s code=%s diag=%s",
+            is_pdf = _ext(key) == ".pdf" or body[:5] == b"%PDF-"
+            if code2 != "UnsupportedDocumentException" or not is_pdf:
+                logger.error(
+                    "DetectDocumentText falhou key=%s code=%s diag=%s",
+                    key,
+                    code2,
+                    json.dumps(diag, ensure_ascii=False, default=str) if diag else "n/a",
+                )
+                raise RuntimeError(
+                    f"Textract rejeitou o documento (AnalyzeDocument e DetectDocumentText). "
+                    f"AnalyzeDocument={code}; DetectDocumentText={code2}. "
+                    f"Diagnóstico: {json.dumps(diag, ensure_ascii=False, default=str) if diag else 'n/a'}"
+                ) from e2
+
+            logger.warning(
+                "DetectDocumentText UnsupportedDocumentException no PDF; "
+                "tentando raster PNG + Detect por página (PyMuPDF). key=%s diag=%s",
                 key,
-                code2,
                 json.dumps(diag, ensure_ascii=False, default=str) if diag else "n/a",
             )
-            raise RuntimeError(
-                f"Textract rejeitou o PDF (AnalyzeDocument e DetectDocumentText). "
-                f"AnalyzeDocument={code}; DetectDocumentText={code2}. "
-                f"Diagnóstico: {json.dumps(diag, ensure_ascii=False, default=str) if diag else 'n/a'}"
-            ) from e2
+            try:
+                from utils.pdf_raster_textract_fallback import (
+                    textract_line_blocks_from_pdf_via_raster,
+                )
+
+                line_blocks = textract_line_blocks_from_pdf_via_raster(
+                    textract,
+                    body,
+                    key,
+                    max_sync_bytes=TEXTRACT_MAX_SYNC_BYTES,
+                    log=logger,
+                )
+                resp3: dict = {
+                    "Blocks": line_blocks,
+                    "_textract_mode": "detect_document_text_raster_fallback",
+                }
+                logger.info(
+                    "Raster+DetectDocumentText OK key=%s line_blocks=%s",
+                    key,
+                    len(line_blocks),
+                )
+                return resp3
+            except Exception as raster_err:
+                logger.error(
+                    "Raster fallback falhou key=%s: %s diag=%s",
+                    key,
+                    raster_err,
+                    json.dumps(diag, ensure_ascii=False, default=str) if diag else "n/a",
+                    exc_info=True,
+                )
+                raise RuntimeError(
+                    f"Textract rejeitou o PDF (AnalyzeDocument, DetectDocumentText no PDF e raster). "
+                    f"AnalyzeDocument={code}; DetectDocumentText={code2}. "
+                    f"Raster: {raster_err}. "
+                    f"Diagnóstico: {json.dumps(diag, ensure_ascii=False, default=str) if diag else 'n/a'}"
+                ) from raster_err
 
 
 def _run_textract_async(bucket: str, key: str):

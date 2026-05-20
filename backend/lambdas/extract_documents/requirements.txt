@@ -1,0 +1,2 @@
+# Bundled by CDK (extract_documents Lambda). PyMuPDF = import fitz
+pymupdf>=1.24.14,<2

@@ -481,7 +481,7 @@ export class AgroAmazoniaStack extends cdk.Stack {
           image: lambda.Runtime.PYTHON_3_12.bundlingImage,
           command: [
             'bash', '-c',
-            'cd extract_documents && cp -au . /asset-output/ && cp -au ../utils /asset-output/utils',
+            'cd extract_documents && pip install -r requirements.txt -t /asset-output && cp -au . /asset-output/ && cp -au ../utils /asset-output/utils',
           ],
         },
       }),
@@ -492,7 +492,7 @@ export class AgroAmazoniaStack extends cdk.Stack {
         TEXTRACT_REGION: 'us-east-1',
       },
       timeout: cdk.Duration.minutes(5),
-      memorySize: 512,
+      memorySize: 1024,
       logRetention: logs.RetentionDays.TWO_WEEKS,
       ...vpcConfig
     });
