@@ -98,9 +98,30 @@ def _find_rb_item_uso_consumo(request_body_data, codigo_produto, merge_index: in
     return None
 
 
+def _pedido_de_compra_from_item_rb(item_rb):
+    """Extrai pedidoDeCompra normalizado do item do requestBody (metadado)."""
+    if not isinstance(item_rb, dict):
+        return None
+    raw = item_rb.get("pedidoDeCompra")
+    if not raw:
+        return None
+    if isinstance(raw, dict):
+        pdc = raw
+    elif isinstance(raw, str):
+        try:
+            pdc = json.loads(raw)
+        except (json.JSONDecodeError, TypeError):
+            return None
+    else:
+        return None
+    if not isinstance(pdc, dict) or not str(pdc.get("pedidoErp") or "").strip():
+        return None
+    return pdc
+
+
 def _merge_uso_consumo_protheus_item(item: dict, item_rb):
     """Preenche codigoProduto a partir do pedido: prioriza ``id``; senão ``codigoProduto`` do item.
-    Repassa codigoOperacao e unidadeMedida (metadado). Remove ``produto`` do payload Protheus."""
+    Repassa codigoOperacao, unidadeMedida e pedidoDeCompra (metadado). Remove ``produto`` do payload Protheus."""
     if not item_rb:
         return item
     iid = item_rb.get("id")
@@ -117,6 +138,9 @@ def _merge_uso_consumo_protheus_item(item: dict, item_rb):
     um = _unidade_medida_from_item_rb(item_rb)
     if um:
         item["unidadeMedida"] = um
+    pdc = _pedido_de_compra_from_item_rb(item_rb)
+    if pdc:
+        item["pedidoDeCompra"] = pdc
     return item
 
 

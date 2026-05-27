@@ -45,6 +45,31 @@ def test_merge_prioriza_id_sobre_codigoProduto():
     assert out["codigoProduto"] == "26480"
 
 
+def test_merge_repassa_pedidoDeCompra_do_pedido():
+    from send_to_protheus.handler import _merge_uso_consumo_protheus_item
+
+    item = {"codigoProduto": "X", "quantidade": 1, "codigoOperacao": "1B"}
+    rb = {
+        "codigoProduto": "AHYMC0000000001",
+        "codigoOperacao": "1B",
+        "pedidoDeCompra": {"pedidoErp": "582992", "itemPedidoErp": "0001"},
+    }
+    out = _merge_uso_consumo_protheus_item(dict(item), rb)
+    assert out["pedidoDeCompra"] == {"pedidoErp": "582992", "itemPedidoErp": "0001"}
+
+
+def test_merge_pedidoDeCompra_sobrescreve_vazio():
+    from send_to_protheus.handler import _merge_uso_consumo_protheus_item
+
+    item = {"codigoProduto": "X", "quantidade": 1}
+    rb = {
+        "codigoProduto": "AHYMC0000000001",
+        "pedidoDeCompra": {"pedidoErp": "AACBKE", "itemPedidoErp": "0002"},
+    }
+    out = _merge_uso_consumo_protheus_item(dict(item), rb)
+    assert out["pedidoDeCompra"]["pedidoErp"] == "AACBKE"
+
+
 def test_quantidade_uc_sem_chave_no_pedido_retorna_1():
     from send_to_protheus.handler import _quantidade_uso_consumo_pedido
 
