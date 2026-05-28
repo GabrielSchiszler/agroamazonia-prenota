@@ -39,9 +39,9 @@ Campos do payload "documento de entrada" Protheus que precisam ser extraídos.
 Se o valor não puder ser determinado com confiança, use null.
 
 {
-  "tipoDeDocumento": "string — ex: NF, NFS",
+  "tipoDeDocumento": "string — ex: N, NFS (use NFS quando for NFS-e)",
   "documento": "string — número do documento / nota",
-  "serie": "string — série da nota",
+  "serie": "string — série da nota; se for NFS-e (Nota Fiscal de Serviço Eletrônica), use SEMPRE \"NFS\"",
   "dataEmissao": "string — formato YYYYMMDD",
   "especie": "string — ex: SPED",
   "chaveAcesso": "string — 44 dígitos da NFe ou null",
@@ -65,6 +65,33 @@ Se o valor não puder ser determinado com confiança, use null.
 """
 
 
+def _pedido_uso_e_consumo(pedido_metadata: Optional[dict]) -> bool:
+    if not isinstance(pedido_metadata, dict):
+        return False
+    rb = pedido_metadata.get("requestBody") or {}
+    if not isinstance(rb, dict):
+        rb = {}
+    header = pedido_metadata.get("header") or {}
+    if not isinstance(header, dict):
+        header = {}
+    for src in (rb, header, pedido_metadata):
+        v = src.get("usoEConsumo")
+        if v is True or (isinstance(v, str) and v.strip().lower() == "true"):
+            return True
+    return False
+
+
+def _nfse_uso_consumo_prompt_lines(pedido_metadata: Optional[dict]) -> list[str]:
+    if not _pedido_uso_e_consumo(pedido_metadata):
+        return []
+    return [
+        "### Uso e consumo + NFS-e",
+        "Processo USO E CONSUMO: anexo costuma ser PDF de serviço (NFS-e), não DANFE de mercadoria.",
+        "Se o documento for NFS-e: serie=\"NFS\" (obrigatório), documento=número da nota, tipoDeDocumento=\"N\".",
+        "",
+    ]
+
+
 def _build_prompt(merged_data: dict, pedido_metadata: Optional[dict]) -> str:
     parts = [
         "Você é um especialista em documentos fiscais brasileiros e integração com ERP Protheus.",
@@ -75,6 +102,13 @@ def _build_prompt(merged_data: dict, pedido_metadata: Optional[dict]) -> str:
         "Se o XML NF-e está disponível, **priorize** seus campos (são estruturados e confiáveis).",
         "Use o texto OCR apenas para complementar campos ausentes no XML.",
         "",
+        "### NFS-e (Nota Fiscal de Serviço Eletrônica)",
+        "Indícios: cabeçalho \"NFS-e\" ou \"Nota Fiscal de Serviço\", ISSQN, código de serviço, ",
+        "discriminação dos serviços, município de incidência, layout municipal/prefeitura.",
+        "Não confundir com NF-e de produto (DANFE, CFOP, ICMS, transportadora).",
+        "Quando for NFS-e: serie=\"NFS\" (literal), documento=número da nota (ex.: 27).",
+        "",
+        *_nfse_uso_consumo_prompt_lines(pedido_metadata),
         "### Schema de saída esperado",
         PROTHEUS_FIELD_SCHEMA,
         "",
@@ -126,6 +160,11 @@ def _build_prompt_single_doc(
         "Se existir XML NF-e de referência, use-o para priorizar campos estruturados da nota; "
         "o texto/tabelas deste arquivo servem para o que for específico deste anexo.",
         "",
+        "### NFS-e (Nota Fiscal de Serviço Eletrônica)",
+        "Se este PDF for NFS-e (serviço): serie=\"NFS\", documento=número da nota.",
+        "Indícios: NFS-e, ISSQN, código de serviço, prestador/tomador do serviço.",
+        "",
+        *_nfse_uso_consumo_prompt_lines(pedido_metadata),
         "### Schema de saída esperado",
         PROTHEUS_FIELD_SCHEMA,
         "",

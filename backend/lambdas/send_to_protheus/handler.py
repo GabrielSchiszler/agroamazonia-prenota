@@ -16,6 +16,7 @@ try:
     from utils.pedido_request_body import uso_e_consumo_active
     from utils.ritm_metadata import get_ritm_from_request_body
     from utils.primary_xml import pick_best_parsed_xml_item
+    from utils.nfse_detection import detect_nfse_from_sources, NFSE_SERIE_PROTHEUS
 except ImportError:
     # Fallback: tentar importar do diretório pai
     sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
@@ -23,6 +24,7 @@ except ImportError:
     from utils.pedido_request_body import uso_e_consumo_active
     from utils.ritm_metadata import get_ritm_from_request_body
     from utils.primary_xml import pick_best_parsed_xml_item
+    from utils.nfse_detection import detect_nfse_from_sources, NFSE_SERIE_PROTHEUS
 
 # Usar região da variável de ambiente para serviços locais (DynamoDB, Secrets Manager)
 aws_region = os.environ.get('AWS_REGION') or os.environ.get('AWS_DEFAULT_REGION')
@@ -1328,6 +1330,88 @@ def _emitente_cnpj_from_ocr_per_document(ocr_data: dict) -> str | None:
     return candidatos[0] if candidatos else None
 
 
+def _backfill_xml_data_from_ocr_hints(xml_data: dict, ocr_data: dict) -> dict:
+    """Preenche campos ausentes do XML com parsed_xml_style dos hints Textract (fluxo PDF/NFS-e)."""
+    out = dict(xml_data) if isinstance(xml_data, dict) else {}
+    if not isinstance(ocr_data, dict):
+        return out
+    for pd in ocr_data.get("per_document") or []:
+        if not isinstance(pd, dict):
+            continue
+        hints = pd.get("protheus_hints")
+        hints = hints if isinstance(hints, dict) else {}
+        px = hints.get("parsed_xml_style")
+        px = px if isinstance(px, dict) else {}
+        for key in ("numero_nota", "serie", "chave_acesso", "tipo_documento_fiscal"):
+            if not out.get(key) and px.get(key):
+                out[key] = px[key]
+        if not out.get("numero_nota") and hints.get("numeroNota"):
+            out["numero_nota"] = hints["numeroNota"]
+        if not out.get("serie") and hints.get("serie"):
+            out["serie"] = hints["serie"]
+        if not out.get("chave_acesso") and hints.get("chaveAcesso"):
+            out["chave_acesso"] = hints["chaveAcesso"]
+        em = px.get("emitente")
+        if isinstance(em, dict) and em.get("cnpj") and not (out.get("emitente") or {}).get("cnpj"):
+            out.setdefault("emitente", {})["cnpj"] = em["cnpj"]
+        dest = px.get("destinatario")
+        if isinstance(dest, dict) and dest.get("cnpj") and not (out.get("destinatario") or {}).get("cnpj"):
+            out.setdefault("destinatario", {})["cnpj"] = dest["cnpj"]
+    return out
+
+
+def _ocr_texts_and_file_names(ocr_data: dict) -> tuple[list[str], list[str]]:
+    texts: list[str] = []
+    names: list[str] = []
+    if not isinstance(ocr_data, dict):
+        return texts, names
+    raw = ocr_data.get("raw_text")
+    if raw and str(raw).strip():
+        texts.append(str(raw))
+    for pd in ocr_data.get("per_document") or []:
+        if not isinstance(pd, dict):
+            continue
+        fn = pd.get("file_name")
+        if fn:
+            names.append(str(fn))
+    return texts, names
+
+
+def _apply_nfse_serie_and_numero(
+    serie: str,
+    numero_documento: str,
+    *,
+    modelo: str,
+    xml_data: dict,
+    ocr_data: dict,
+    bedrock_extraction: dict,
+    uso_merge: bool = False,
+) -> tuple[str, str]:
+    """Se NFS-e (serviço), série Protheus = NFS; complementa número da nota quando ausente."""
+    texts, file_names = _ocr_texts_and_file_names(ocr_data)
+    nfse = detect_nfse_from_sources(
+        raw_texts=texts,
+        file_names=file_names,
+        bedrock_fields=bedrock_extraction if isinstance(bedrock_extraction, dict) else {},
+        xml_modelo=modelo,
+        uso_e_consumo=uso_merge,
+    )
+    if xml_data.get("tipo_documento_fiscal") == "NFSE":
+        nfse = {**nfse, "is_nfse": True, "serie": NFSE_SERIE_PROTHEUS}
+    if not nfse.get("is_nfse"):
+        return serie, numero_documento
+    serie = NFSE_SERIE_PROTHEUS
+    if not numero_documento and nfse.get("numero_nota"):
+        numero_documento = str(nfse["numero_nota"]).strip()
+    tag = "[7.2.UC.NFSE]" if uso_merge else "[7.1.NFSE]"
+    print(
+        f"{tag} Documento classificado como NFS-e — serie={serie!r}, "
+        f"documento={numero_documento or '(pendente)'}"
+        + (" (uso e consumo)" if uso_merge else "")
+    )
+    return serie, numero_documento
+
+
 def lambda_handler(event, context):
     print("="*80)
     print("SEND TO PROTHEUS - INICIO")
@@ -1593,6 +1677,8 @@ def lambda_handler(event, context):
             print(f"[6.3] ERRO ao parsear OCR data: {e}")
     else:
         print(f"[6.3] OCR data não disponível")
+
+    xml_data = _backfill_xml_data_from_ocr_hints(xml_data, ocr_data)
     
     # Montar payload para Protheus
     print(f"\n[7] Montando payload para Protheus...")
@@ -1725,6 +1811,17 @@ def lambda_handler(event, context):
     if uso_merge:
         tipo_documento = "N"
         print(f"[7.2.UC] tipoDeDocumento forçado para N (USO E CONSUMO)")
+
+    # NFS-e (PDF serviço): série NFS — também no fluxo uso e consumo (após regras UC)
+    serie, numero_documento = _apply_nfse_serie_and_numero(
+        serie,
+        numero_documento,
+        modelo=modelo,
+        xml_data=xml_data if isinstance(xml_data, dict) else {},
+        ocr_data=ocr_data,
+        bedrock_extraction=bedrock_extraction,
+        uso_merge=uso_merge,
+    )
 
     print(f"[7.2] Campos mapeados:")
     print(f"  tipoDeDocumento: {tipo_documento} (modelo: {modelo})")

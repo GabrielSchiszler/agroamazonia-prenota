@@ -130,6 +130,36 @@ def handler(event, context):
             logger.warning(f"[handler] Falha ao parsear PARSED_DATA do XML principal: {e}")
 
     if not danfe_data:
+        merged_item = next((item for item in items if item.get('SK') == 'MERGED_EXTRACTION'), None)
+        if merged_item and merged_item.get('MERGED_DATA'):
+            try:
+                merged = json.loads(merged_item['MERGED_DATA'])
+                for doc in merged.get('textract_documents') or []:
+                    hints = doc.get('protheus_hints') or {}
+                    px = hints.get('parsed_xml_style') or {}
+                    if not px and not hints.get('tipoDocumentoFiscal'):
+                        continue
+                    parsed_nfse = dict(px)
+                    if hints.get('serie'):
+                        parsed_nfse.setdefault('serie', hints['serie'])
+                    if hints.get('numeroNota'):
+                        parsed_nfse.setdefault('numero_nota', hints['numeroNota'])
+                    if hints.get('tipoDocumentoFiscal'):
+                        parsed_nfse['tipo_documento_fiscal'] = hints['tipoDocumentoFiscal']
+                    danfe_data = {
+                        'file_name': doc.get('file_name') or 'textract',
+                        'data': parsed_nfse,
+                    }
+                    logger.info(
+                        "[handler] DANFE sintético a partir de Textract/NFS-e: %s serie=%s",
+                        doc.get('file_name'),
+                        parsed_nfse.get('serie'),
+                    )
+                    break
+            except Exception as e:
+                logger.warning(f"[handler] Falha ao montar danfe de MERGED_EXTRACTION: {e}")
+
+    if not danfe_data:
         logger.warning("DANFE XML not found, skipping validation")
         return {
             'process_id': process_id,

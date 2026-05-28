@@ -1,6 +1,8 @@
 import logging
 logger = logging.getLogger()
 
+from utils.nfse_detection import NFSE_SERIE_PROTHEUS, is_nfse_danfe_data
+
 from .ocr_utils import are_similar_with_ocr_tolerance
 
 def normalize_value(value):
@@ -8,12 +10,23 @@ def normalize_value(value):
         return ""
     return str(value).strip().lstrip('0') or '0'
 
+
+def _normalize_serie_compare(value, *, nfse_context: bool = False) -> str:
+    s = str(value or "").strip().upper()
+    if nfse_context and s in ("", NFSE_SERIE_PROTHEUS, "NFSE", "NFS-E"):
+        return NFSE_SERIE_PROTHEUS
+    if s == NFSE_SERIE_PROTHEUS:
+        return NFSE_SERIE_PROTHEUS
+    return normalize_value(value)
+
+
 def validate(danfe_data, ocr_docs):
     import logging
     logger = logging.getLogger()
     logger.info(f"[validar_serie.py] Starting validation with {len(ocr_docs)} docs")
-    danfe_serie = danfe_data.get('serie', '')
-    normalized_danfe = normalize_value(danfe_serie)
+    nfse_doc = is_nfse_danfe_data(danfe_data)
+    danfe_serie = danfe_data.get('serie', '') or (NFSE_SERIE_PROTHEUS if nfse_doc else '')
+    normalized_danfe = _normalize_serie_compare(danfe_serie, nfse_context=nfse_doc)
     
     comparisons = []
     all_match = True
@@ -30,13 +43,20 @@ def validate(danfe_data, ocr_docs):
             # Buscar série nos metadados do JSON do pedido de compra
             doc_serie = doc.get('serie') or doc.get('serieDocumento')
         
-        normalized_doc = normalize_value(doc_serie) if doc_serie else ''
+        normalized_doc = _normalize_serie_compare(doc_serie, nfse_context=nfse_doc) if doc_serie else ''
         corrected_value = None
         
         if not doc_serie:
-            status = 'MISMATCH'
-            all_match = False
-            logger.warning(f"[validar_serie] Doc {doc_file} - Série não encontrada no JSON do pedido de compra")
+            if nfse_doc:
+                status = 'MATCH'
+                logger.info(
+                    f"[validar_serie] Doc {doc_file} - NFS-e: série NFS inferida do documento "
+                    f"(pedido sem serie/serieDocumento)"
+                )
+            else:
+                status = 'MISMATCH'
+                all_match = False
+                logger.warning(f"[validar_serie] Doc {doc_file} - Série não encontrada no JSON do pedido de compra")
         elif normalized_danfe == normalized_doc:
             status = 'MATCH'
         else:

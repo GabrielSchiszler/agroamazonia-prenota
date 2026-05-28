@@ -25,6 +25,9 @@ R$ 8.170,58
     assert px["emitente"]["cnpj"] == "19378380000120"
     assert px["destinatario"]["cnpj"] == "13563680003380"
     assert px["totais"]["valor_nota"] == "8.170,58"
+    assert h.get("serie") == "NFS"
+    assert h.get("tipoDocumentoFiscal") == "NFSE"
+    assert px.get("serie") == "NFS"
     assert "cnpjs_encontrados" not in h
     assert "valores_rs_sample" not in h
 

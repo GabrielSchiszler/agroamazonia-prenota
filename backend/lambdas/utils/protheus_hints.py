@@ -9,6 +9,8 @@ from __future__ import annotations
 import re
 from typing import Optional
 
+from utils.nfse_detection import detect_nfse_from_text
+
 # UF numérico na chave de acesso (NF-e / documentos eletrônicos comuns)
 _VALID_UF = {
     11, 12, 13, 14, 15, 16, 17, 21, 22, 23, 24, 25, 26, 27, 28, 29, 31, 32, 33, 35, 41, 42, 43, 50, 51, 52, 53,
@@ -217,6 +219,13 @@ def hints_from_textract_text(text: str) -> dict[str, object]:
     if valor_doc:
         out["valorDocumento"] = valor_doc
 
+    nfse = detect_nfse_from_text(text)
+    if nfse.get("is_nfse"):
+        out["tipoDocumentoFiscal"] = nfse.get("tipo_documento_fiscal", "NFSE")
+        out["serie"] = nfse.get("serie", "NFS")
+        if nfse.get("numero_nota"):
+            out["numeroNota"] = nfse["numero_nota"]
+
     return enrich_hints_with_xml_style(out)
 
 
@@ -251,6 +260,12 @@ def enrich_hints_with_xml_style(hints: dict[str, object]) -> dict[str, object]:
 
     if out.get("valorDocumento") is not None and str(out.get("valorDocumento")).strip() != "":
         px["totais"] = {"valor_nota": str(out["valorDocumento"]).strip()}
+
+    if out.get("tipoDocumentoFiscal") == "NFSE" or out.get("serie") == "NFS":
+        px["serie"] = str(out.get("serie") or "NFS")
+        px["tipo_documento_fiscal"] = "NFSE"
+    if out.get("numeroNota"):
+        px["numero_nota"] = str(out["numeroNota"]).strip()
 
     if px:
         out["parsed_xml_style"] = px
