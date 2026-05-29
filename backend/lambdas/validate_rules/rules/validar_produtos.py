@@ -136,6 +136,20 @@ def find_matching_product(danfe_prod, doc_produtos, used_indices):
     
     logger.info(f"[validar_produtos] Buscando match para produto DANFE:")
     logger.info(f"  Nome: '{danfe_nome}'")
+
+    # PRIORIDADE 0: Match por código fornecedor (codProdFornecedor) vs código XML (cProd)
+    danfe_codigo = normalize_codigo(danfe_prod.get('codigo', ''))
+    if danfe_codigo:
+        for i, doc_prod in enumerate(doc_produtos):
+            if i in used_indices:
+                continue
+            doc_cod_fornecedor = normalize_codigo(doc_prod.get('codProdFornecedor', ''))
+            if doc_cod_fornecedor and doc_cod_fornecedor == danfe_codigo:
+                logger.info(
+                    f"  ✓ MATCH por codProdFornecedor no índice {i} "
+                    f"(XML código: '{danfe_codigo}', codProdFornecedor: '{doc_cod_fornecedor}')"
+                )
+                return i, doc_prod, True
     
     # PRIORIDADE 1: Match exato por nome (case-insensitive)
     danfe_nome_upper = danfe_nome.upper()
@@ -409,7 +423,11 @@ def try_resolve_multi_lot_single_pedido_line(
     )
     doc_prod = doc_produtos[doc_idx]
     dc = normalize_codigo(danfe_prod.get('codigo', ''))
-    dpc = normalize_codigo(doc_prod.get('codigoProduto') or doc_prod.get('codigo', ''))
+    dpc = normalize_codigo(
+        doc_prod.get('codigoProduto')
+        or doc_prod.get('codProdFornecedor')
+        or doc_prod.get('codigo', '')
+    )
     has_equivalent_code = bool(dc and dpc and dc == dpc)
     return doc_idx, doc_prod, has_equivalent_code
 
@@ -445,7 +463,9 @@ def _append_matched_line_detail(
         nome_cmp.get("bedrock") if isinstance(nome_cmp, dict) else None
     )
 
-    if nome_status not in ["MATCH", "MISMATCH"]:
+    if has_equivalent_code:
+        nome_status = "MATCH"
+    elif nome_status not in ["MATCH", "MISMATCH"]:
         danfe_words = set(w.upper() for w in danfe_nome.split() if len(w) > 2)
         doc_words = set(w.upper() for w in doc_nome.split() if len(w) > 2)
         common_words = danfe_words & doc_words

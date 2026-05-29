@@ -53,7 +53,7 @@ def validate(danfe_data, ocr_docs):
         'rule': 'validar_serie',
         'status': 'PASSED' if all_match else 'FAILED',
         'danfe_value': danfe_serie,
-        'message': 'Série validada em todos os documentos' if all_match else 'Divergência na série',
+        'message': 'Série validada em todos os pedidos de compra' if all_match else 'Divergência na série',
         'comparisons': comparisons,
         'corrections': corrections
     }

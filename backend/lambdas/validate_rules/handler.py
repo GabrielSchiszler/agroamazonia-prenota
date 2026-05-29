@@ -152,6 +152,7 @@ def handler(event, context):
         request_body_itens = [
             {
                 'codigoProduto': item.get('codigoProduto', ''),
+                'codProdFornecedor': item.get('codProdFornecedor', ''),
                 'produto': item.get('produto', ''),
                 'nomeProduto': item.get('produto', ''),  # Alias para compatibilidade
                 'nome': item.get('produto', ''),  # Alias para compatibilidade

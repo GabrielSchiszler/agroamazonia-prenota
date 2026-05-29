@@ -29,6 +29,11 @@ def generate_error_summary_with_bedrock(error_data):
 
 Sua tarefa é analisar o erro técnico fornecido e transformá-lo em uma mensagem completa, detalhada e fácil de entender, incluindo APENAS os dados RELEVANTES para o problema específico.
 
+TERMINOLOGIA OBRIGATÓRIA:
+- Use "pedido de compra" quando se referir ao lado DOC/comparação do JSON de metadados.
+- Use "nota fiscal" quando se referir ao DANFE/NF-e.
+- Evite usar "documento" isolado quando na verdade for pedido de compra.
+
 REGRAS OBRIGATÓRIAS:
 
 1. IDENTIFIQUE O PROBLEMA PRINCIPAL PRIMEIRO:

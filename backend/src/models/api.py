@@ -110,6 +110,7 @@ class PedidoCompraMetadataRequest(BaseModel):
                         "itens": [
                             {
                                 "codigoProduto": "41500001BD00205",
+                                "codProdFornecedor": "00041500001BD00205",
                                 "quantidade": 1,
                                 "valorUnitario": 880,
                                 "codigoOperacao": "1B",

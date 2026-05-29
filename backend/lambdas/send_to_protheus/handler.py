@@ -53,6 +53,23 @@ def _get_secret(secret_id: str) -> dict:
         return json.loads(resp["SecretString"])
     return json.loads(resp["SecretBinary"].decode("utf-8"))
 
+
+def _norm_prod_code(value) -> str:
+    code = str(value or "").strip()
+    if code.isdigit():
+        return code.lstrip("0") or "0"
+    return code
+
+
+def _rb_item_matches_xml_code(item_rb: dict, xml_or_payload_code: str) -> bool:
+    target = _norm_prod_code(xml_or_payload_code)
+    if not target:
+        return False
+    for key in ("codigoProduto", "codProdFornecedor", "id"):
+        if _norm_prod_code(item_rb.get(key)) == target:
+            return True
+    return False
+
 def get_ocr_failure_oauth2_token():
     """
     Obtém token de acesso OAuth2 para API de reporte de falhas OCR.
@@ -1506,6 +1523,7 @@ def lambda_handler(event, context):
         for idx, item_rb in enumerate(request_body_data['itens'], 1):
             print(f"[8.0.{idx}] Item {idx} completo:")
             print(f"  - codigoProduto: {item_rb.get('codigoProduto', 'N/A')}")
+            print(f"  - codProdFornecedor: {item_rb.get('codProdFornecedor', 'N/A')}")
             print(f"  - produto: {item_rb.get('produto', 'N/A')}")
             print(f"  - pedidoDeCompra (tipo): {type(item_rb.get('pedidoDeCompra'))}")
             print(f"  - pedidoDeCompra (valor): {item_rb.get('pedidoDeCompra')}")
@@ -1602,7 +1620,11 @@ def lambda_handler(event, context):
                         pedido_de_compra = {}
                         print(f"[8.2.3.DEBUG] pedidoDeCompra_raw é None/False/vazio, usando dict vazio")
                     
-                    codigo_produto_rb = item_request_body.get('codigoProduto', '').strip()
+                    codigo_produto_rb = (
+                        item_request_body.get('codigoProduto')
+                        or item_request_body.get('codProdFornecedor')
+                        or ''
+                    ).strip()
                     print(f"[8.2.3] Item do requestBody encontrado na posição DOC {doc_pos}:")
                     print(f"[8.2.3.1] Código do produto: {codigo_produto_rb}")
                     print(f"[8.2.3.2] pedidoDeCompra (final): {pedido_de_compra}")
@@ -1649,7 +1671,11 @@ def lambda_handler(event, context):
                                 
                                 if len(palavras_comuns) >= 2 or nome_xml_norm in nome_rb_norm or nome_rb_norm in nome_xml_norm:
                                     pedido_de_compra = item_rb.get('pedidoDeCompra', {})
-                                    codigo_produto_rb = item_rb.get('codigoProduto', '').strip()
+                                    codigo_produto_rb = (
+                                        item_rb.get('codigoProduto')
+                                        or item_rb.get('codProdFornecedor')
+                                        or ''
+                                    ).strip()
                                     print(f"[8.2.2.1] Código do produto encontrado no requestBody: {codigo_produto_rb}")
                                     break
                     
@@ -1716,7 +1742,12 @@ def lambda_handler(event, context):
                         if item_pedido and pedido_de_compra:
                             if (item_pedido.get('pedidoErp') == pedido_de_compra.get('pedidoErp') and
                                 item_pedido.get('itemPedidoErp') == pedido_de_compra.get('itemPedidoErp')):
-                                codigo_produto = item_rb.get('codigoProduto', '').strip()
+                                codigo_produto = (
+                                    item_rb.get('codigoProduto')
+                                    or item_rb.get('codProdFornecedor')
+                                    or ''
+                                ).strip()
+                                cod_prod_fornecedor = str(item_rb.get('codProdFornecedor') or '').strip()
                                 print(f"[8.{idx}.1] Código do produto encontrado no requestBody (por pedidoDeCompra): {codigo_produto}")
                                 break
                 
@@ -1739,18 +1770,15 @@ def lambda_handler(event, context):
             
             # Variável para armazenar codigoOperacao vindo do pedido de compra (prioridade sobre CFOP mapping)
             codigo_operacao_from_metadata = None
+            cod_prod_fornecedor = ''
             
             # Tentar buscar codigoOperacao do item no requestBody pelo código do produto
             if request_body_data and request_body_data.get('itens'):
                 for item_rb_check in request_body_data['itens']:
-                    codigo_rb_check = item_rb_check.get('codigoProduto', '').strip()
-                    if codigo_produto and codigo_rb_check:
-                        codigo_rb_norm = codigo_rb_check.lstrip('0') or '0'
-                        codigo_prod_norm = codigo_produto.lstrip('0') or '0'
-                        if codigo_rb_norm == codigo_prod_norm and item_rb_check.get('codigoOperacao'):
-                            codigo_operacao_from_metadata = item_rb_check['codigoOperacao']
-                            print(f"[8.{idx}.8.1] codigoOperacao encontrado no requestBody por código: {codigo_operacao_from_metadata}")
-                            break
+                    if _rb_item_matches_xml_code(item_rb_check, codigo_produto) and item_rb_check.get('codigoOperacao'):
+                        codigo_operacao_from_metadata = item_rb_check['codigoOperacao']
+                        print(f"[8.{idx}.8.1] codigoOperacao encontrado no requestBody por código: {codigo_operacao_from_metadata}")
+                        break
             
             # Se não encontrou pedidoDeCompra, tentar buscar novamente
             if not pedido_de_compra or not pedido_de_compra.get('pedidoErp'):
@@ -1807,6 +1835,7 @@ def lambda_handler(event, context):
                                         pedido_de_compra = {}
                                 else:
                                     pedido_de_compra = {}
+                                cod_prod_fornecedor = str(item_rb.get('codProdFornecedor') or '').strip()
                                 
                                 print(f"[8.{idx}.10] pedidoDeCompra encontrado por nome: {pedido_de_compra}")
                                 
@@ -1824,8 +1853,12 @@ def lambda_handler(event, context):
                         print(f"[8.{idx}.9.DEBUG] Buscando por código (fallback):")
                         print(f"  - codigo_produto procurado: {codigo_produto}")
                         for item_idx, item_rb in enumerate(request_body_data['itens'], 1):
-                            codigo_rb = item_rb.get('codigoProduto', '').lstrip('0') or '0'
-                            codigo_produto_normalized = codigo_produto.lstrip('0') or '0'
+                            codigo_rb = _norm_prod_code(
+                                item_rb.get('codigoProduto')
+                                or item_rb.get('codProdFornecedor')
+                                or item_rb.get('id')
+                            )
+                            codigo_produto_normalized = _norm_prod_code(codigo_produto)
                             print(f"[8.{idx}.9.DEBUG.{item_idx}] Comparando códigos:")
                             print(f"  - codigo_rb: {codigo_rb}")
                             print(f"  - codigo_produto_normalized: {codigo_produto_normalized}")
@@ -1849,6 +1882,7 @@ def lambda_handler(event, context):
                                         pedido_de_compra = {}
                                 else:
                                     pedido_de_compra = {}
+                                cod_prod_fornecedor = str(item_rb.get('codProdFornecedor') or '').strip()
                                 
                                 print(f"[8.{idx}.11] pedidoDeCompra encontrado por código: {pedido_de_compra}")
                                 
@@ -1889,6 +1923,8 @@ def lambda_handler(event, context):
                 "valorUnitario": valor_unitario,
                 "codigoOperacao": codigo_operacao
             }
+            if cod_prod_fornecedor:
+                item["codProdFornecedor"] = cod_prod_fornecedor
             if isinstance(produto_xml, dict) and "valor_desconto" in produto_xml:
                 vd_xml = produto_xml.get("valor_desconto")
                 if vd_xml is not None and str(vd_xml).strip() != "":
@@ -1938,7 +1974,12 @@ def lambda_handler(event, context):
             try:
                 # Formato antigo: produtos do XML ou requestBody
                 # Normalizar código produto (remover zeros à esquerda se numérico)
-                codigo = produto.get('codigo', '')
+                codigo = (
+                    produto.get('codigo')
+                    or produto.get('codigoProduto')
+                    or produto.get('codProdFornecedor')
+                    or ''
+                )
                 if codigo.isdigit():
                     codigo = codigo.lstrip('0') or '0'
                 
@@ -1949,14 +1990,10 @@ def lambda_handler(event, context):
                 # Prioridade 1: codigoOperacao do requestBody (pedido de compra)
                 if request_body_data and request_body_data.get('itens'):
                     for item_rb_check in request_body_data['itens']:
-                        codigo_rb_check = item_rb_check.get('codigoProduto', '').strip()
-                        if codigo and codigo_rb_check:
-                            codigo_rb_norm = codigo_rb_check.lstrip('0') or '0'
-                            codigo_norm = codigo.lstrip('0') or '0'
-                            if codigo_rb_norm == codigo_norm and item_rb_check.get('codigoOperacao'):
-                                codigo_operacao = item_rb_check['codigoOperacao']
-                                print(f"[8.{idx}] Produto {idx}: codigoOperacao do pedido de compra: {codigo_operacao}")
-                                break
+                        if _rb_item_matches_xml_code(item_rb_check, codigo) and item_rb_check.get('codigoOperacao'):
+                            codigo_operacao = item_rb_check['codigoOperacao']
+                            print(f"[8.{idx}] Produto {idx}: codigoOperacao do pedido de compra: {codigo_operacao}")
+                            break
                 
                 if not codigo_operacao:
                     if cfop_mapping and cfop_mapping.get('chave'):
@@ -1985,6 +2022,9 @@ def lambda_handler(event, context):
                     "codigoOperacao": codigo_operacao,
                     "pedidoDeCompra": pedido_de_compra
                 }
+                cod_prod_fornecedor_fb = str(produto.get('codProdFornecedor') or '').strip()
+                if cod_prod_fornecedor_fb:
+                    item["codProdFornecedor"] = cod_prod_fornecedor_fb
                 if isinstance(produto, dict) and "valor_desconto" in produto:
                     vd_fb = produto.get("valor_desconto")
                     if vd_fb is not None and str(vd_fb).strip() != "":

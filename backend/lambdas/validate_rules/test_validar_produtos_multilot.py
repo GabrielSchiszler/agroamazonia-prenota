@@ -76,6 +76,15 @@ def _pedido_item(codigo, pedido_erp, item_erp):
     }
 
 
+def _pedido_item_fornecedor(cod_fornecedor, nome):
+    return {
+        "codProdFornecedor": cod_fornecedor,
+        "produto": nome,
+        "quantidade": 1,
+        "pedidoDeCompra": {"pedidoErp": "PEDFORN", "itemPedidoErp": "0001"},
+    }
+
+
 def _load_produtos_from_nfe_xml():
     path = _xml_path()
     if not os.path.isfile(path):
@@ -185,6 +194,33 @@ class TestNfeOpteraduoXmlReal(unittest.TestCase):
                 continue
             self.assertEqual(it["status"], "MATCH")
             self.assertEqual(it["doc_position"], 1)
+
+
+class TestCodProdFornecedor(unittest.TestCase):
+    @patch("rules.utils.compare_with_bedrock")
+    def test_match_por_cod_prod_fornecedor_prioritario(self, mock_bedrock):
+        mock_bedrock.return_value = {"status": "MISMATCH"}
+        from rules.validar_produtos import validate_products_comparison
+
+        danfe = [{"descricao": "NOME XML DIFERENTE", "codigo": "00026480", "quantidade": "1"}]
+        doc = [_pedido_item_fornecedor("26480", "NOME PEDIDO DIFERENTE")]
+
+        out = validate_products_comparison(danfe, doc, "pedido.json", "METADADOS JSON", None)
+        self.assertTrue(out["has_match"], msg=out)
+        self.assertEqual(out["matched_danfe_positions"], [1], msg=out)
+        self.assertEqual(out["comparison"]["items"][0]["status"], "MATCH")
+
+    @patch("rules.utils.compare_with_bedrock")
+    def test_fallback_nome_quando_cod_prod_fornecedor_nao_bate(self, mock_bedrock):
+        mock_bedrock.return_value = {"status": "MATCH"}
+        from rules.validar_produtos import validate_products_comparison
+
+        danfe = [{"descricao": "FERTILIZANTE TOP PHOS", "codigo": "123", "quantidade": "1"}]
+        doc = [_pedido_item_fornecedor("999", "FERTILIZANTE TOP PHOS")]
+
+        out = validate_products_comparison(danfe, doc, "pedido.json", "METADADOS JSON", None)
+        self.assertTrue(out["has_match"], msg=out)
+        self.assertEqual(out["comparison"]["items"][0]["status"], "MATCH")
 
 
 if __name__ == "__main__":

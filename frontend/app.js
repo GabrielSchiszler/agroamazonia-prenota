@@ -1472,7 +1472,7 @@ async function loadProcessFiles() {
             `;
         }).join('');
     } else {
-        docsList.innerHTML = '<p style="color: #999; font-size: 0.9em;">Nenhum documento adicional</p>';
+        docsList.innerHTML = '<p style="color: #999; font-size: 0.9em;">Nenhum pedido de compra vinculado</p>';
     }
     
     // Carregar dados extraídos e validações se processo estiver completo, validado ou falhou
@@ -1683,7 +1683,7 @@ async function uploadFile(file, docType, fileInput, userMetadata = null) {
         });
 
         const metadataMsg = userMetadata ? ' com metadados' : '';
-        showToast(`✓ ${docType === 'DANFE' ? 'DANFE' : 'Documento'} enviado${metadataMsg}!`, 'success');
+        showToast(`✓ ${docType === 'DANFE' ? 'DANFE' : 'Pedido de compra'} enviado${metadataMsg}!`, 'success');
         fileInput.value = '';
         
         // Limpar campos de metadados após upload bem-sucedido
