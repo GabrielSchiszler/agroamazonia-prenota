@@ -25,8 +25,53 @@ let selectedProcess = null;
 let refreshInterval = null;
 let currentPage = 'dashboard';
 let dailyProcessesChart, successErrorRateChart, hourlyChart, errorChart, typeChart, failedRulesChart, failedRulesByDayChart;
+let regrasLabelsCatalog = null;
 
 // Removido: PROCESS_RULES hardcoded - agora busca do backend
+
+/** Catálogo de labels (API ou regras_labels_catalog.json estático). */
+async function ensureRegrasLabelsCatalog(metricsPayload) {
+    if (metricsPayload?.regras_labels) {
+        regrasLabelsCatalog = metricsPayload.regras_labels;
+        return;
+    }
+    if (regrasLabelsCatalog) return;
+    try {
+        const res = await fetch('regras_labels_catalog.json', { cache: 'no-cache' });
+        if (res.ok) {
+            regrasLabelsCatalog = await res.json();
+        }
+    } catch (e) {
+        console.warn('[Dashboard] Catálogo de labels de regras não carregado:', e);
+    }
+}
+
+function formatRegraLabel(regraId, catalog) {
+    const cat = catalog || regrasLabelsCatalog;
+    if (!regraId) return '';
+    const meta = cat?.[regraId];
+    if (meta) {
+        return meta.label || meta.mensagem_resumo || regraId;
+    }
+    return regraId;
+}
+
+function regraLabelWithCategory(regraId, catalog) {
+    const cat = catalog || regrasLabelsCatalog;
+    const meta = cat?.[regraId];
+    if (!meta) return formatRegraLabel(regraId, cat);
+    const msg = meta.mensagem_resumo || meta.label || regraId;
+    const categoria = meta.categoria;
+    if (categoria && categoria !== msg) {
+        return `${categoria}: ${msg}`;
+    }
+    return msg;
+}
+
+function truncateRegraLabel(text, maxLen = 56) {
+    if (!text || text.length <= maxLen) return text;
+    return text.slice(0, maxLen - 1) + '…';
+}
 
 document.addEventListener('DOMContentLoaded', async function() {
     console.log('[App] DOMContentLoaded - Iniciando...');
@@ -64,11 +109,15 @@ document.addEventListener('DOMContentLoaded', async function() {
         document.getElementById('apiUrl').value = API_URL;
     }
 
-    // Carregar regras disponíveis do backend primeiro
+    // Carregar regras disponíveis do backend primeiro (página de regras)
     loadAvailableRules().then(() => {
-        showRules('AGROQUIMICOS');
+        if (document.getElementById('rulesDisplay')) {
+            showRules('AGROQUIMICOS');
+        }
     });
-    loadProcesses();
+    if (document.getElementById('processesList')) {
+        loadProcesses();
+    }
     loadDashboardMetrics();
 });
 
@@ -120,6 +169,7 @@ async function loadDashboardMetrics() {
         }
 
         const data = await response.json();
+        await ensureRegrasLabelsCatalog(data);
         
         // Verificar novamente se os elementos existem antes de atualizar
         if (isDashboardPage()) {
@@ -251,6 +301,12 @@ function updateMetricCards(data) {
     const totalLabelEl = document.getElementById('totalLabel');
     const successLabelEl = document.getElementById('successLabel');
     const failedLabelEl = document.getElementById('failedLabel');
+    const prenotaTodayEl = document.getElementById('prenotaToday');
+    const classifiedTodayEl = document.getElementById('classifiedToday');
+    const prenotaLabelEl = document.getElementById('prenotaLabel');
+    const classifiedLabelEl = document.getElementById('classifiedLabel');
+    const processFailureTodayEl = document.getElementById('processFailureToday');
+    const processFailureLabelEl = document.getElementById('processFailureLabel');
     
     // Se nenhum elemento existir, não fazer nada (não estamos na página do dashboard)
     if (!totalTodayEl && !successTodayEl && !failedTodayEl) {
@@ -264,15 +320,21 @@ function updateMetricCards(data) {
     // Determinar se há filtro de período ativo
     const hasPeriodFilter = currentStartDate && currentEndDate;
     
-    let total, success, failed, successRate, avgTime, periodLabel;
+    let total, success, failed, processFailure, successRate, avgTime, periodLabel;
+    let prenota = 0;
+    let classified = 0;
     
     if (hasPeriodFilter) {
         // Filtro de período ativo → usar summary do período (inclui "hoje")
         total = summary.total ?? 0;
         success = summary.success ?? 0;
         failed = summary.failed ?? 0;
-        successRate = summary.success_rate ?? 0;
+        processFailure = summary.skipped_operacional ?? 0;
         avgTime = summary.avg_processing_time ?? 0;
+        prenota = summary.success_prenota ?? 0;
+        classified = summary.success_classified ?? Math.max(0, success - prenota);
+        const outcomeTotal = success + failed;
+        successRate = outcomeTotal > 0 ? (success / outcomeTotal) * 100 : (summary.success_rate ?? 0);
         
         const startDate = parseDateLocal(currentStartDate);
         const endDate = parseDateLocal(currentEndDate);
@@ -286,20 +348,32 @@ function updateMetricCards(data) {
         total = todayData.total_count ?? 0;
         success = todayData.success_count ?? 0;
         failed = todayData.failed_count ?? 0;
-        successRate = todayData.success_rate ?? 0;
+        processFailure = todayData.skipped_operacional ?? 0;
         avgTime = todayData.avg_processing_time ?? 0;
+        prenota = todayData.success_prenota_count ?? 0;
+        classified = todayData.success_classified_count ?? Math.max(0, success - prenota);
+        const outcomeTotalToday = success + failed;
+        successRate = outcomeTotalToday > 0
+            ? (success / outcomeTotalToday) * 100
+            : (todayData.success_rate ?? 0);
         periodLabel = 'Hoje';
     }
     
     // Atualizar valores apenas se os elementos existirem
     if (totalTodayEl) totalTodayEl.textContent = total;
     if (successTodayEl) successTodayEl.textContent = success;
+    if (prenotaTodayEl) prenotaTodayEl.textContent = prenota;
+    if (classifiedTodayEl) classifiedTodayEl.textContent = classified;
     if (failedTodayEl) failedTodayEl.textContent = failed;
+    if (processFailureTodayEl) processFailureTodayEl.textContent = processFailure ?? 0;
     if (successRateEl) successRateEl.textContent = successRate.toFixed(1) + '%';
     
     if (totalLabelEl) totalLabelEl.textContent = `Processos ${periodLabel}`;
     if (successLabelEl) successLabelEl.textContent = `Sucessos ${periodLabel}`;
-    if (failedLabelEl) failedLabelEl.textContent = `Falhas ${periodLabel}`;
+    if (prenotaLabelEl) prenotaLabelEl.textContent = `Pré-notas ${periodLabel}`;
+    if (classifiedLabelEl) classifiedLabelEl.textContent = `Classificadas ${periodLabel}`;
+    if (failedLabelEl) failedLabelEl.textContent = `Falhas OCR ${periodLabel}`;
+    if (processFailureLabelEl) processFailureLabelEl.textContent = `Falhas de Processos ${periodLabel}`;
     
     // Formatar tempo médio de processamento
     if (avgTimeEl) {
@@ -330,37 +404,72 @@ function createDailyProcessesChart(data) {
     if (!chartEl) return; // Elemento não existe, não criar gráfico
     
     const ctx = chartEl.getContext('2d');
-    const periodData = data.period || data.last_7_days || [];
+    const raw = data.period || data.last_7_days || [];
+    // Ordem cronológica: mais antiga → mais recente (igual com ou sem filtro de datas)
+    const periodData = [...raw].sort((a, b) => String(a.date).localeCompare(String(b.date)));
     
     if (dailyProcessesChart) dailyProcessesChart.destroy();
     
-    // Formatar datas para exibição
     const labels = periodData.map(d => {
         const date = parseDateLocal(d.date);
         return date.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
-    }).reverse();
+    });
     
     dailyProcessesChart = new Chart(ctx, {
         type: 'bar',
         data: {
             labels: labels,
             datasets: [{
-                label: 'Sucessos',
-                data: periodData.map(d => d.success).reverse(),
-                backgroundColor: 'rgba(16, 185, 129, 0.8)',
-                borderColor: '#10b981',
+                label: 'Classificadas',
+                data: periodData.map(d =>
+                    d.success_classified ??
+                    Math.max(0, (d.success || 0) - (d.success_prenota || 0))
+                ),
+                backgroundColor: 'rgba(5, 150, 105, 0.85)',
+                borderColor: '#059669',
                 borderWidth: 2,
-                borderRadius: 6
+                borderRadius: 6,
+                order: 3,
+                yAxisID: 'y'
+            }, {
+                label: 'Pré-notas',
+                data: periodData.map(d => d.success_prenota ?? 0),
+                backgroundColor: 'rgba(245, 158, 11, 0.85)',
+                borderColor: '#f59e0b',
+                borderWidth: 2,
+                borderRadius: 6,
+                order: 4,
+                yAxisID: 'y'
             }, {
                 label: 'Falhas',
-                data: periodData.map(d => d.failed).reverse(),
+                data: periodData.map(d => d.failed),
                 backgroundColor: 'rgba(239, 68, 68, 0.8)',
                 borderColor: '#ef4444',
                 borderWidth: 2,
-                borderRadius: 6
+                borderRadius: 6,
+                order: 5,
+                yAxisID: 'y'
+            }, {
+                label: 'Taxa de acerto (%)',
+                data: periodData.map(d => {
+                    const s = Number(d.success) || 0;
+                    const f = Number(d.failed) || 0;
+                    const t = s + f;
+                    return t > 0 ? (s / t) * 100 : (Number(d.success_rate) || 0);
+                }),
+                type: 'line',
+                borderColor: '#0ea5e9',
+                backgroundColor: 'rgba(14, 165, 233, 0.15)',
+                borderWidth: 2,
+                tension: 0.35,
+                fill: false,
+                pointRadius: 4,
+                pointHoverRadius: 6,
+                yAxisID: 'y1',
+                order: 1
             }, {
                 label: 'Total',
-                data: periodData.map(d => d.total).reverse(),
+                data: periodData.map(d => d.total),
                 type: 'line',
                 borderColor: '#667eea',
                 backgroundColor: 'rgba(102, 126, 234, 0.1)',
@@ -368,7 +477,9 @@ function createDailyProcessesChart(data) {
                 tension: 0.4,
                 fill: false,
                 pointRadius: 5,
-                pointHoverRadius: 7
+                pointHoverRadius: 7,
+                order: 0,
+                yAxisID: 'y'
             }]
         },
         options: {
@@ -389,17 +500,54 @@ function createDailyProcessesChart(data) {
                     backgroundColor: 'rgba(0, 0, 0, 0.8)',
                     padding: 12,
                     titleFont: { size: 14, weight: 'bold' },
-                    bodyFont: { size: 13 }
+                    bodyFont: { size: 13 },
+                    callbacks: {
+                        afterBody: function(items) {
+                            const idx = items[0]?.dataIndex;
+                            if (idx == null || !periodData[idx]) return '';
+                            const row = periodData[idx];
+                            const t = row.total || 0;
+                            const s = row.success || 0;
+                            if (t <= 0) return '';
+                            const pct = ((s / t) * 100).toFixed(1);
+                            return `Resumo: ${s} / ${t} ok (${pct}%)`;
+                        }
+                    }
                 }
             },
             scales: {
                 y: {
                     beginAtZero: true,
+                    position: 'left',
+                    title: {
+                        display: true,
+                        text: 'Quantidade de processos',
+                        font: { size: 11 }
+                    },
                     grid: {
                         color: 'rgba(0, 0, 0, 0.05)'
                     },
                     ticks: {
                         font: { size: 11 }
+                    }
+                },
+                y1: {
+                    beginAtZero: true,
+                    max: 100,
+                    position: 'right',
+                    grid: {
+                        drawOnChartArea: false
+                    },
+                    title: {
+                        display: true,
+                        text: '% acertos (dia)',
+                        font: { size: 11 }
+                    },
+                    ticks: {
+                        font: { size: 11 },
+                        callback: function(value) {
+                            return value + '%';
+                        }
                     }
                 },
                 x: {
@@ -428,17 +576,21 @@ function createSuccessErrorRateChart(data) {
     // Determinar se há filtro de período ativo
     const hasPeriodFilter = currentStartDate && currentEndDate;
     
-    let total, success, failed;
+    let total, success, failed, prenota, classified;
     if (hasPeriodFilter) {
         const summary = data.summary || {};
         total = summary.total ?? 0;
         success = summary.success ?? 0;
         failed = summary.failed ?? 0;
+        prenota = summary.success_prenota ?? 0;
+        classified = summary.success_classified ?? Math.max(0, success - prenota);
     } else {
         const todayData = data.today || {};
         total = todayData.total_count ?? 0;
         success = todayData.success_count ?? 0;
         failed = todayData.failed_count ?? 0;
+        prenota = todayData.success_prenota_count ?? 0;
+        classified = todayData.success_classified_count ?? Math.max(0, success - prenota);
     }
     
     if (successErrorRateChart) successErrorRateChart.destroy();
@@ -446,15 +598,17 @@ function createSuccessErrorRateChart(data) {
     successErrorRateChart = new Chart(ctx, {
         type: 'doughnut',
         data: {
-            labels: ['Sucessos', 'Falhas'],
+            labels: ['Entrada classificada', 'Pré-notas', 'Falhas'],
             datasets: [{
-                data: [success, failed],
+                data: [classified, prenota, failed],
                 backgroundColor: [
-                    'rgba(16, 185, 129, 0.9)',
+                    'rgba(5, 150, 105, 0.9)',
+                    'rgba(245, 158, 11, 0.9)',
                     'rgba(239, 68, 68, 0.9)'
                 ],
                 borderColor: [
-                    '#10b981',
+                    '#059669',
+                    '#f59e0b',
                     '#ef4444'
                 ],
                 borderWidth: 3,
@@ -694,34 +848,256 @@ function createTypeChart(data) {
     });
 }
 
+const FAILED_RULES_DONUT_COLORS = [
+    'rgba(239, 68, 68, 0.9)',
+    'rgba(245, 158, 11, 0.9)',
+    'rgba(139, 92, 246, 0.9)',
+    'rgba(236, 72, 153, 0.9)',
+    'rgba(6, 182, 212, 0.9)',
+    'rgba(34, 197, 94, 0.9)',
+    'rgba(99, 102, 241, 0.9)',
+    'rgba(148, 163, 184, 0.9)'
+];
+
+function collectFailedRulesForDashboard(data) {
+    const hasPeriodFilter = currentStartDate && currentEndDate;
+    let ocrRules = {};
+    let operacionalRules = {};
+    if (hasPeriodFilter) {
+        ocrRules = data.failed_rules || {};
+        operacionalRules = data.failed_rules_operacional || {};
+    } else {
+        ocrRules = data.today?.failed_rules || {};
+        operacionalRules = data.today?.failed_rules_operacional || {};
+    }
+    const merged = { ...ocrRules };
+    Object.entries(operacionalRules).forEach(([rule, count]) => {
+        merged[rule] = (Number(merged[rule]) || 0) + (Number(count) || 0);
+    });
+    return {
+        ocrRules,
+        operacionalRules,
+        merged,
+        operacionalRuleIds: new Set(Object.keys(operacionalRules || {}))
+    };
+}
+
+function sortFailedRulesEntries(failedRules) {
+    const labels = Object.keys(failedRules || {});
+    const values = Object.values(failedRules || {});
+    return labels
+        .map((label, i) => ({ label, value: Number(values[i]) || 0 }))
+        .filter(item => item.value > 0)
+        .sort((a, b) => {
+            const ao = a.label === 'Outros';
+            const bo = b.label === 'Outros';
+            if (ao !== bo) return ao ? 1 : -1;
+            return b.value - a.value;
+        });
+}
+
+function buildFailedRulesDonutSlices(sorted, topN = 7) {
+    const withoutOutros = sorted.filter(x => x.label !== 'Outros');
+    const outros = sorted.find(x => x.label === 'Outros');
+    const top = withoutOutros.slice(0, topN);
+    const rest = withoutOutros.slice(topN);
+    const slices = top.map(item => ({
+        regraId: item.label,
+        value: item.value,
+        shortLabel: truncateRegraLabel(formatRegraLabel(item.label), 36)
+    }));
+    let demais = rest.reduce((s, x) => s + x.value, 0);
+    if (outros) demais += outros.value;
+    if (demais > 0) {
+        slices.push({
+            regraId: '__demais__',
+            value: demais,
+            shortLabel: 'Demais regras'
+        });
+    }
+    return slices;
+}
+
+function renderFailedRulesRanking(sorted, operacionalRuleIds = new Set()) {
+    const container = document.getElementById('failedRulesRanking');
+    if (!container) return;
+
+    if (!sorted.length) {
+        container.innerHTML = '<div class="failed-rules-ranking-empty">Nenhuma falha por regra neste recorte</div>';
+        return;
+    }
+
+    const maxVal = Math.max(...sorted.map(s => s.value), 1);
+    container.innerHTML = sorted.map((item, index) => {
+        const regraId = item.label;
+        const title = formatRegraLabel(regraId);
+        const pct = Math.round((item.value / maxVal) * 100);
+        const categoria = regrasLabelsCatalog?.[regraId]?.categoria;
+        const isOp = operacionalRuleIds.has(regraId);
+        const badge = isOp
+            ? '<span class="failed-rules-badge-operacional">Falhas de Processos</span> '
+            : '';
+        const catLine = categoria && categoria !== title
+            ? `<span class="failed-rules-ranking-code">${escapeHtml(categoria)}</span><br>`
+            : '';
+        return `
+            <div class="failed-rules-ranking-item${isOp ? ' failed-rules-ranking-item--operacional' : ''}" title="${escapeHtml(regraLabelWithCategory(regraId))}">
+                <div class="failed-rules-ranking-head">
+                    <span class="failed-rules-ranking-rank">${index + 1}</span>
+                    <span class="failed-rules-ranking-title">${badge}${escapeHtml(title)}</span>
+                    <span class="failed-rules-ranking-count">${item.value}</span>
+                </div>
+                <div class="failed-rules-ranking-bar" aria-hidden="true">
+                    <div style="width: ${pct}%"></div>
+                </div>
+                ${catLine}<span class="failed-rules-ranking-code">${escapeHtml(regraId)}</span>
+            </div>`;
+    }).join('');
+}
+
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text == null ? '' : String(text);
+    return div.innerHTML;
+}
+
+function metricsDedupBadgeHtml(process, { linkPrimary = false } = {}) {
+    if (!process?.metrics_failure_dedup_role) return '';
+    const role = process.metrics_failure_dedup_role;
+    const label = process.metrics_failure_dedup_label
+        || (role === 'duplicate' ? 'Duplicado no card de falhas' : 'Contabilizado no card de falhas');
+    const cls = role === 'duplicate' ? 'dedup-badge-duplicate' : 'dedup-badge-primary';
+    const primary = process.metrics_failure_dedup_primary;
+    if (linkPrimary && role === 'duplicate' && primary) {
+        return `<span class="metrics-dedup-badge ${cls} dedup-badge-link" onclick="event.stopPropagation(); selectProcess('${escapeHtml(primary)}')" title="Abrir processo contabilizado no card">${escapeHtml(label)}</span>`;
+    }
+    return `<span class="metrics-dedup-badge ${cls}">${escapeHtml(label)}</span>`;
+}
+
+function displayMetricsDedupInfo(process) {
+    const el = document.getElementById('metricsDedupInfo');
+    if (!el) return;
+    const badge = metricsDedupBadgeHtml(process, { linkPrimary: true });
+    if (!badge) {
+        el.innerHTML = '';
+        return;
+    }
+    let html = badge;
+    const keys = process.metrics_failure_keys_display;
+    if (keys?.length) {
+        html += `<div class="metrics-dedup-keys" style="margin-top:6px;font-size:0.8em;color:#64748b;">Chave: ${keys.map(k => escapeHtml(k)).join(' · ')}</div>`;
+    }
+    el.innerHTML = html;
+}
+
 function createFailedRulesChart(data) {
     const chartEl = document.getElementById('failedRulesChart');
-    if (!chartEl) return; // Elemento não existe, não criar gráfico
+    if (!chartEl) return;
     const ctx = chartEl.getContext('2d');
-    
-    // Determinar se há filtro de período ativo
-    const hasPeriodFilter = currentStartDate && currentEndDate;
-    
-    let failedRules;
-    if (hasPeriodFilter) {
-        // Com filtro de período (inclui "hoje") → usar dados do período
-        failedRules = data.failed_rules || {};
-    } else {
-        // Sem filtro → usar dados de hoje
-        failedRules = data.today?.failed_rules || {};
-    }
-    
+
+    const rulesBundle = collectFailedRulesForDashboard(data);
+    const failedRules = rulesBundle.merged;
+
     if (failedRulesChart) failedRulesChart.destroy();
-    
-    const labels = Object.keys(failedRules);
-    const values = Object.values(failedRules);
-    
-    // Se não há regras que falharam, criar gráfico vazio
-    if (labels.length === 0) {
+
+    const sorted = sortFailedRulesEntries(failedRules);
+    const totalFailedAttributed = sorted.reduce((a, b) => a + b.value, 0);
+
+    renderFailedRulesRanking(sorted, rulesBundle.operacionalRuleIds);
+
+    if (totalFailedAttributed === 0) {
         failedRulesChart = new Chart(ctx, {
+            type: 'doughnut',
+            data: {
+                labels: ['Sem falhas'],
+                datasets: [{ data: [1], backgroundColor: ['rgba(16, 185, 129, 0.5)'] }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: { legend: { display: false } }
+            }
+        });
+        return;
+    }
+
+    const donutSlices = buildFailedRulesDonutSlices(sorted);
+    const donutRuleIds = donutSlices.map(s => s.regraId);
+
+    failedRulesChart = new Chart(ctx, {
+        type: 'doughnut',
+        data: {
+            labels: donutSlices.map(s => s.shortLabel),
+            datasets: [{
+                data: donutSlices.map(s => s.value),
+                backgroundColor: donutSlices.map((_, i) => FAILED_RULES_DONUT_COLORS[i % FAILED_RULES_DONUT_COLORS.length]),
+                borderWidth: 2,
+                borderColor: '#fff',
+                hoverOffset: 6
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: {
+                    position: 'bottom',
+                    labels: {
+                        boxWidth: 12,
+                        padding: 8,
+                        font: { size: 10, weight: '600' }
+                    }
+                },
+                tooltip: {
+                    backgroundColor: 'rgba(0, 0, 0, 0.85)',
+                    padding: 12,
+                    callbacks: {
+                        title(items) {
+                            if (!items?.length) return '';
+                            const regraId = donutRuleIds[items[0].dataIndex];
+                            if (regraId === '__demais__') return 'Demais regras (restante do ranking)';
+                            return regraLabelWithCategory(regraId);
+                        },
+                        label(context) {
+                            const value = context.parsed || 0;
+                            const total = context.dataset.data.reduce((a, b) => a + b, 0);
+                            const pct = total > 0 ? ((value / total) * 100).toFixed(1) : 0;
+                            return `Ocorrências: ${value} (${pct}%)`;
+                        },
+                        afterBody(items) {
+                            if (!items?.length) return [];
+                            const regraId = donutRuleIds[items[0].dataIndex];
+                            if (regraId === '__demais__') return ['Ver lista ao lado para detalhes'];
+                            return [`Código: ${regraId}`];
+                        }
+                    }
+                }
+            },
+            cutout: '55%'
+        }
+    });
+}
+
+function createFailedRulesByDayChart(data) {
+    const chartEl = document.getElementById('failedRulesByDayChart');
+    if (!chartEl) return;
+    const ctx = chartEl.getContext('2d');
+    const raw = data.period || data.last_7_days || [];
+    const periodData = [...raw].sort((a, b) => String(a.date).localeCompare(String(b.date)));
+
+    if (failedRulesByDayChart) failedRulesByDayChart.destroy();
+
+    const allRules = new Set();
+    periodData.forEach(day => {
+        Object.keys(day.failed_rules || {}).forEach(rule => allRules.add(rule));
+        Object.keys(day.failed_rules_operacional || {}).forEach(rule => allRules.add(rule));
+    });
+
+    if (allRules.size === 0) {
+        failedRulesByDayChart = new Chart(ctx, {
             type: 'bar',
             data: {
-                labels: ['Nenhuma regra falhou'],
+                labels: ['Nenhuma regra falhou no período'],
                 datasets: [{
                     data: [0],
                     backgroundColor: ['rgba(16, 185, 129, 0.8)']
@@ -736,165 +1112,96 @@ function createFailedRulesChart(data) {
         });
         return;
     }
-    
-    // Ordenar por valor (maior para menor) e pegar top 10
-    const sorted = labels.map((label, i) => ({ label, value: values[i] }))
-        .sort((a, b) => b.value - a.value)
-        .slice(0, 10);
-    
-    // Traduzir nomes de regras
-    const ruleTranslations = {
-        'validar_produtos': 'Validar Produtos',
-        'validar_cnpj_fornecedor': 'Validar CNPJ Fornecedor',
-        'validar_numero_pedido': 'Validar Número Pedido',
-        'validar_valor_total': 'Validar Valor Total',
-        'validar_data_emissao': 'Validar Data Emissão',
-        'validar_cfop_chave': 'Validar CFOP Chave'
-    };
-    
-    failedRulesChart = new Chart(ctx, {
+
+    let rulesArray = Array.from(allRules).filter(r => r !== 'Outros');
+    rulesArray.sort((a, b) => a.localeCompare(b));
+    if (allRules.has('Outros')) {
+        rulesArray.push('Outros');
+    }
+
+    const MAX_RULES = 18;
+    if (rulesArray.length > MAX_RULES) {
+        const outrosAtEnd = rulesArray[rulesArray.length - 1] === 'Outros';
+        const sliceEnd = outrosAtEnd ? MAX_RULES - 1 : MAX_RULES;
+        const head = rulesArray.slice(0, sliceEnd);
+        if (outrosAtEnd) head.push('Outros');
+        rulesArray = head;
+    }
+
+    const colorPalette = [
+        'rgba(239, 68, 68, 0.8)',
+        'rgba(245, 158, 11, 0.8)',
+        'rgba(139, 92, 246, 0.8)',
+        'rgba(236, 72, 153, 0.8)',
+        'rgba(6, 182, 212, 0.8)',
+        'rgba(34, 197, 94, 0.8)',
+        'rgba(251, 146, 60, 0.8)',
+        'rgba(99, 102, 241, 0.8)'
+    ];
+
+    const dates = periodData.map(d => {
+        const date = parseDateLocal(d.date);
+        return date.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
+    });
+
+    const datasets = rulesArray.map((rule, index) => ({
+        label: truncateRegraLabel(formatRegraLabel(rule), 48),
+        _regraId: rule,
+        data: periodData.map(d => {
+            const ocr = (d.failed_rules || {})[rule] || 0;
+            const op = (d.failed_rules_operacional || {})[rule] || 0;
+            return (Number(ocr) || 0) + (Number(op) || 0);
+        }),
+        backgroundColor: colorPalette[index % colorPalette.length],
+        borderColor: colorPalette[index % colorPalette.length].replace('0.8', '1'),
+        borderWidth: 2,
+        borderRadius: 4
+    }));
+
+    failedRulesByDayChart = new Chart(ctx, {
         type: 'bar',
         data: {
-            labels: sorted.map(item => ruleTranslations[item.label] || item.label),
-            datasets: [{
-                label: 'Falhas',
-                data: sorted.map(item => item.value),
-                backgroundColor: 'rgba(239, 68, 68, 0.8)',
-                borderColor: '#ef4444',
-                borderWidth: 2,
-                borderRadius: 6
-            }]
+            labels: dates,
+            datasets: datasets
         },
         options: {
             responsive: true,
             maintainAspectRatio: false,
-            indexAxis: 'y',
             plugins: {
-                legend: { display: false },
+                legend: {
+                    position: 'top',
+                    labels: {
+                        usePointStyle: true,
+                        padding: 12,
+                        font: { size: 11, weight: '600' }
+                    }
+                },
                 tooltip: {
+                    mode: 'index',
+                    intersect: false,
                     backgroundColor: 'rgba(0, 0, 0, 0.8)',
-                        padding: 10,
+                    padding: 10,
                     callbacks: {
-                        label: function(context) {
-                            return `Falhas: ${context.parsed.x}`;
+                        afterLabel(context) {
+                            const regraId = context.dataset?._regraId;
+                            if (!regraId) return '';
+                            return `Código: ${regraId}`;
+                        },
+                        footer: function(items) {
+                            let sum = 0;
+                            items.forEach(it => {
+                                sum += Number(it.parsed?.y ?? it.parsed ?? 0) || 0;
+                            });
+                            const di = items[0]?.dataIndex;
+                            const failedDay = di != null && periodData[di] ? periodData[di].failed : null;
+                            const extra = failedDay != null ? ` | Falhas no dia (métrica): ${failedDay}` : '';
+                            return `Soma pilhas (dia): ${sum}${extra}`;
                         }
                     }
                 }
             },
             scales: {
                 x: {
-                    beginAtZero: true,
-                    grid: { color: 'rgba(0, 0, 0, 0.05)' },
-                    ticks: { font: { size: 11 }, stepSize: 1 }
-                },
-                y: {
-                    grid: { display: false },
-                    ticks: { font: { size: 11 } }
-                }
-            }
-        }
-    });
-}
-
-function createFailedRulesByDayChart(data) {
-    const chartEl = document.getElementById('failedRulesByDayChart');
-    if (!chartEl) return; // Elemento não existe, não criar gráfico
-    const ctx = chartEl.getContext('2d');
-    const periodData = data.period || data.last_7_days || [];
-    
-    if (failedRulesByDayChart) failedRulesByDayChart.destroy();
-    
-    // Coletar todas as regras que falharam no período
-    const allRules = new Set();
-    periodData.forEach(day => {
-        Object.keys(day.failed_rules || {}).forEach(rule => allRules.add(rule));
-    });
-    
-    if (allRules.size === 0) {
-        failedRulesByDayChart = new Chart(ctx, {
-            type: 'bar',
-            data: {
-                labels: ['Nenhuma regra falhou no período'],
-                datasets: [{
-                    data: [0],
-                    backgroundColor: ['rgba(16, 185, 129, 0.8)']
-                }]
-            },
-            options: {
-                responsive: true,
-                maintainAspectRatio: false,
-                plugins: { legend: { display: false } },
-                scales: { y: { beginAtZero: true } }
-            }
-        });
-        return;
-    }
-    
-    // Traduzir nomes de regras
-    const ruleTranslations = {
-        'validar_produtos': 'Validar Produtos',
-        'validar_cnpj_fornecedor': 'Validar CNPJ Fornecedor',
-        'validar_numero_pedido': 'Validar Número Pedido',
-        'validar_valor_total': 'Validar Valor Total',
-        'validar_data_emissao': 'Validar Data Emissão',
-        'validar_cfop_chave': 'Validar CFOP Chave'
-    };
-    
-    const rulesArray = Array.from(allRules);
-    const colorPalette = [
-        'rgba(239, 68, 68, 0.8)',
-        'rgba(245, 158, 11, 0.8)',
-        'rgba(139, 92, 246, 0.8)',
-        'rgba(236, 72, 153, 0.8)',
-        'rgba(6, 182, 212, 0.8)',
-        'rgba(34, 197, 94, 0.8)',
-        'rgba(251, 146, 60, 0.8)',
-        'rgba(99, 102, 241, 0.8)'
-    ];
-    
-    // Formatar datas
-    const dates = periodData.map(d => {
-        const date = parseDateLocal(d.date);
-        return date.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
-    }).reverse();
-    
-    // Criar datasets para cada regra
-    const datasets = rulesArray.slice(0, 8).map((rule, index) => ({
-        label: ruleTranslations[rule] || rule,
-        data: periodData.map(d => (d.failed_rules || {})[rule] || 0).reverse(),
-        backgroundColor: colorPalette[index % colorPalette.length],
-        borderColor: colorPalette[index % colorPalette.length].replace('0.8', '1'),
-        borderWidth: 2,
-        borderRadius: 4
-    }));
-    
-    failedRulesByDayChart = new Chart(ctx, {
-        type: 'bar',
-        data: {
-            labels: dates,
-            datasets: datasets
-        },
-        options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            plugins: {
-                legend: {
-                    position: 'top',
-                    labels: {
-                        usePointStyle: true,
-                        padding: 12,
-                        font: { size: 11, weight: '600' }
-                    }
-                },
-                tooltip: {
-                    mode: 'index',
-                    intersect: false,
-                    backgroundColor: 'rgba(0, 0, 0, 0.8)',
-                    padding: 10
-                }
-            },
-            scales: {
-                x: {
                     stacked: true,
                     grid: { display: false },
                     ticks: { font: { size: 11 } }
@@ -903,125 +1210,7 @@ function createFailedRulesByDayChart(data) {
                     stacked: true,
                     beginAtZero: true,
                     grid: { color: 'rgba(0, 0, 0, 0.05)' },
-                    ticks: { font: { size: 11 }, stepSize: 1 }
-                }
-            },
-            interaction: {
-                mode: 'index',
-                intersect: false
-            }
-        }
-    });
-}
-
-function createFailedRulesByDayChart(data) {
-    const chartEl = document.getElementById('failedRulesByDayChart');
-    if (!chartEl) return; // Elemento não existe, não criar gráfico
-    const ctx = chartEl.getContext('2d');
-    const periodData = data.period || data.last_7_days || [];
-    
-    if (failedRulesByDayChart) failedRulesByDayChart.destroy();
-    
-    // Coletar todas as regras que falharam no período
-    const allRules = new Set();
-    periodData.forEach(day => {
-        Object.keys(day.failed_rules || {}).forEach(rule => allRules.add(rule));
-    });
-    
-    if (allRules.size === 0) {
-        failedRulesByDayChart = new Chart(ctx, {
-            type: 'bar',
-            data: {
-                labels: ['Nenhuma regra falhou no período'],
-                datasets: [{
-                    data: [0],
-                    backgroundColor: ['rgba(16, 185, 129, 0.8)']
-                }]
-            },
-            options: {
-                responsive: true,
-                maintainAspectRatio: false,
-                plugins: { legend: { display: false } },
-                scales: { y: { beginAtZero: true } }
-            }
-        });
-        return;
-    }
-    
-    // Traduzir nomes de regras
-    const ruleTranslations = {
-        'validar_produtos': 'Validar Produtos',
-        'validar_cnpj_fornecedor': 'Validar CNPJ Fornecedor',
-        'validar_numero_pedido': 'Validar Número Pedido',
-        'validar_valor_total': 'Validar Valor Total',
-        'validar_data_emissao': 'Validar Data Emissão',
-        'validar_cfop_chave': 'Validar CFOP Chave'
-    };
-    
-    const rulesArray = Array.from(allRules);
-    const colorPalette = [
-        'rgba(239, 68, 68, 0.8)',
-        'rgba(245, 158, 11, 0.8)',
-        'rgba(139, 92, 246, 0.8)',
-        'rgba(236, 72, 153, 0.8)',
-        'rgba(6, 182, 212, 0.8)',
-        'rgba(34, 197, 94, 0.8)',
-        'rgba(251, 146, 60, 0.8)',
-        'rgba(99, 102, 241, 0.8)'
-    ];
-    
-    // Formatar datas
-    const dates = periodData.map(d => {
-        const date = parseDateLocal(d.date);
-        return date.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
-    }).reverse();
-    
-    // Criar datasets para cada regra
-    const datasets = rulesArray.slice(0, 8).map((rule, index) => ({
-        label: ruleTranslations[rule] || rule,
-        data: periodData.map(d => (d.failed_rules || {})[rule] || 0).reverse(),
-        backgroundColor: colorPalette[index % colorPalette.length],
-        borderColor: colorPalette[index % colorPalette.length].replace('0.8', '1'),
-        borderWidth: 2,
-        borderRadius: 4
-    }));
-    
-    failedRulesByDayChart = new Chart(ctx, {
-        type: 'bar',
-        data: {
-            labels: dates,
-            datasets: datasets
-        },
-        options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            plugins: {
-                legend: {
-                    position: 'top',
-                    labels: {
-                        usePointStyle: true,
-                        padding: 12,
-                        font: { size: 11, weight: '600' }
-                    }
-                },
-                tooltip: {
-                    mode: 'index',
-                    intersect: false,
-                    backgroundColor: 'rgba(0, 0, 0, 0.8)',
-                    padding: 10
-                }
-            },
-            scales: {
-                x: {
-                    stacked: true,
-                    grid: { display: false },
-                    ticks: { font: { size: 11 } }
-                },
-                y: {
-                    stacked: true,
-                    beginAtZero: true,
-                    grid: { color: 'rgba(0, 0, 0, 0.05)' },
-                    ticks: { font: { size: 11 }, stepSize: 1 }
+                    ticks: { font: { size: 11 }, precision: 0 }
                 }
             },
             interaction: {
@@ -1072,10 +1261,11 @@ function createNewProcess() {
 }
 
 async function loadProcesses(silent = false) {
+    const list = document.getElementById('processesList');
+    if (!list) {
+        return;
+    }
     try {
-        const list = document.getElementById('processesList');
-        
-        // Mostrar loading
         if (!silent) {
             list.innerHTML = `
                 <div style="grid-column: 1 / -1; text-align: center; padding: 60px 20px;">
@@ -1165,6 +1355,8 @@ async function loadProcesses(silent = false) {
                 'VALIDATION_FAILURE': '#f59e0b'
             }[p.status] || '#6b7280';
             
+            const dedupBadge = metricsDedupBadgeHtml(p);
+
             return `
                 <div class="process-item ${p.status === 'FAILED' || p.status === 'VALIDATION_FAILURE' ? 'failed' : ''}" onclick="selectProcess('${p.process_id}')">
                     <div class="process-item-header">
@@ -1174,6 +1366,7 @@ async function loadProcesses(silent = false) {
                         <div class="process-item-title">
                             <h3>${processTypeLabel}</h3>
                             <p class="process-id">${p.process_id}</p>
+                            ${dedupBadge}
                         </div>
                     </div>
                     <div class="process-item-body">
@@ -1233,8 +1426,9 @@ async function selectProcess(processId, silent = false) {
             console.log('SCTASK não encontrado no processo');
         }
         
-        // Exibir informações de erro se o processo falhou
-        displayErrorInfo(selectedProcess);
+        displayMetricsDedupInfo(selectedProcess);
+        await ensureRegrasLabelsCatalog();
+        displayFailureDetails(selectedProcess);
         
         document.getElementById('processDetails').style.display = 'block';
         document.getElementById('processesList').style.display = 'none';
@@ -1259,118 +1453,170 @@ async function selectProcess(processId, silent = false) {
 
 function deselectProcess() {
     selectedProcess = null;
+    const dedupEl = document.getElementById('metricsDedupInfo');
+    if (dedupEl) dedupEl.innerHTML = '';
+    const failureCard = document.getElementById('failureDetailsCard');
+    if (failureCard) {
+        failureCard.innerHTML = '';
+        failureCard.style.display = 'none';
+    }
     document.getElementById('processDetails').style.display = 'none';
     document.getElementById('processesList').style.display = 'grid';
 }
 
-function displayErrorInfo(process) {
-    // Remover qualquer exibição de erro anterior
-    const existingErrorDiv = document.getElementById('errorInfoDiv');
-    if (existingErrorDiv) {
-        existingErrorDiv.remove();
+function parseErrorMessage(message) {
+    if (!message) return 'Erro desconhecido';
+    let formatted = String(message);
+    try {
+        const parsed = JSON.parse(formatted);
+        if (parsed.errorMessage) return String(parsed.errorMessage);
+        if (parsed.error) return String(parsed.error);
+        if (parsed.Cause) return String(parsed.Cause);
+    } catch (e) {
+        /* texto livre */
     }
-    
-    // Se o processo falhou e tem error_info, exibir
-    if (process.status === 'FAILED' && process.error_info) {
-        const errorInfo = process.error_info;
-        const errorDiv = document.createElement('div');
-        errorDiv.id = 'errorInfoDiv';
-        errorDiv.className = 'details-card full-width';
-        errorDiv.style.background = '#fff3cd';
-        errorDiv.style.border = '2px solid #ffc107';
-        errorDiv.style.marginTop = '20px';
-        
-        let errorMessage = errorInfo.message || 'Erro desconhecido';
-        let errorType = errorInfo.type || 'UNKNOWN_ERROR';
-        let lambdaName = errorInfo.lambda || 'N/A';
-        let protheusCause = errorInfo.protheus_cause || null;
-        let timestamp = errorInfo.timestamp || null;
-        
-        // Formatar mensagem de erro
-        let formattedMessage = errorMessage;
-        try {
-            // Tentar parsear se for JSON string
-            const parsed = JSON.parse(errorMessage);
-            if (parsed.errorMessage) {
-                formattedMessage = parsed.errorMessage;
-            } else if (parsed.error) {
-                formattedMessage = parsed.error;
-            }
-        } catch (e) {
-            // Não é JSON, usar como está
+    return formatted;
+}
+
+function failureDetailsRow(label, valueHtml) {
+    if (!valueHtml) return '';
+    return `<div class="failure-details-row"><strong>${escapeHtml(label)}</strong><div class="failure-details-value">${valueHtml}</div></div>`;
+}
+
+function failureDetailsJsonBlock(id, obj) {
+    if (obj === undefined || obj === null) return '';
+    const text = typeof obj === 'string' ? obj : JSON.stringify(obj, null, 2);
+    return `
+        <button type="button" class="failure-details-pre-toggle" onclick="const p=document.getElementById('${id}'); p.style.display=p.style.display==='none'?'block':'none';">
+            Ver resposta completa (JSON)
+        </button>
+        <pre id="${id}" class="failure-details-mono" style="display:none;margin-top:8px;">${escapeHtml(text)}</pre>
+    `;
+}
+
+function collectFailedValidations(validations) {
+    if (!Array.isArray(validations)) return [];
+    return validations.filter(v => (v.status || '').toUpperCase() !== 'PASSED');
+}
+
+function isProcessFailureStatus(process) {
+    const st = String(process?.status || '').toUpperCase();
+    const metricsSt = String(process?.metrics_status || '').toUpperCase();
+    return (
+        st === 'FAILED' ||
+        st === 'VALIDATION_FAILURE' ||
+        metricsSt === 'FAILED'
+    );
+}
+
+function displayFailureDetails(process, validations = null) {
+    const card = document.getElementById('failureDetailsCard');
+    if (!card || !process) return;
+
+    const isFailedStatus = isProcessFailureStatus(process);
+    const summary = process.failure_summary;
+    const errorInfo = process.error_info;
+    const failedValidations = collectFailedValidations(validations);
+
+    if (!isFailedStatus) {
+        card.innerHTML = '';
+        card.style.display = 'none';
+        return;
+    }
+
+    const hasDetail = summary || errorInfo || failedValidations.length > 0
+        || process.metrics_failure_keys_display?.length;
+
+    let html = '<h4>❌ Motivo da falha</h4>';
+
+    if (!hasDetail) {
+        html += `<div class="failure-details-section">
+            <p class="failure-details-value" style="margin:0;color:#64748b;">
+                Processo marcado como falha, mas não há detalhes gravados no cadastro.
+                Confira a seção <strong>Resultados das Validações</strong> abaixo ou reabra após reprocessar.
+            </p>
+        </div>`;
+        card.innerHTML = html;
+        card.style.display = 'block';
+        return;
+    }
+
+    if (summary?.reason_label || summary?.reason_code) {
+        html += `<div class="failure-details-section">
+            <h5>Classificação</h5>
+            ${failureDetailsRow('Motivo', `<span style="font-weight:600;">${escapeHtml(summary.reason_label || summary.reason_code)}</span>${summary.reason_code ? ` <code style="font-size:0.8em;color:#64748b;">${escapeHtml(summary.reason_code)}</code>` : ''}`)}
+        </div>`;
+    }
+
+    const ruleIds = [
+        ...(summary?.failed_rules || []),
+        ...(summary?.operacional_rules || []),
+    ].filter((r, i, arr) => r && arr.indexOf(r) === i);
+
+    if (ruleIds.length) {
+        const rulesHtml = ruleIds.map(rid => {
+            const label = regraLabelWithCategory(rid);
+            return `<li>${escapeHtml(label)} <code>${escapeHtml(rid)}</code></li>`;
+        }).join('');
+        html += `<div class="failure-details-section"><h5>Regras com falha (métricas)</h5><ul class="failure-details-rules">${rulesHtml}</ul></div>`;
+    }
+
+    if (failedValidations.length) {
+        const valHtml = failedValidations.map(v => {
+            const label = formatRegraLabel(v.type, regrasLabelsCatalog) || v.type || 'Validação';
+            const msg = v.message ? ` — ${v.message}` : '';
+            return `<li>${escapeHtml(label)}${escapeHtml(msg)}</li>`;
+        }).join('');
+        html += `<div class="failure-details-section"><h5>Validações reprovadas</h5><ul class="failure-details-rules">${valHtml}</ul></div>`;
+    }
+
+    const protheus = summary?.protheus;
+    if (protheus) {
+        let protheusBody = '';
+        if (protheus.response_status_code != null) {
+            protheusBody += failureDetailsRow('HTTP', escapeHtml(String(protheus.response_status_code)));
         }
-        
-        // Escapar HTML para segurança
-        const escapeHtml = (text) => {
-            const div = document.createElement('div');
-            div.textContent = text;
-            return div.innerHTML;
-        };
-        
-        let errorHtml = `
-            <h4 style="color: #856404; margin-bottom: 15px; display: flex; align-items: center; gap: 10px;">
-                ❌ Informações do Erro
-            </h4>
-            <div style="background: white; padding: 15px; border-radius: 8px; border: 1px solid #ffc107;">
-                <div style="margin-bottom: 12px;">
-                    <strong style="color: #856404; display: block; margin-bottom: 5px;">Tipo de Erro:</strong>
-                    <span style="color: #333; font-family: monospace; background: #f8f9fa; padding: 4px 8px; border-radius: 4px; display: inline-block;">${escapeHtml(errorType)}</span>
-                </div>
-                <div style="margin-bottom: 12px;">
-                    <strong style="color: #856404; display: block; margin-bottom: 5px;">Mensagem:</strong>
-                    <div style="color: #333; background: #f8f9fa; padding: 12px; border-radius: 4px; font-family: monospace; white-space: pre-wrap; word-wrap: break-word; max-height: 300px; overflow-y: auto;">${escapeHtml(formattedMessage)}</div>
-                </div>
-                <div style="margin-bottom: 12px;">
-                    <strong style="color: #856404; display: block; margin-bottom: 5px;">Lambda/Etapa:</strong>
-                    <span style="color: #333;">${escapeHtml(lambdaName)}</span>
-                </div>
-        `;
-        
-        // Adicionar causa do Protheus se existir
+        if (protheus.request_url) {
+            protheusBody += failureDetailsRow('URL da requisição', `<span class="failure-details-mono" style="max-height:none;padding:6px 8px;">${escapeHtml(protheus.request_url)}</span>`);
+        }
+        if (protheus.response_message) {
+            protheusBody += failureDetailsRow('Mensagem do Protheus', `<div class="failure-details-mono" style="max-height:160px;">${escapeHtml(String(protheus.response_message))}</div>`);
+        }
+        if (protheus.response_body) {
+            protheusBody += failureDetailsJsonBlock(`protheus-json-${process.process_id}`, protheus.response_body);
+        }
+        html += `<div class="failure-details-section"><h5>Retorno Protheus</h5>${protheusBody}</div>`;
+    }
+
+    if (errorInfo) {
+        const formattedMessage = parseErrorMessage(errorInfo.message);
+        const errorType = errorInfo.type || 'UNKNOWN_ERROR';
+        const lambdaName = errorInfo.lambda || 'N/A';
+        const protheusCause = errorInfo.protheus_cause;
+        const timestamp = errorInfo.timestamp;
+
+        let pipelineHtml = failureDetailsRow('Tipo', `<code>${escapeHtml(errorType)}</code>`);
+        pipelineHtml += failureDetailsRow('Mensagem', `<div class="failure-details-mono">${escapeHtml(formattedMessage)}</div>`);
+        pipelineHtml += failureDetailsRow('Lambda / etapa', escapeHtml(lambdaName));
         if (protheusCause) {
-            errorHtml += `
-                <div style="margin-bottom: 12px;">
-                    <strong style="color: #856404; display: block; margin-bottom: 5px;">Causa (Protheus):</strong>
-                    <div style="color: #333; background: #f8f9fa; padding: 12px; border-radius: 4px; font-family: monospace; white-space: pre-wrap; word-wrap: break-word; max-height: 200px; overflow-y: auto;">${escapeHtml(protheusCause)}</div>
-                </div>
-            `;
+            pipelineHtml += failureDetailsRow('Causa (Protheus)', `<div class="failure-details-mono">${escapeHtml(String(protheusCause))}</div>`);
         }
-        
-        // Adicionar timestamp se existir
         if (timestamp) {
             try {
-                const errorDate = new Date(timestamp);
-                errorHtml += `
-                    <div style="margin-bottom: 12px;">
-                        <strong style="color: #856404; display: block; margin-bottom: 5px;">Data/Hora do Erro:</strong>
-                        <span style="color: #333;">${errorDate.toLocaleString('pt-BR')}</span>
-                    </div>
-                `;
-            } catch (e) {
-                // Ignorar se não conseguir parsear data
-            }
+                pipelineHtml += failureDetailsRow('Data/hora', escapeHtml(new Date(timestamp).toLocaleString('pt-BR')));
+            } catch (e) { /* ignore */ }
         }
-        
-        errorHtml += `
-            </div>
-        `;
-        
-        errorDiv.innerHTML = errorHtml;
-        
-        // Inserir após o card de informações do processo
-        const detailsGrid = document.querySelector('.details-grid');
-        if (detailsGrid) {
-            // Buscar o primeiro card (informações do processo)
-            const infoCard = detailsGrid.querySelector('.details-card');
-            if (infoCard) {
-                // Inserir logo após o primeiro card (informações do processo)
-                infoCard.insertAdjacentElement('afterend', errorDiv);
-            } else {
-                // Se não encontrar o card, inserir no início do grid
-                detailsGrid.insertBefore(errorDiv, detailsGrid.firstChild);
-            }
-        }
+        html += `<div class="failure-details-section"><h5>Erro na pipeline</h5>${pipelineHtml}</div>`;
     }
+
+    if (process.metrics_failure_keys_display?.length) {
+        html += `<div class="failure-details-section"><h5>Chave no dashboard</h5>
+            <div class="failure-details-mono" style="max-height:none;">${process.metrics_failure_keys_display.map(k => escapeHtml(k)).join('<br>')}</div>
+        </div>`;
+    }
+
+    card.innerHTML = html;
+    card.style.display = 'block';
 }
 
 function physicalAdditionalFiles(proc) {
@@ -1532,14 +1778,22 @@ async function loadValidationResults() {
         
         const data = await response.json();
         const resultsDiv = document.getElementById('textractResults');
+
+        if (selectedProcess) {
+            selectedProcess._lastValidations = data.validations || [];
+        }
         
         if (!data.validations || data.validations.length === 0) {
             resultsDiv.innerHTML = '<p style="color: #999;">Nenhuma validação disponível</p>';
+            if (selectedProcess) displayFailureDetails(selectedProcess, []);
             return;
         }
         
         resultsDiv.innerHTML = '<h4 style="margin: 20px 0 10px;">Resultados das Validações:</h4>' + 
             data.validations.map(v => renderValidation(v)).join('');
+        if (selectedProcess) {
+            displayFailureDetails(selectedProcess, data.validations);
+        }
     } catch (error) {
         console.error('Erro ao carregar validações:', error);
     }
@@ -1718,6 +1972,9 @@ async function uploadFile(file, docType, fileInput, userMetadata = null, batchMo
             if (fileInput) fileInput.value = '';
             if (docType === 'DANFE' && fileInput) {
                 document.getElementById('danfeMetadata').value = '';
+            } else {
+                const docsMeta = document.getElementById('docsMetadata');
+                if (docsMeta) docsMeta.value = '';
             }
             setTimeout(() => selectProcess(selectedProcess.process_id, true), 2000);
         }

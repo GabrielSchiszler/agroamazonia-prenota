@@ -22,13 +22,13 @@ os.environ.setdefault("AWS_DEFAULT_REGION", "us-east-1")
 # ---------------------------------------------------------------------------
 # sys.path adjustments so imports resolve the same way they do in Lambda
 # ---------------------------------------------------------------------------
-_backend_root = os.path.join(os.path.dirname(__file__), "..")
+_backend_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+_src_root = os.path.join(_backend_root, "src")
 _lambdas_root = os.path.join(_backend_root, "lambdas")
 
-for p in [_backend_root, _lambdas_root]:
-    abs_p = os.path.abspath(p)
-    if abs_p not in sys.path:
-        sys.path.insert(0, abs_p)
+for p in (_backend_root, _src_root, _lambdas_root):
+    if p not in sys.path:
+        sys.path.insert(0, p)
 
 
 # ---------------------------------------------------------------------------

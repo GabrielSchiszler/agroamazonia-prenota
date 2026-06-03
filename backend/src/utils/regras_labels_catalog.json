@@ -1,0 +1,527 @@
+{
+  "QTD_MAIOR_PEDIDO": {
+    "categoria": "Pedido de Compra",
+    "mensagem_resumo": "Quantidade da NF maior que saldo do pedido de compra",
+    "label": "Quantidade da NF maior que saldo do pedido de compra",
+    "fonte": "Protheus",
+    "tipo": "Operacional"
+  },
+  "A103PCNSLD": {
+    "categoria": "Pedido de Compra",
+    "mensagem_resumo": "Item do pedido de compras não possui mais saldo",
+    "label": "Item do pedido de compras não possui mais saldo",
+    "fonte": "Protheus",
+    "tipo": "Operacional"
+  },
+  "QTDLIBMAI": {
+    "categoria": "Pedido de Compra",
+    "mensagem_resumo": "Quantidade de liberação superior à do pedido",
+    "label": "Quantidade de liberação superior à do pedido",
+    "fonte": "Protheus",
+    "tipo": "Operacional"
+  },
+  "A103RATEI": {
+    "categoria": "Pedido de Compra",
+    "mensagem_resumo": "Centro de custo / conta / rateio inválidos",
+    "label": "Centro de custo / conta / rateio inválidos",
+    "fonte": "Protheus",
+    "tipo": "OCR"
+  },
+  "DIVERGENCIA_DE_VALOR_TOTAL_DA_NOTA_FISCAL_DIGITADA_COM_VALOR_TOTAL_NO_XML": {
+    "categoria": "NF × XML",
+    "mensagem_resumo": "Divergência de valor total",
+    "label": "Divergência de valor total",
+    "fonte": "Protheus",
+    "tipo": "OCR"
+  },
+  "DIVERGENCIA_DE_VALOR_ICMS_DA_NOTA_FISCAL_DIGITADA_COM_VALOR_ICMS_NO_XML": {
+    "categoria": "NF × XML",
+    "mensagem_resumo": "Divergência de valor ICMS",
+    "label": "Divergência de valor ICMS",
+    "fonte": "Protheus",
+    "tipo": "OCR"
+  },
+  "FILE_NOT_FOUND_CAMINHO_XML_NFE": {
+    "categoria": "NF × XML",
+    "mensagem_resumo": "Caminho do XML inexistente no servidor",
+    "label": "Caminho do XML inexistente no servidor",
+    "fonte": "Protheus",
+    "tipo": "Operacional"
+  },
+  "ARQUIVO_XML_NAO_ENCONTRADO_VERIFIQUE_IMPORTACAO_OU_FILIAL": {
+    "categoria": "NF × XML",
+    "mensagem_resumo": "XML não encontrado no ERP",
+    "label": "XML não encontrado no ERP",
+    "fonte": "Protheus",
+    "tipo": "Operacional"
+  },
+  "DIVERGENCIA_DE_VALOR_DO_DESCONTO_DA_NOTA_FISCAL_DIGITADA_COM_VALOR_DO_DESCONTO_N": {
+    "categoria": "NF × XML",
+    "mensagem_resumo": "Divergência de desconto",
+    "label": "Divergência de desconto",
+    "fonte": "Protheus",
+    "tipo": "OCR"
+  },
+  "DIVERGENCIA_DE_VALOR_ICMS_ST_DA_NOTA_FISCAL_DIGITADA_COM_VALOR_ICMS_ST_NO_XML": {
+    "categoria": "NF × XML",
+    "mensagem_resumo": "Divergência de ICMS-ST",
+    "label": "Divergência de ICMS-ST",
+    "fonte": "Protheus",
+    "tipo": "OCR"
+  },
+  "DIVERGENCIA_DE_VALOR_IPI_DA_NOTA_FISCAL_DIGITADA_COM_VALOR_IPI_NO_XML": {
+    "categoria": "NF × XML",
+    "mensagem_resumo": "Divergência de IPI",
+    "label": "Divergência de IPI",
+    "fonte": "Protheus",
+    "tipo": "OCR"
+  },
+  "EXISTNF": {
+    "categoria": "Nota / Cadastro / Produto",
+    "mensagem_resumo": "Número de Nota Fiscal já cadastrado",
+    "label": "Número de Nota Fiscal já cadastrado",
+    "fonte": "Protheus",
+    "tipo": "Operacional"
+  },
+  "REGNOIS": {
+    "categoria": "Nota / Cadastro / Produto",
+    "mensagem_resumo": "Registro inexistente (TES/SF4)",
+    "label": "Registro inexistente (TES/SF4)",
+    "fonte": "Protheus",
+    "tipo": "Operacional"
+  },
+  "USEDCODE": {
+    "categoria": "Nota / Cadastro / Produto",
+    "mensagem_resumo": "Código bloqueado / em uso por outro usuário",
+    "label": "Código bloqueado / em uso por outro usuário",
+    "fonte": "Protheus",
+    "tipo": "Operacional"
+  },
+  "NVAZIO": {
+    "categoria": "Nota / Cadastro / Produto",
+    "mensagem_resumo": "Campo obrigatório não informado",
+    "label": "Campo obrigatório não informado",
+    "fonte": "Protheus",
+    "tipo": "OCR"
+  },
+  "A140VZ": {
+    "categoria": "Nota / Cadastro / Produto",
+    "mensagem_resumo": "Quantidade, valor unitário ou valor total em branco",
+    "label": "Quantidade, valor unitário ou valor total em branco",
+    "fonte": "Protheus",
+    "tipo": "OCR"
+  },
+  "P0200113": {
+    "categoria": "Nota / Cadastro / Produto",
+    "mensagem_resumo": "Centro de custo obrigatório",
+    "label": "Centro de custo obrigatório",
+    "fonte": "Protheus",
+    "tipo": "OCR"
+  },
+  "CREATE_001": {
+    "categoria": "API / Schema",
+    "mensagem_resumo": "Erro inesperado ao processar a requisicao.",
+    "label": "Erro inesperado ao processar a requisicao.",
+    "fonte": "API",
+    "tipo": "Operacional"
+  },
+  "SCHEMA_001": {
+    "categoria": "API / Schema",
+    "mensagem_resumo": "O corpo da requisicao deve ser um objeto JSON.",
+    "label": "O corpo da requisicao deve ser um objeto JSON.",
+    "fonte": "API",
+    "tipo": "OCR"
+  },
+  "SCHEMA_002": {
+    "categoria": "API / Schema",
+    "mensagem_resumo": "O corpo da requisicao nao pode estar vazio.",
+    "label": "O corpo da requisicao nao pode estar vazio.",
+    "fonte": "API",
+    "tipo": "OCR"
+  },
+  "SCHEMA_003": {
+    "categoria": "API / Schema",
+    "mensagem_resumo": "O campo <campo> e obrigatorio no cabecalho.",
+    "label": "O campo <campo> e obrigatorio no cabecalho.",
+    "fonte": "API",
+    "tipo": "OCR"
+  },
+  "SCHEMA_004": {
+    "categoria": "API / Schema",
+    "mensagem_resumo": "O CNPJ do emitente, ou o CPF e IE do emitente, ou os dados do fornecedor devem ser informados.",
+    "label": "O CNPJ do emitente, ou o CPF e IE do emitente, ou os dados do fornecedor devem ser informados.",
+    "fonte": "API",
+    "tipo": "OCR"
+  },
+  "SCHEMA_005": {
+    "categoria": "API / Schema",
+    "mensagem_resumo": "O CNPJ do emitente deve conter 14 digitos.",
+    "label": "O CNPJ do emitente deve conter 14 digitos.",
+    "fonte": "API",
+    "tipo": "OCR"
+  },
+  "SCHEMA_006": {
+    "categoria": "API / Schema",
+    "mensagem_resumo": "O CPF do emitente deve conter 11 digitos.",
+    "label": "O CPF do emitente deve conter 11 digitos.",
+    "fonte": "API",
+    "tipo": "OCR"
+  },
+  "SCHEMA_007": {
+    "categoria": "API / Schema",
+    "mensagem_resumo": "A Inscricao Estadual do emitente deve conter no minimo 2 digitos.",
+    "label": "A Inscricao Estadual do emitente deve conter no minimo 2 digitos.",
+    "fonte": "API",
+    "tipo": "OCR"
+  },
+  "SCHEMA_008": {
+    "categoria": "API / Schema",
+    "mensagem_resumo": "Nao e permitido informar CNPJ e CPF/IE do emitente simultaneamente.",
+    "label": "Nao e permitido informar CNPJ e CPF/IE do emitente simultaneamente.",
+    "fonte": "API",
+    "tipo": "OCR"
+  },
+  "SCHEMA_009": {
+    "categoria": "API / Schema",
+    "mensagem_resumo": "A Inscricao Estadual do emitente deve ser informada quando o CPF for fornecido.",
+    "label": "A Inscricao Estadual do emitente deve ser informada quando o CPF for fornecido.",
+    "fonte": "API",
+    "tipo": "OCR"
+  },
+  "SCHEMA_010": {
+    "categoria": "API / Schema",
+    "mensagem_resumo": "O CPF do emitente deve ser informado quando a Inscricao Estadual for fornecida.",
+    "label": "O CPF do emitente deve ser informado quando a Inscricao Estadual for fornecida.",
+    "fonte": "API",
+    "tipo": "OCR"
+  },
+  "SCHEMA_011": {
+    "categoria": "API / Schema",
+    "mensagem_resumo": "O codigo do fornecedor/loja deve ser informado no objeto fornecedor.",
+    "label": "O codigo do fornecedor/loja deve ser informado no objeto fornecedor.",
+    "fonte": "API",
+    "tipo": "OCR"
+  },
+  "SCHEMA_012": {
+    "categoria": "API / Schema",
+    "mensagem_resumo": "O codigo do fornecedor ou loja e invalido.",
+    "label": "O codigo do fornecedor ou loja e invalido.",
+    "fonte": "API",
+    "tipo": "OCR"
+  },
+  "SCHEMA_013": {
+    "categoria": "API / Schema",
+    "mensagem_resumo": "Nao e permitido informar dados do fornecedor quando o emitente ja foi especificado via CNPJ ou CPF/IE.",
+    "label": "Nao e permitido informar dados do fornecedor quando o emitente ja foi especificado via CNPJ ou CPF/IE.",
+    "fonte": "API",
+    "tipo": "OCR"
+  },
+  "SCHEMA_014": {
+    "categoria": "API / Schema",
+    "mensagem_resumo": "A chave de acesso deve ser informada e conter 44 digitos para documentos do tipo SPED.",
+    "label": "A chave de acesso deve ser informada e conter 44 digitos para documentos do tipo SPED.",
+    "fonte": "API",
+    "tipo": "OCR"
+  },
+  "SCHEMA_015": {
+    "categoria": "API / Schema",
+    "mensagem_resumo": "A moeda informada e invalida. Aceitas: BRL, USD.",
+    "label": "A moeda informada e invalida. Aceitas: BRL, USD.",
+    "fonte": "API",
+    "tipo": "OCR"
+  },
+  "SCHEMA_016": {
+    "categoria": "API / Schema",
+    "mensagem_resumo": "A taxa de cambio deve ser informada e maior que zero para moedas diferentes de BRL.",
+    "label": "A taxa de cambio deve ser informada e maior que zero para moedas diferentes de BRL.",
+    "fonte": "API",
+    "tipo": "OCR"
+  },
+  "SCHEMA_ITEM_001": {
+    "categoria": "API / Schema",
+    "mensagem_resumo": "O campo itens deve ser um array com pelo menos um item.",
+    "label": "O campo itens deve ser um array com pelo menos um item.",
+    "fonte": "API",
+    "tipo": "OCR"
+  },
+  "SCHEMA_ITEM_002": {
+    "categoria": "API / Schema",
+    "mensagem_resumo": "O campo <campo> e obrigatorio no item <item>.",
+    "label": "O campo <campo> e obrigatorio no item <item>.",
+    "fonte": "API",
+    "tipo": "OCR"
+  },
+  "SCHEMA_ITEM_003": {
+    "categoria": "API / Schema",
+    "mensagem_resumo": "O campo quantidade no item <item> deve ser maior que zero.",
+    "label": "O campo quantidade no item <item> deve ser maior que zero.",
+    "fonte": "API",
+    "tipo": "OCR"
+  },
+  "SCHEMA_ITEM_004": {
+    "categoria": "API / Schema",
+    "mensagem_resumo": "O campo valorUnitario no item <item> deve ser maior que zero.",
+    "label": "O campo valorUnitario no item <item> deve ser maior que zero.",
+    "fonte": "API",
+    "tipo": "OCR"
+  },
+  "SCHEMA_ITEM_005": {
+    "categoria": "API / Schema",
+    "mensagem_resumo": "Os campos pedidoErp e itemPedidoErp devem ser informados juntos no item <item>.",
+    "label": "Os campos pedidoErp e itemPedidoErp devem ser informados juntos no item <item>.",
+    "fonte": "API",
+    "tipo": "OCR"
+  },
+  "SCHEMA_ITEM_006": {
+    "categoria": "API / Schema",
+    "mensagem_resumo": "O campo itemDocumentoOrigem deve ser informado quando o campo documentoOrigem for preenchido no item <item>.",
+    "label": "O campo itemDocumentoOrigem deve ser informado quando o campo documentoOrigem for preenchido no item <item>.",
+    "fonte": "API",
+    "tipo": "OCR"
+  },
+  "SCHEMA_ITEM_007": {
+    "categoria": "API / Schema",
+    "mensagem_resumo": "O campo documentoOrigem deve ser informado quando o campo itemDocumentoOrigem for preenchido no item <item>.",
+    "label": "O campo documentoOrigem deve ser informado quando o campo itemDocumentoOrigem for preenchido no item <item>.",
+    "fonte": "API",
+    "tipo": "OCR"
+  },
+  "SCHEMA_ITEM_008": {
+    "categoria": "API / Schema",
+    "mensagem_resumo": "O campo numero e obrigatorio no objeto lote do item <item>.",
+    "label": "O campo numero e obrigatorio no objeto lote do item <item>.",
+    "fonte": "API",
+    "tipo": "OCR"
+  },
+  "SCHEMA_ITEM_009": {
+    "categoria": "API / Schema",
+    "mensagem_resumo": "O campo dataValidade e obrigatorio no objeto lote do item <item>.",
+    "label": "O campo dataValidade e obrigatorio no objeto lote do item <item>.",
+    "fonte": "API",
+    "tipo": "OCR"
+  },
+  "SCHEMA_ITEM_011": {
+    "categoria": "API / Schema",
+    "mensagem_resumo": "Os dados de lote sao obrigatorios para o item <item>.",
+    "label": "Os dados de lote sao obrigatorios para o item <item>.",
+    "fonte": "API",
+    "tipo": "Operacional"
+  },
+  "SCHEMA_ITEM_012": {
+    "categoria": "API / Schema",
+    "mensagem_resumo": "Os dados de lote nao devem ser informados para o item <item> pois o produto nao exige controle de lote.",
+    "label": "Os dados de lote nao devem ser informados para o item <item> pois o produto nao exige controle de lote.",
+    "fonte": "API",
+    "tipo": "OCR"
+  },
+  "SCHEMA_CC_001": {
+    "categoria": "API / Schema",
+    "mensagem_resumo": "O campo rateioCentroCusto deve ser um array com pelo menos um item.",
+    "label": "O campo rateioCentroCusto deve ser um array com pelo menos um item.",
+    "fonte": "API",
+    "tipo": "OCR"
+  },
+  "SCHEMA_CC_002": {
+    "categoria": "API / Schema",
+    "mensagem_resumo": "O campo <campo> e obrigatorio no rateio de centro de custo item <item>.",
+    "label": "O campo <campo> e obrigatorio no rateio de centro de custo item <item>.",
+    "fonte": "API",
+    "tipo": "OCR"
+  },
+  "SCHEMA_CC_003": {
+    "categoria": "API / Schema",
+    "mensagem_resumo": "O campo percentual no rateio de centro de custo item <item> deve ser maior que zero.",
+    "label": "O campo percentual no rateio de centro de custo item <item> deve ser maior que zero.",
+    "fonte": "API",
+    "tipo": "OCR"
+  },
+  "SCHEMA_CC_004": {
+    "categoria": "API / Schema",
+    "mensagem_resumo": "O campo percentual no rateio de centro de custo item <item> nao pode ser maior que 100.",
+    "label": "O campo percentual no rateio de centro de custo item <item> nao pode ser maior que 100.",
+    "fonte": "API",
+    "tipo": "OCR"
+  },
+  "SCHEMA_CC_005": {
+    "categoria": "API / Schema",
+    "mensagem_resumo": "O campo valor no rateio de centro de custo item <item> deve ser maior que zero.",
+    "label": "O campo valor no rateio de centro de custo item <item> deve ser maior que zero.",
+    "fonte": "API",
+    "tipo": "OCR"
+  },
+  "SCHEMA_CC_006": {
+    "categoria": "API / Schema",
+    "mensagem_resumo": "A soma dos percentuais no rateio de centro de custo nao pode ser maior que 100.",
+    "label": "A soma dos percentuais no rateio de centro de custo nao pode ser maior que 100.",
+    "fonte": "API",
+    "tipo": "OCR"
+  },
+  "SCHEMA_CC_007": {
+    "categoria": "API / Schema",
+    "mensagem_resumo": "A soma dos percentuais no rateio de centro de custo deve ser igual a 100.",
+    "label": "A soma dos percentuais no rateio de centro de custo deve ser igual a 100.",
+    "fonte": "API",
+    "tipo": "OCR"
+  },
+  "TRANSFORM_001": {
+    "categoria": "API / Schema",
+    "mensagem_resumo": "Fornecedor nao encontrado para o CNPJ do emitente informado.",
+    "label": "Fornecedor nao encontrado para o CNPJ do emitente informado.",
+    "fonte": "API",
+    "tipo": "Operacional"
+  },
+  "TRANSFORM_002": {
+    "categoria": "API / Schema",
+    "mensagem_resumo": "Fornecedor nao encontrado para o CPF e IE do emitente informados.",
+    "label": "Fornecedor nao encontrado para o CPF e IE do emitente informados.",
+    "fonte": "API",
+    "tipo": "Operacional"
+  },
+  "TRANSFORM_003": {
+    "categoria": "API / Schema",
+    "mensagem_resumo": "Nao foi possivel determinar a unidade de medida para o item <item>. Verifique o codigo do produto.",
+    "label": "Nao foi possivel determinar a unidade de medida para o item <item>. Verifique o codigo do produto.",
+    "fonte": "API",
+    "tipo": "Operacional"
+  },
+  "TRANSFORM_004": {
+    "categoria": "API / Schema",
+    "mensagem_resumo": "Nao foi possivel determinar o armazem para o item <item>. Verifique o codigo do produto.",
+    "label": "Nao foi possivel determinar o armazem para o item <item>. Verifique o codigo do produto.",
+    "fonte": "API",
+    "tipo": "Operacional"
+  },
+  "TRANSFORM_005": {
+    "categoria": "API / Schema",
+    "mensagem_resumo": "Nao foi possivel determinar natureza, centro de custo e conta contabil para o item <item>. Pedido de Compra nao encontrado.",
+    "label": "Nao foi possivel determinar natureza, centro de custo e conta contabil para o item <item>. Pedido de Compra nao encontrado.",
+    "fonte": "API",
+    "tipo": "Operacional"
+  },
+  "TRANSFORM_006": {
+    "categoria": "API / Schema",
+    "mensagem_resumo": "O campo vencimento e obrigatorio na duplicata item <item>.",
+    "label": "O campo vencimento e obrigatorio na duplicata item <item>.",
+    "fonte": "API",
+    "tipo": "OCR"
+  },
+  "TRANSFORM_007": {
+    "categoria": "API / Schema",
+    "mensagem_resumo": "O campo valor e obrigatorio na duplicata item <item>.",
+    "label": "O campo valor e obrigatorio na duplicata item <item>.",
+    "fonte": "API",
+    "tipo": "OCR"
+  },
+  "EXEC_AUTO_002": {
+    "categoria": "API / Schema",
+    "mensagem_resumo": "Erro ao salvar o documento de entrada como pre-nota.",
+    "label": "Erro ao salvar o documento de entrada como pre-nota.",
+    "fonte": "API",
+    "tipo": "Operacional"
+  },
+  "CALC_QTDVAL_001": {
+    "categoria": "API / Schema",
+    "mensagem_resumo": "Nao foi possivel determinar a conversao de unidade de medida para o item <item>. Verifique o codigo do produto.",
+    "label": "Nao foi possivel determinar a conversao de unidade de medida para o item <item>. Verifique o codigo do produto.",
+    "fonte": "API",
+    "tipo": "Operacional"
+  },
+  "CALC_QTDVAL_002": {
+    "categoria": "API / Schema",
+    "mensagem_resumo": "Unidade de medida do item <item> nao e igual a unidade padrao ou de conversao do produto, nem a unidade de conversao cadastrada para o fornecedor. Verifique o codigo do produto.",
+    "label": "Unidade de medida do item <item> nao e igual a unidade padrao ou de conversao do produto, nem a unidade de conversao cadastrada para o fornecedor. Verifique o codigo do produto.",
+    "fonte": "API",
+    "tipo": "Operacional"
+  },
+  "validar_produtos": {
+    "categoria": "Validação OCR",
+    "mensagem_resumo": "Produtos da NF não conferem com pedido/XML",
+    "label": "Produtos da NF não conferem com pedido/XML",
+    "fonte": "Validação OCR",
+    "tipo": "OCR"
+  },
+  "validar_cnpj_fornecedor": {
+    "categoria": "Validação OCR",
+    "mensagem_resumo": "CNPJ do fornecedor divergente (raiz/matriz)",
+    "label": "CNPJ do fornecedor divergente (raiz/matriz)",
+    "fonte": "Validação OCR",
+    "tipo": "Operacional"
+  },
+  "validar_cnpj_destinatario": {
+    "categoria": "Validação OCR",
+    "mensagem_resumo": "CNPJ do destinatário divergente (raiz/matriz)",
+    "label": "CNPJ do destinatário divergente (raiz/matriz)",
+    "fonte": "Validação OCR",
+    "tipo": "OCR"
+  },
+  "validar_numero_pedido": {
+    "categoria": "Validação OCR",
+    "mensagem_resumo": "Número do pedido divergente",
+    "label": "Número do pedido divergente",
+    "fonte": "Validação OCR",
+    "tipo": "OCR"
+  },
+  "validar_numero_nota": {
+    "categoria": "Validação OCR",
+    "mensagem_resumo": "Número da nota divergente",
+    "label": "Número da nota divergente",
+    "fonte": "Validação OCR",
+    "tipo": "OCR"
+  },
+  "validar_serie": {
+    "categoria": "Validação OCR",
+    "mensagem_resumo": "Série divergente entre documentos",
+    "label": "Série divergente entre documentos",
+    "fonte": "Validação OCR",
+    "tipo": "OCR"
+  },
+  "validar_data_emissao": {
+    "categoria": "Validação OCR",
+    "mensagem_resumo": "Data de emissão divergente",
+    "label": "Data de emissão divergente",
+    "fonte": "Validação OCR",
+    "tipo": "OCR"
+  },
+  "validar_cfop_chave": {
+    "categoria": "Validação OCR",
+    "mensagem_resumo": "CFOP / mapeamento de operação divergente",
+    "label": "CFOP / mapeamento de operação divergente",
+    "fonte": "Validação OCR",
+    "tipo": "OCR"
+  },
+  "validar_icms": {
+    "categoria": "Validação OCR",
+    "mensagem_resumo": "ICMS divergente (NF × XML)",
+    "label": "ICMS divergente (NF × XML)",
+    "fonte": "Validação OCR",
+    "tipo": "OCR"
+  },
+  "OCR_LAMBDA_TIMEOUT": {
+    "categoria": "Pipeline OCR",
+    "mensagem_resumo": "Timeout no processamento (Step Functions)",
+    "label": "Timeout no processamento (Step Functions)",
+    "fonte": "Pipeline OCR",
+    "tipo": "OCR"
+  },
+  "OCR_LAMBDA_UpdateStatusBeforeError": {
+    "categoria": "Pipeline OCR",
+    "mensagem_resumo": "Erro técnico ao finalizar status do processo",
+    "label": "Erro técnico ao finalizar status do processo",
+    "fonte": "Pipeline OCR",
+    "tipo": "OCR"
+  },
+  "OCR_LAMBDA_ERROR": {
+    "categoria": "Pipeline OCR",
+    "mensagem_resumo": "Erro genérico na lambda OCR",
+    "label": "Erro genérico na lambda OCR",
+    "fonte": "Pipeline OCR",
+    "tipo": "OCR"
+  },
+  "Outros": {
+    "categoria": "Agregado",
+    "mensagem_resumo": "Falhas sem regra nomeada (lambda, integração ou legado)",
+    "label": "Falhas sem regra nomeada (lambda, integração ou legado)",
+    "fonte": "Agregado",
+    "tipo": null
+  }
+}

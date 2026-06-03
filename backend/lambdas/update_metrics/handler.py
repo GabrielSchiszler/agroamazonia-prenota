@@ -1,11 +1,267 @@
 import json
 import os
+import sys
+from pathlib import Path
+
 import boto3
 from datetime import datetime, timezone
 from decimal import Decimal
 
+# Deploy: CDK copia ../utils para /asset-output/utils. Local: utils em lambdas/utils.
+_handler_dir = Path(__file__).resolve().parent
+for _root in (_handler_dir, _handler_dir.parent):
+    if (_root / "utils").is_dir() and str(_root) not in sys.path:
+        sys.path.insert(0, str(_root))
+
+from utils.failure_dedup import failure_identity_fallback, format_failure_key_display
+from utils.metrics_rates import metrics_outcome_for_status
+from utils.protheus_regras import (
+    build_failed_rules_for_metrics,
+    extract_protheus_regras_from_metadata,
+    load_api_regras_catalog,
+)
+
 dynamodb = boto3.resource('dynamodb')
 table = dynamodb.Table(os.environ['TABLE_NAME'])
+
+# Texto retorno Protheus quando a nota fica como pré-nota (classificação pendente) — alinhado ao PTP / SNS.
+PRENOTA_MESSAGE_SNIPPET = "documento de entrada criado como pré-nota"
+
+def _coerce_dict(value):
+    if value is None:
+        return None
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str):
+        try:
+            return json.loads(value)
+        except (json.JSONDecodeError, TypeError):
+            return None
+    return None
+
+
+def protheus_response_indicates_prenota(event: dict, metadata_item: dict | None = None) -> bool:
+    """True se a resposta Protheus indica documento gravado como pré-nota (mensagem padrão)."""
+    texts = []
+
+    def collect_from_obj(obj: dict):
+        m = obj.get("message")
+        if m is not None:
+            texts.append(str(m))
+        body = obj.get("body")
+        if isinstance(body, dict) and body.get("message") is not None:
+            texts.append(str(body["message"]))
+
+    pr = _coerce_dict(event.get("protheus_response"))
+    if pr:
+        collect_from_obj(pr)
+
+    pr2 = event.get("protheus_result")
+    if isinstance(pr2, dict):
+        payload = pr2.get("Payload")
+        if isinstance(payload, dict):
+            inner = _coerce_dict(payload.get("protheus_response"))
+            if inner:
+                collect_from_obj(inner)
+
+    if metadata_item:
+        inner = _coerce_dict(metadata_item.get("protheus_response"))
+        if inner:
+            collect_from_obj(inner)
+
+    needle = PRENOTA_MESSAGE_SNIPPET.lower()
+    for t in texts:
+        if needle in t.lower():
+            return True
+    return False
+
+
+def _truthy_prenota_flag(val) -> bool:
+    if val is None:
+        return False
+    if isinstance(val, bool):
+        return val
+    if isinstance(val, (int, float)):
+        return val != 0
+    return str(val).strip().lower() in ("true", "1", "yes", "sim")
+
+
+def _norm_digits(value: object) -> str:
+    s = "".join(ch for ch in str(value or "") if ch.isdigit())
+    return s
+
+
+def _get_json_field(data: dict, *keys):
+    cur = data
+    for k in keys:
+        if not isinstance(cur, dict):
+            return None
+        cur = cur.get(k)
+    return cur
+
+
+def _parse_json_blob(raw) -> dict | None:
+    if raw is None:
+        return None
+    if isinstance(raw, dict):
+        return raw
+    if isinstance(raw, str):
+        try:
+            parsed = json.loads(raw)
+            return parsed if isinstance(parsed, dict) else None
+        except (json.JSONDecodeError, TypeError):
+            return None
+    return None
+
+
+def _request_body_from_pedido_doc(doc: dict | None) -> dict | None:
+    if not isinstance(doc, dict):
+        return None
+    if isinstance(doc.get("requestBody"), dict):
+        return doc["requestBody"]
+    return doc if doc.get("itens") is not None else None
+
+
+def _pedido_numero_from_request_body(request_body: dict | None) -> str:
+    """Número do pedido de compra: requestBody.itens[].pedidoDeCompra.pedidoErp."""
+    if not isinstance(request_body, dict):
+        return ""
+    itens = request_body.get("itens") or []
+    if isinstance(itens, list):
+        for item in itens:
+            if not isinstance(item, dict):
+                continue
+            pdc = item.get("pedidoDeCompra")
+            if isinstance(pdc, dict):
+                pe = pdc.get("pedidoErp")
+                if pe:
+                    return str(pe).strip()
+    for field in ("pedidoErp", "pedidoFornecedor", "numeroPedido", "numero_pedido"):
+        v = request_body.get(field)
+        if v:
+            return str(v).strip()
+    return ""
+
+
+def _nf_cnpj_from_parsed_xml(parsed_data: dict | None) -> tuple[str, str]:
+    """NF e CNPJ do fornecedor a partir do JSON do XML (PARSED_DATA)."""
+    if not isinstance(parsed_data, dict):
+        return "", ""
+    nf = str(parsed_data.get("numero_nota") or parsed_data.get("numeroNota") or "").strip()
+    emitente = parsed_data.get("emitente")
+    cnpj = ""
+    if isinstance(emitente, dict):
+        cnpj = _norm_digits(emitente.get("cnpj") or emitente.get("cpf"))
+    if not cnpj:
+        chave = _norm_digits(parsed_data.get("chave_acesso"))
+        if len(chave) >= 20:
+            cnpj = chave[6:20]
+    return nf, cnpj
+
+
+def _collect_pedido_metadados(items: list, metadata_item: dict | None = None) -> list[dict]:
+    """Documentos no formato {header, requestBody} (PEDIDO_COMPRA / INPUT_JSON / FILE#)."""
+    docs: list[dict] = []
+    seen: set[str] = set()
+
+    def add_doc(raw):
+        doc = _parse_json_blob(raw)
+        if not doc:
+            return
+        key = json.dumps(doc, sort_keys=True, default=str)
+        if key in seen:
+            return
+        seen.add(key)
+        docs.append(doc)
+
+    pedido_item = next((it for it in items if it.get("SK") == "PEDIDO_COMPRA_METADATA"), None)
+    if pedido_item:
+        add_doc(pedido_item.get("METADADOS"))
+
+    for it in items:
+        sk = str(it.get("SK", ""))
+        if "FILE#" in sk and it.get("METADADOS"):
+            add_doc(it.get("METADADOS"))
+
+    if metadata_item:
+        add_doc(metadata_item.get("INPUT_JSON"))
+
+    return docs
+
+
+def _error_tag_from_failure_key(key: str) -> str:
+    """Extrai tipo de erro da chave NF|CNPJ|tipo_erro|pedido (ou legado NF|CNPJ|tipo)."""
+    parts = key.split("|")
+    if len(parts) >= 4:
+        return parts[2] or "Outros"
+    if len(parts) == 3:
+        return parts[2] or "Outros"
+    return "Outros"
+
+
+def _extract_failure_identity(
+    process_id: str,
+    metadata_item: dict | None = None,
+    process_type: str = "UNKNOWN",
+) -> tuple[str, str, str]:
+    """
+    Identidade da falha para deduplicação no dashboard.
+    Chave: NF + CnpjFornecedor + tipo de erro + pedidoDeCompra.pedidoErp
+
+    Fontes (prioridade):
+    - NF e CNPJ: PARSED_DATA do XML (numero_nota, emitente.cnpj)
+    - Pedido: METADADOS do pedido de compra (requestBody.itens[].pedidoDeCompra.pedidoErp)
+    """
+    nf = ""
+    cnpj = ""
+    pedido = ""
+    pk = f"PROCESS#{process_id}"
+    try:
+        resp = table.query(
+            KeyConditionExpression='PK = :pk',
+            ExpressionAttributeValues={':pk': pk}
+        )
+        items = resp.get("Items", [])
+    except Exception:
+        items = []
+
+    parsed_xml_items = [
+        it for it in items if "PARSED_XML" in str(it.get("SK", ""))
+    ]
+    if parsed_xml_items:
+        parsed_xml_items.sort(key=lambda x: x.get("TIMESTAMP", 0), reverse=True)
+        parsed_data = _parse_json_blob(parsed_xml_items[0].get("PARSED_DATA"))
+        nf, cnpj = _nf_cnpj_from_parsed_xml(parsed_data)
+
+    if not nf:
+        bedrock_item = next((it for it in items if it.get("SK") == "BEDROCK_EXTRACTION"), None)
+        if bedrock_item:
+            bd = _parse_json_blob(bedrock_item.get("EXTRACTED_FIELDS"))
+            if bd:
+                nf = str(bd.get("documento") or bd.get("numero_nota") or "").strip()
+
+    for doc in _collect_pedido_metadados(items, metadata_item):
+        rb = _request_body_from_pedido_doc(doc)
+        if not pedido and rb:
+            pedido = _pedido_numero_from_request_body(rb)
+        if not cnpj and rb:
+            cnpj = _norm_digits(rb.get("cnpjEmitente"))
+
+    nf = nf or failure_identity_fallback("nf")
+    cnpj = cnpj or failure_identity_fallback("cnpj")
+    pedido = pedido or failure_identity_fallback("pedido")
+    return nf, cnpj, pedido
+
+
+def _build_failure_keys(
+    nf: str, cnpj: str, pedido: str, failed_rules: list[str], status: str
+) -> list[str]:
+    """Monta chaves NF|CNPJ|tipo_erro|pedido_compra (regra específica ou Outros)."""
+    if status != "FAILED":
+        return []
+    error_tags = sorted(set([r for r in (failed_rules or []) if r])) or ["Outros"]
+    return [f"{nf}|{cnpj}|{tag}|{pedido}" for tag in error_tags]
+
 
 def lambda_handler(event, context):
     """
@@ -44,7 +300,9 @@ def lambda_handler(event, context):
     previous_metrics_status = None  # Status da métrica anterior (para deduplicação)
     previous_metrics_date = None    # Data em que métricas foram registradas
     previous_failed_rules = []      # Regras que falharam anteriormente
+    previous_failure_keys = []      # Chaves deduplicadas (NF|CNPJ|tipo_erro|pedido)
     previous_processing_time = 0    # Tempo de processamento anterior (para deduplicação de total_time)
+    previous_failure_error_type = None  # failure_reasons no METRICS# (LAMBDA_ERROR, etc.)
     
     try:
         pk = f"PROCESS#{process_id}"
@@ -65,6 +323,10 @@ def lambda_handler(event, context):
                 previous_failed_rules = json.loads(previous_failed_rules_str) if isinstance(previous_failed_rules_str, str) else previous_failed_rules_str
             except:
                 previous_failed_rules = []
+            try:
+                previous_failure_keys = json.loads(previous_failure_keys_str) if isinstance(previous_failure_keys_str, str) else previous_failure_keys_str
+            except:
+                previous_failure_keys = []
             
             # Recuperar tempo de processamento anterior (para decrementar total_time na deduplicação)
             prev_proc_time = metadata_response['Item'].get('METRICS_PROCESSING_TIME', 0)
@@ -78,6 +340,7 @@ def lambda_handler(event, context):
             print(f"Previous metrics_status: {previous_metrics_status}")
             print(f"Previous metrics_date: {previous_metrics_date}")
             print(f"Previous failed_rules: {previous_failed_rules}")
+            print(f"Previous failure_keys: {previous_failure_keys}")
             print(f"Previous processing_time: {previous_processing_time}s")
         else:
             print(f"WARNING: Process {process_id} METADATA not found in DynamoDB")
@@ -162,7 +425,19 @@ def lambda_handler(event, context):
     # Determinar status (fonte única: campo 'status' do evento)
     status = event_status if event_status else 'SUCCESS'
     print(f"Status determinado: {status}")
-    
+
+    meta_item = None
+    if metadata_response and "Item" in metadata_response:
+        meta_item = metadata_response["Item"]
+
+    is_prenota = status == "SUCCESS" and protheus_response_indicates_prenota(event, meta_item)
+    print(f"Pré-nota (IA) no sucesso: {is_prenota}")
+
+    previous_is_prenota = False
+    if previous_metrics_status == "SUCCESS" and meta_item is not None:
+        previous_is_prenota = _truthy_prenota_flag(meta_item.get("METRICS_IS_PRENOTA"))
+        print(f"Métricas anteriores eram pré-nota: {previous_is_prenota}")
+
     # Calcular tempo de processamento
     end_time = datetime.now(timezone.utc)
     processing_time = 0
@@ -241,18 +516,85 @@ def lambda_handler(event, context):
         else:
             error_type = 'PROCESSING_ERROR'
         print(f"Error type: {error_type}")
+
+    nf_numero, cnpj_fornecedor, pedido_numero = _extract_failure_identity(
+        process_id, meta_item, process_type
+    )
+    failure_keys = _build_failure_keys(
+        nf_numero, cnpj_fornecedor, pedido_numero, failed_rules, status
+    )
+    print(
+        f"Failure identity: nf={nf_numero}, cnpj={cnpj_fornecedor}, "
+        f"pedido={pedido_numero}, type={process_type}"
+    )
+    print(f"Failure keys: {failure_keys}")
     
     # Data para agregação
     date_key = end_time.strftime('%Y-%m-%d')
     month_key = end_time.strftime('%Y-%m')
     hour = end_time.hour
     
+    api_catalog = load_api_regras_catalog()
+    protheus_regras = []
+    skip_metrics = False
+    skip_reason = ""
+    operacional_rules: list[str] = []
+    if meta_item:
+        protheus_regras = extract_protheus_regras_from_metadata(meta_item)
+        if status == "FAILED":
+            ocr_rules, op_rules, skip_metrics, skip_reason = build_failed_rules_for_metrics(
+                table,
+                meta_item,
+                validation_failed_rules=failed_rules,
+                api_catalog=api_catalog,
+            )
+            failed_rules = ocr_rules
+            operacional_rules = op_rules
+    if skip_metrics:
+        print(
+            f"[METRICS] Processo ignorado nas métricas OCR ({skip_reason}): "
+            f"falha de processo — contabilizado em skipped_operacional"
+        )
+        try:
+            record_operacional_skip_metrics(
+                date_key,
+                month_key,
+                hour,
+                process_type,
+                processing_time,
+                operacional_rules,
+            )
+            save_metrics_status(
+                process_id,
+                "FAILED",
+                date_key,
+                [],
+                [],
+                processing_time,
+                failure_error_type="OPERACIONAL_SKIP",
+                operacional_failed_rules=operacional_rules,
+            )
+        except Exception as e:
+            print(f"[METRICS] Erro ao registrar skip operacional: {e}")
+            raise
+        return {
+            "success": True,
+            "metrics_updated": True,
+            "metrics_skipped": True,
+            "skip_reason": skip_reason,
+            "process_id": process_id,
+            "protheus_regras": operacional_rules,
+        }
+
     print(f"Atualizando métricas: date={date_key}, status={status}, time={processing_time}s")
-    print(f"Regras que falharam encontradas: {failed_rules} (total: {len(failed_rules)})")
+    outcome = metrics_outcome_for_status(status, skip_metrics=False)
+    print(f"[METRICS] Contagem do processo: {outcome} (taxa do dia usa sucesso/(sucesso+falha))")
+    print(f"Regras OCR: {failed_rules} | Falha de processo: {operacional_rules}")
+    print(f"Regras Protheus extraídas: {[r.get('regra_id') for r in protheus_regras]}")
     print(f"Process type: {process_type}")
     print(f"Error type: {error_type}")
     print(f"Hour: {hour}")
-    
+
     try:
         # ============================================
         # DEDUPLICAÇÃO: Remover métricas anteriores se for reprocessamento
@@ -268,31 +610,66 @@ def lambda_handler(event, context):
             print(f"[DEDUPLICAÇÃO] Removendo métricas do dia {prev_date_key} e mês {prev_month_key}...")
             
             # Decrementar métricas diárias anteriores
-            decrement_daily_metrics(prev_date_key, previous_metrics_status, process_type, previous_failed_rules, previous_processing_time)
+            decrement_daily_metrics(
+                prev_date_key,
+                previous_metrics_status,
+                process_type,
+                previous_failed_rules,
+                previous_failure_keys,
+                previous_processing_time,
+                previous_is_prenota,
+                previous_failure_error_type,
+            )
             print(f"✓ Métricas diárias anteriores decrementadas")
             
             # Decrementar métricas mensais anteriores
-            decrement_monthly_metrics(prev_month_key, previous_metrics_status, process_type, previous_processing_time)
+            decrement_monthly_metrics(
+                prev_month_key,
+                previous_metrics_status,
+                process_type,
+                previous_processing_time,
+                previous_is_prenota,
+            )
             print(f"✓ Métricas mensais anteriores decrementadas")
         
         # ============================================
         # Atualizar métricas com novo status
         # ============================================
         print("Chamando update_daily_metrics...")
-        # Atualizar métricas diárias
-        update_daily_metrics(date_key, status, processing_time, error_type, hour, process_type, failed_rules)
+        dedup_result = update_daily_metrics(
+            date_key,
+            status,
+            processing_time,
+            error_type,
+            hour,
+            process_type,
+            failed_rules,
+            failure_keys,
+            process_id,
+            is_prenota,
+            operacional_failed_rules=operacional_rules,
+        )
         print("✓ update_daily_metrics concluído")
+        print(f"  Dedup: {dedup_result}")
         
         print("Chamando update_monthly_metrics...")
-        # Atualizar métricas mensais
-        update_monthly_metrics(month_key, status, processing_time, process_type)
+        update_monthly_metrics(month_key, status, processing_time, process_type, is_prenota)
         print("✓ update_monthly_metrics concluído")
         
-        # ============================================
-        # Salvar informações de métricas no processo (para deduplicação futura)
-        # ============================================
         print("Salvando informações de métricas no processo...")
-        save_metrics_status(process_id, status, date_key, failed_rules, processing_time)
+        save_metrics_status(
+            process_id,
+            status,
+            date_key,
+            failed_rules,
+            failure_keys,
+            processing_time,
+            is_prenota,
+            failure_error_type=error_type,
+            operacional_failed_rules=operacional_rules,
+            failure_dedup_role=dedup_result.get("dedup_role"),
+            failure_dedup_primary_process_id=dedup_result.get("primary_process_id"),
+        )
         print("✓ Informações de métricas salvas no processo")
         
         print("="*80)
@@ -317,140 +694,271 @@ def lambda_handler(event, context):
         'previous_status': previous_metrics_status
     }
 
-def save_metrics_status(process_id, status, date_key, failed_rules, processing_time=0):
-    """Salva informações de métricas no processo para suportar deduplicação em reprocessamento"""
+def save_metrics_status(
+    process_id,
+    status,
+    date_key,
+    failed_rules,
+    failure_keys=None,
+    processing_time=0,
+    is_prenota=False,
+    failure_error_type=None,
+    operacional_failed_rules=None,
+    failure_dedup_role=None,
+    failure_dedup_primary_process_id=None,
+):
+    """Salva informações de métricas no processo para suportar deduplicação em reprocessamento."""
     
     pk = f"PROCESS#{process_id}"
     timestamp = datetime.now(timezone.utc).isoformat()
+    prenota_flag = bool(is_prenota) if status == "SUCCESS" else False
+    failure_keys = failure_keys if failure_keys is not None else []
     
     try:
+        expr = (
+            'SET METRICS_STATUS = :status, METRICS_DATE = :date, '
+            'METRICS_FAILED_RULES = :rules, METRICS_FAILURE_KEYS = :fkeys, '
+            'METRICS_UPDATED_AT = :timestamp, METRICS_PROCESSING_TIME = :proc_time, '
+            'METRICS_IS_PRENOTA = :prenota, METRICS_OPERACIONAL_RULES = :op_rules'
+        )
+        values = {
+            ':status': status,
+            ':date': date_key,
+            ':rules': json.dumps(failed_rules if failed_rules else []),
+            ':fkeys': json.dumps(failure_keys if failure_keys else []),
+            ':timestamp': timestamp,
+            ':proc_time': Decimal(str(round(processing_time, 2))),
+            ':prenota': prenota_flag,
+            ':op_rules': json.dumps(
+                operacional_failed_rules if operacional_failed_rules is not None else []
+            ),
+        }
+        if status == 'FAILED' and failure_error_type:
+            expr += ', METRICS_FAILURE_ERROR_TYPE = :err_type'
+            values[':err_type'] = failure_error_type
+        if failure_dedup_role:
+            expr += ', METRICS_FAILURE_DEDUP_ROLE = :dedup_role'
+            values[':dedup_role'] = failure_dedup_role
+        if failure_dedup_primary_process_id:
+            expr += ', METRICS_FAILURE_DEDUP_PRIMARY = :dedup_primary'
+            values[':dedup_primary'] = failure_dedup_primary_process_id
+        if status == 'SUCCESS':
+            expr += ' REMOVE METRICS_FAILURE_ERROR_TYPE, METRICS_FAILURE_DEDUP_ROLE, METRICS_FAILURE_DEDUP_PRIMARY'
         table.update_item(
             Key={'PK': pk, 'SK': 'METADATA'},
-            UpdateExpression='SET METRICS_STATUS = :status, METRICS_DATE = :date, METRICS_FAILED_RULES = :rules, METRICS_UPDATED_AT = :timestamp, METRICS_PROCESSING_TIME = :proc_time',
-            ExpressionAttributeValues={
-                ':status': status,
-                ':date': date_key,
-                ':rules': json.dumps(failed_rules if failed_rules else []),
-                ':timestamp': timestamp,
-                ':proc_time': Decimal(str(round(processing_time, 2)))
-            }
+            UpdateExpression=expr,
+            ExpressionAttributeValues=values,
         )
-        print(f"[save_metrics_status] Métricas salvas: status={status}, date={date_key}, rules={failed_rules}, processing_time={processing_time}s")
+        print(
+            f"[save_metrics_status] Métricas salvas: status={status}, date={date_key}, "
+            f"rules={failed_rules}, failure_keys={failure_keys}, dedup_role={failure_dedup_role}, "
+            f"processing_time={processing_time}s, prenota={prenota_flag}"
+        )
     except Exception as e:
         print(f"[save_metrics_status] Erro ao salvar: {e}")
-        # Não falhar o processo por causa disso
         import traceback
         traceback.print_exc()
 
 
-def decrement_daily_metrics(date_key, status, process_type, failed_rules=None, previous_processing_time=0):
+def record_operacional_skip_metrics(
+    date_key,
+    month_key,
+    hour,
+    process_type="UNKNOWN",
+    processing_time=0,
+    operacional_rule_ids=None,
+):
+    """Falha só Operacional: entra no total do dia, mas não em failed_count (taxa OCR)."""
+    operacional_rule_ids = operacional_rule_ids or []
+    response = table.get_item(Key={"PK": f"METRICS#{date_key}", "SK": "SUMMARY"})
+    if "Item" not in response:
+        table.put_item(
+            Item={
+                "PK": f"METRICS#{date_key}",
+                "SK": "SUMMARY",
+                "total_count": 0,
+                "success_count": 0,
+                "success_prenota_count": 0,
+                "failed_count": 0,
+                "skipped_operacional": 0,
+                "total_time": Decimal("0"),
+                "processes_by_hour": {},
+                "failure_reasons": {},
+                "processes_by_type": {},
+                "failed_rules": {},
+                "failed_rules_operacional": {},
+            }
+        )
+
+    expr_names = {}
+    expr_values = {":inc": 1, ":time": Decimal(str(processing_time)), ":zero": 0}
+    add_parts = ["total_count :inc", "skipped_operacional :inc", "total_time :time"]
+    set_parts = []
+
+    hour_key = "#h"
+    hour_path = f"processes_by_hour.{hour_key}"
+    set_parts.append(f"{hour_path} = if_not_exists({hour_path}, :zero) + :hour_inc")
+    expr_names[hour_key] = str(hour)
+    expr_values[":hour_inc"] = 1
+
+    type_key = "#t"
+    type_path = f"processes_by_type.{type_key}"
+    set_parts.append(f"{type_path} = if_not_exists({type_path}, :zero) + :type_inc")
+    expr_names[type_key] = process_type
+    expr_values[":type_inc"] = 1
+
+    for idx, rid in enumerate(operacional_rule_ids):
+        rule_key = f"#ro{idx}"
+        rule_path = f"failed_rules_operacional.{rule_key}"
+        rule_inc = f":rop{idx}"
+        set_parts.append(f"{rule_path} = if_not_exists({rule_path}, :zero) + {rule_inc}")
+        expr_names[rule_key] = rid
+        expr_values[rule_inc] = 1
+
+    update_expr = "ADD " + ", ".join(add_parts) + " SET " + ", ".join(set_parts)
+    table.update_item(
+        Key={"PK": f"METRICS#{date_key}", "SK": "SUMMARY"},
+        UpdateExpression=update_expr,
+        ExpressionAttributeNames=expr_names,
+        ExpressionAttributeValues=expr_values,
+    )
+
+    mresp = table.get_item(Key={"PK": f"METRICS#{month_key}", "SK": "MONTHLY_SUMMARY"})
+    if "Item" not in mresp:
+        table.put_item(
+            Item={
+                "PK": f"METRICS#{month_key}",
+                "SK": "MONTHLY_SUMMARY",
+                "total_count": 0,
+                "success_count": 0,
+                "success_prenota_count": 0,
+                "failed_count": 0,
+                "skipped_operacional": 0,
+                "total_time": Decimal("0"),
+                "processes_by_type": {},
+            }
+        )
+    mnames = {"#t": process_type}
+    table.update_item(
+        Key={"PK": f"METRICS#{month_key}", "SK": "MONTHLY_SUMMARY"},
+        UpdateExpression=(
+            "ADD total_count :inc, skipped_operacional :inc, total_time :time "
+            "SET processes_by_type.#t = if_not_exists(processes_by_type.#t, :zero) + :one"
+        ),
+        ExpressionAttributeNames=mnames,
+        ExpressionAttributeValues={
+            ":inc": 1,
+            ":time": Decimal(str(processing_time)),
+            ":one": 1,
+            ":zero": 0,
+        },
+    )
+    print(
+        f"[record_operacional_skip_metrics] {date_key}: +1 skipped_operacional, "
+        f"regras={operacional_rule_ids}"
+    )
+
+
+def decrement_daily_metrics(
+    date_key,
+    status,
+    process_type,
+    failed_rules=None,
+    failure_keys=None,
+    previous_processing_time=0,
+    previous_is_prenota=False,
+    previous_failure_error_type=None,
+):
     """Decrementa métricas diárias (usado em reprocessamento para evitar duplicação)"""
     
     print(f"\n[decrement_daily_metrics] Decrementando métricas para {date_key}")
-    print(f"[decrement_daily_metrics] Status: {status}, Process type: {process_type}, Failed rules: {failed_rules}, Previous time: {previous_processing_time}s")
+    print(
+        f"[decrement_daily_metrics] Status: {status}, Process type: {process_type}, "
+        f"Failed rules: {failed_rules}, Previous time: {previous_processing_time}s, "
+        f"previous_is_prenota: {previous_is_prenota}"
+    )
     
-    if failed_rules is None:
-        failed_rules = []
-    
+    failed_rules = failed_rules or []
+    failure_keys = failure_keys or []
+
     try:
-        # Verificar se o item existe
-        response = table.get_item(
-            Key={'PK': f'METRICS#{date_key}', 'SK': 'SUMMARY'}
-        )
-        
+        response = table.get_item(Key={'PK': f'METRICS#{date_key}', 'SK': 'SUMMARY'})
         if 'Item' not in response:
             print(f"[decrement_daily_metrics] Item não existe para {date_key}, nada a decrementar")
             return
-        
-        existing_item = response['Item']
-        
-        # Construir expressão de atualização
-        add_parts = []
-        set_parts = []
-        expr_names = {}
-        expr_values = {
-            ':dec': -1,
-            ':zero': 0
-        }
-        
-        # Decrementar total_count
-        add_parts.append('total_count :dec')
-        
-        # Decrementar total_time com o tempo de processamento anterior
+
+        item = response['Item']
+        item.setdefault('processes_by_type', {})
+        item.setdefault('failed_rules', {})
+        item.setdefault('failure_reasons', {})
+        item.setdefault('failure_dedup_registry', {})
+
+        item['total_count'] = max(int(item.get('total_count', 0) or 0) - 1, 0)
         if previous_processing_time > 0:
-            dec_time = Decimal(str(round(previous_processing_time, 2))) * Decimal('-1')
-            expr_values[':dec_time'] = dec_time
-            add_parts.append('total_time :dec_time')
-            print(f"[decrement_daily_metrics] Decrementando total_time em {previous_processing_time}s")
-        
-        # Decrementar contador de status
+            old_total_time = Decimal(str(item.get('total_time', 0) or 0))
+            item['total_time'] = max(
+                old_total_time - Decimal(str(round(previous_processing_time, 2))),
+                Decimal('0'),
+            )
+
         if status == 'SUCCESS':
-            add_parts.append('success_count :dec')
-        elif status == 'FAILED':
-            add_parts.append('failed_count :dec')
-        
-        # Decrementar por tipo de processo (se existir no mapa)
-        if process_type and existing_item.get('processes_by_type', {}).get(process_type):
-            type_key = f'#t0'
-            type_path = f'processes_by_type.{type_key}'
-            # Usar SET com máximo para não ficar negativo
-            current_val = existing_item.get('processes_by_type', {}).get(process_type, 0)
-            if current_val > 0:
-                set_parts.append(f'{type_path} = {type_path} - :one')
-                expr_names[type_key] = process_type
-                expr_values[':one'] = 1
-        
-        # Decrementar contadores de regras que falharam
-        for idx, rule_name in enumerate(failed_rules):
-            if existing_item.get('failed_rules', {}).get(rule_name):
-                rule_key = f'#r{idx}'
-                rule_path = f'failed_rules.{rule_key}'
-                rule_dec_key = f':rule_dec_{idx}'
-                
-                current_val = existing_item.get('failed_rules', {}).get(rule_name, 0)
-                if current_val > 0:
-                    set_parts.append(f'{rule_path} = {rule_path} - {rule_dec_key}')
-                    expr_names[rule_key] = rule_name
-                    expr_values[rule_dec_key] = 1
-                    print(f"[decrement_daily_metrics] Decrementando regra: {rule_name}")
-        
-        # Construir UpdateExpression
-        update_expr_parts = []
-        if add_parts:
-            update_expr_parts.append('ADD ' + ', '.join(add_parts))
-        if set_parts:
-            update_expr_parts.append('SET ' + ', '.join(set_parts))
-        
-        if not update_expr_parts:
-            print(f"[decrement_daily_metrics] Nada a atualizar")
-            return
-        
-        update_expr = ' '.join(update_expr_parts)
-        
-        print(f"[decrement_daily_metrics] UpdateExpression: {update_expr}")
-        print(f"[decrement_daily_metrics] ExpressionAttributeNames: {expr_names}")
-        
-        table.update_item(
-            Key={'PK': f'METRICS#{date_key}', 'SK': 'SUMMARY'},
-            UpdateExpression=update_expr,
-            ExpressionAttributeNames=expr_names if expr_names else None,
-            ExpressionAttributeValues=expr_values
-        )
-        
+            item['success_count'] = max(int(item.get('success_count', 0) or 0) - 1, 0)
+            if previous_is_prenota:
+                item['success_prenota_count'] = max(
+                    int(item.get('success_prenota_count', 0) or 0) - 1, 0
+                )
+
+        if process_type:
+            current = int((item.get('processes_by_type') or {}).get(process_type, 0) or 0)
+            if current > 0:
+                item['processes_by_type'][process_type] = current - 1
+
+        if status == 'FAILED' and previous_failure_error_type:
+            et = str(previous_failure_error_type)
+            fr = item.get('failure_reasons') or {}
+            cur = int(fr.get(et, 0) or 0)
+            if cur > 0:
+                fr[et] = cur - 1
+                item['failure_reasons'] = fr
+
+        registry = item.get('failure_dedup_registry') or {}
+        if status == 'FAILED':
+            for key in failure_keys:
+                if key in registry:
+                    registry.pop(key, None)
+                    item['failed_count'] = max(int(item.get('failed_count', 0) or 0) - 1, 0)
+                    error_tag = _error_tag_from_failure_key(key)
+                    rule_val = int((item.get('failed_rules') or {}).get(error_tag, 0) or 0)
+                    if rule_val > 0:
+                        item['failed_rules'][error_tag] = rule_val - 1
+            item['failure_dedup_registry'] = registry
+
+            if not failure_keys and int(item.get('failed_count', 0) or 0) > 0:
+                item['failed_count'] = max(int(item.get('failed_count', 0) or 0) - 1, 0)
+                for rule_name in failed_rules:
+                    rv = int((item.get('failed_rules') or {}).get(rule_name, 0) or 0)
+                    if rv > 0:
+                        item['failed_rules'][rule_name] = rv - 1
+
+        table.put_item(Item=item)
         print(f"[decrement_daily_metrics] ✓ Métricas diárias decrementadas para {date_key}")
-        
+
     except Exception as e:
         print(f"[decrement_daily_metrics] Erro: {e}")
         import traceback
         traceback.print_exc()
-        # Não falhar - apenas log
 
 
-def decrement_monthly_metrics(month_key, status, process_type, previous_processing_time=0):
+def decrement_monthly_metrics(
+    month_key, status, process_type, previous_processing_time=0, previous_is_prenota=False
+):
     """Decrementa métricas mensais (usado em reprocessamento para evitar duplicação)"""
     
     print(f"\n[decrement_monthly_metrics] Decrementando métricas para {month_key}")
-    print(f"[decrement_monthly_metrics] Status: {status}, Process type: {process_type}, Previous time: {previous_processing_time}s")
+    print(
+        f"[decrement_monthly_metrics] Status: {status}, Process type: {process_type}, "
+        f"Previous time: {previous_processing_time}s, previous_is_prenota: {previous_is_prenota}"
+    )
     
     try:
         # Verificar se o item existe
@@ -484,6 +992,10 @@ def decrement_monthly_metrics(month_key, status, process_type, previous_processi
         # Decrementar contador de status
         if status == 'SUCCESS':
             add_parts.append('success_count :dec')
+            if previous_is_prenota:
+                sp = int(existing_item.get('success_prenota_count', 0) or 0)
+                if sp > 0:
+                    add_parts.append('success_prenota_count :dec')
         elif status == 'FAILED':
             add_parts.append('failed_count :dec')
         
@@ -513,200 +1025,124 @@ def decrement_monthly_metrics(month_key, status, process_type, previous_processi
         # Não falhar - apenas log
 
 
-def update_daily_metrics(date_key, status, processing_time, error_type, hour, process_type='UNKNOWN', failed_rules=None):
-    """Atualiza métricas diárias"""
+def update_daily_metrics(
+    date_key,
+    status,
+    processing_time,
+    error_type,
+    hour,
+    process_type='UNKNOWN',
+    failed_rules=None,
+    failure_keys=None,
+    process_id=None,
+    is_prenota=False,
+    operacional_failed_rules=None,
+):
+    """Atualiza métricas diárias (dedup: NF|CNPJ|tipo_erro|pedido_compra)."""
     
     print(f"\n[update_daily_metrics] Iniciando atualização para {date_key}")
-    print(f"[update_daily_metrics] Parâmetros:")
-    print(f"  - date_key: {date_key}")
-    print(f"  - status: {status}")
-    print(f"  - processing_time: {processing_time}")
-    print(f"  - error_type: {error_type}")
-    print(f"  - hour: {hour}")
-    print(f"  - process_type: {process_type}")
-    print(f"  - failed_rules: {failed_rules}")
-    
-    if failed_rules is None:
-        failed_rules = []
-        print(f"[update_daily_metrics] failed_rules era None, inicializado como lista vazia")
-    
+    print(f"  status={status}, failed_rules={failed_rules}, failure_keys={failure_keys}")
+
+    failed_rules = failed_rules or []
+    failure_keys = failure_keys or []
+    operacional_failed_rules = operacional_failed_rules or []
+
     try:
-        # Primeiro, tentar buscar o item existente
-        print(f"[update_daily_metrics] Buscando item existente: PK=METRICS#{date_key}, SK=SUMMARY")
-        response = table.get_item(
-            Key={'PK': f'METRICS#{date_key}', 'SK': 'SUMMARY'}
-        )
-        print(f"[update_daily_metrics] Resposta do get_item: Item existe = {'Item' in response}")
-        
+        response = table.get_item(Key={'PK': f'METRICS#{date_key}', 'SK': 'SUMMARY'})
         if 'Item' not in response:
-            # Criar item inicial com todos os mapas vazios
-            print(f"[update_daily_metrics] Item não existe, criando novo item inicial")
-            table.put_item(
-                Item={
-                    'PK': f'METRICS#{date_key}',
-                    'SK': 'SUMMARY',
-                    'total_count': 0,
-                    'success_count': 0,
-                    'failed_count': 0,
-                    'total_time': Decimal('0'),
-                    'processes_by_hour': {},
-                    'failure_reasons': {},
-                    'processes_by_type': {},
-                    'failed_rules': {}
-                }
-            )
-            print(f"[update_daily_metrics] ✓ Item inicial criado")
+            item = {
+                'PK': f'METRICS#{date_key}',
+                'SK': 'SUMMARY',
+                'total_count': 0,
+                'success_count': 0,
+                'success_prenota_count': 0,
+                'failed_count': 0,
+                'skipped_operacional': 0,
+                'total_time': Decimal('0'),
+                'processes_by_hour': {},
+                'failure_reasons': {},
+                'processes_by_type': {},
+                'failed_rules': {},
+                'failed_rules_operacional': {},
+                'failure_dedup_registry': {},
+            }
         else:
-            existing_item = response['Item']
-            print(f"[update_daily_metrics] Item existente encontrado:")
-            print(f"  - total_count: {existing_item.get('total_count', 0)}")
-            print(f"  - success_count: {existing_item.get('success_count', 0)}")
-            print(f"  - failed_count: {existing_item.get('failed_count', 0)}")
-            print(f"  - processes_by_type: {existing_item.get('processes_by_type', {})}")
-            print(f"  - failed_rules: {existing_item.get('failed_rules', {})}")
-            
-            # Verificar se os mapas existem (podem não existir em itens criados antes)
-            needs_map_init = False
-            set_parts = []
-            
-            if 'processes_by_hour' not in existing_item:
-                set_parts.append('processes_by_hour = :empty_map')
-                needs_map_init = True
-            if 'failure_reasons' not in existing_item:
-                set_parts.append('failure_reasons = :empty_map')
-                needs_map_init = True
-            if 'processes_by_type' not in existing_item:
-                set_parts.append('processes_by_type = :empty_map')
-                needs_map_init = True
-            if 'failed_rules' not in existing_item:
-                set_parts.append('failed_rules = :empty_map')
-                needs_map_init = True
-            
-            if needs_map_init:
-                # Criar mapas faltantes em uma atualização separada (antes de usar ADD)
-                print(f"[update_daily_metrics] Inicializando mapas faltantes: {', '.join(set_parts)}")
-                table.update_item(
-                    Key={'PK': f'METRICS#{date_key}', 'SK': 'SUMMARY'},
-                    UpdateExpression='SET ' + ', '.join(set_parts),
-                    ExpressionAttributeValues={':empty_map': {}}
-                )
-                print(f"[update_daily_metrics] ✓ Mapas inicializados")
-        
-        # Agora fazer o update
-        # Usar ADD para campos numéricos simples e SET para mapas aninhados
-        expr_names = {}
-        expr_values = {
-            ':inc': 1,
-            ':time': Decimal(str(processing_time))
-        }
-        
-        # Coletar todos os campos ADD em uma única lista
-        add_parts = []
-        
-        # Campos numéricos simples (ADD)
-        add_parts.append('total_count :inc')
-        add_parts.append('total_time :time')
-        
-        # Contadores por status (ADD funciona para campos numéricos)
+            item = response['Item']
+            item.setdefault('processes_by_hour', {})
+            item.setdefault('failure_reasons', {})
+            item.setdefault('processes_by_type', {})
+            item.setdefault('failed_rules', {})
+            item.setdefault('failed_rules_operacional', {})
+            item.setdefault('failure_dedup_registry', {})
+            if 'success_prenota_count' not in item:
+                item['success_prenota_count'] = 0
+            if 'skipped_operacional' not in item:
+                item['skipped_operacional'] = 0
+
+        item['total_count'] = int(item.get('total_count', 0) or 0) + 1
+        item['total_time'] = Decimal(str(item.get('total_time', 0) or 0)) + Decimal(str(processing_time))
+
         if status == 'SUCCESS':
-            add_parts.append('success_count :succ')
-            expr_values[':succ'] = 1
-        elif status == 'FAILED':
-            add_parts.append('failed_count :fail')
-            expr_values[':fail'] = 1
-        
-        # Para mapas aninhados, usar SET com if_not_exists para evitar sobreposição
-        # Separar SET e ADD em seções diferentes para evitar conflitos
-        
-        set_parts = []
-        
-        # Contador por hora (usar SET com if_not_exists e depois ADD)
-        hour_key = f'#h{hour}'
-        hour_path = f'processes_by_hour.{hour_key}'
-        set_parts.append(f'{hour_path} = if_not_exists({hour_path}, :zero) + :hour_inc')
-        expr_names[hour_key] = str(hour)
-        expr_values[':hour_inc'] = 1
-        expr_values[':zero'] = 0
-        
-        # Contador por tipo de erro
-        if error_type:
-            error_key = f'#e{len(expr_names)}'
-            error_path = f'failure_reasons.{error_key}'
-            set_parts.append(f'{error_path} = if_not_exists({error_path}, :zero) + :error_inc')
-            expr_names[error_key] = error_type
-            expr_values[':error_inc'] = 1
-        
-        # Contador por tipo de processo
-        type_key = f'#t{len(expr_names)}'
-        type_path = f'processes_by_type.{type_key}'
-        set_parts.append(f'{type_path} = if_not_exists({type_path}, :zero) + :type_inc')
-        expr_names[type_key] = process_type
-        expr_values[':type_inc'] = 1
-        
-        # Contador por regra que falhou (cada regra que falhou conta +1)
-        for idx, rule_name in enumerate(failed_rules):
-            rule_key = f'#r{idx}'
-            rule_path = f'failed_rules.{rule_key}'
-            rule_inc_key = f':rule_inc_{idx}'
-            
-            set_parts.append(f'{rule_path} = if_not_exists({rule_path}, :zero) + {rule_inc_key}')
-            expr_names[rule_key] = rule_name
-            expr_values[rule_inc_key] = 1
-            print(f"Incrementando contador para regra: {rule_name} (chave: {rule_key}, valor: 1)")
-        
-        # Construir UpdateExpression: SET para mapas, ADD para campos numéricos
-        update_expr_parts = []
-        if add_parts:
-            update_expr_parts.append('ADD ' + ', '.join(add_parts))
-        if set_parts:
-            update_expr_parts.append('SET ' + ', '.join(set_parts))
-        
-        update_expr = ' '.join(update_expr_parts)
-        
-        print(f"\n[update_daily_metrics] Construindo UpdateExpression...")
-        print(f"[update_daily_metrics] UpdateExpression final: {update_expr}")
-        print(f"[update_daily_metrics] ExpressionAttributeNames: {json.dumps(expr_names, default=str)}")
-        print(f"[update_daily_metrics] ExpressionAttributeValues: {json.dumps({k: str(v) for k, v in expr_values.items()}, default=str)}")
-        print(f"[update_daily_metrics] Failed rules to update: {failed_rules} (count: {len(failed_rules)})")
-        print(f"[update_daily_metrics] Process type: {process_type}")
-        print(f"[update_daily_metrics] Set parts count: {len(set_parts)}")
-        print(f"[update_daily_metrics] Add parts count: {len(add_parts)}")
-        
-        # Atualizar registro
-        try:
-            print(f"[update_daily_metrics] Executando update_item...")
-            table.update_item(
-                Key={'PK': f'METRICS#{date_key}', 'SK': 'SUMMARY'},
-                UpdateExpression=update_expr,
-                ExpressionAttributeNames=expr_names if expr_names else None,
-                ExpressionAttributeValues=expr_values
-            )
-            print(f"[update_daily_metrics] ✓ Métricas diárias atualizadas com sucesso para {date_key}")
-            
-            # Verificar se foi salvo corretamente
-            verify_response = table.get_item(
-                Key={'PK': f'METRICS#{date_key}', 'SK': 'SUMMARY'}
-            )
-            if 'Item' in verify_response:
-                verify_item = verify_response['Item']
-                print(f"[update_daily_metrics] Verificação pós-update:")
-                print(f"  - total_count: {verify_item.get('total_count', 0)}")
-                print(f"  - processes_by_type: {verify_item.get('processes_by_type', {})}")
-                print(f"  - failed_rules: {verify_item.get('failed_rules', {})}")
-        except Exception as update_error:
-            print(f"[update_daily_metrics] ✗ ERRO ao atualizar métricas: {update_error}")
-            print(f"[update_daily_metrics] UpdateExpression: {update_expr}")
-            print(f"[update_daily_metrics] ExpressionAttributeNames: {expr_names}")
-            print(f"[update_daily_metrics] ExpressionAttributeValues: {expr_values}")
-            import traceback
-            print(f"[update_daily_metrics] Traceback:\n{traceback.format_exc()}")
-            raise
-        
+            item['success_count'] = int(item.get('success_count', 0) or 0) + 1
+            if is_prenota:
+                item['success_prenota_count'] = int(item.get('success_prenota_count', 0) or 0) + 1
+
+        hour_key = str(hour)
+        item['processes_by_hour'][hour_key] = int(
+            (item['processes_by_hour'] or {}).get(hour_key, 0) or 0
+        ) + 1
+
+        if process_type:
+            item['processes_by_type'][process_type] = int(
+                (item['processes_by_type'] or {}).get(process_type, 0) or 0
+            ) + 1
+
+        if status == 'FAILED' and error_type:
+            item['failure_reasons'][error_type] = int(
+                (item['failure_reasons'] or {}).get(error_type, 0) or 0
+            ) + 1
+
+        dedup_role = None
+        primary_process_id = None
+        new_slots = 0
+        if status == 'FAILED':
+            registry = item.get('failure_dedup_registry') or {}
+            pid = process_id or 'unknown_process'
+            for key in failure_keys:
+                if key in registry:
+                    if registry[key] != pid and primary_process_id is None:
+                        primary_process_id = registry[key]
+                    continue
+                registry[key] = pid
+                new_slots += 1
+                item['failed_count'] = int(item.get('failed_count', 0) or 0) + 1
+                error_tag = _error_tag_from_failure_key(key)
+                item['failed_rules'][error_tag] = int(
+                    (item['failed_rules'] or {}).get(error_tag, 0) or 0
+                ) + 1
+            item['failure_dedup_registry'] = registry
+            if failure_keys:
+                dedup_role = 'primary' if new_slots > 0 else 'duplicate'
+
+        for rule_name in operacional_failed_rules:
+            item['failed_rules_operacional'][rule_name] = int(
+                (item.get('failed_rules_operacional') or {}).get(rule_name, 0) or 0
+            ) + 1
+
+        table.put_item(Item=item)
+        print(f"[update_daily_metrics] ✓ Métricas diárias atualizadas para {date_key}")
+        return {
+            'dedup_role': dedup_role,
+            'primary_process_id': primary_process_id,
+            'failure_keys': failure_keys,
+            'new_failure_slots': new_slots,
+        }
+
     except Exception as e:
         print(f'Erro específico em update_daily_metrics: {e}')
         raise
 
-def update_monthly_metrics(month_key, status, processing_time, process_type='UNKNOWN'):
+def update_monthly_metrics(month_key, status, processing_time, process_type='UNKNOWN', is_prenota=False):
     """Atualiza métricas mensais"""
     
     try:
@@ -723,6 +1159,7 @@ def update_monthly_metrics(month_key, status, processing_time, process_type='UNK
                     'SK': 'MONTHLY_SUMMARY',
                     'total_count': 0,
                     'success_count': 0,
+                    'success_prenota_count': 0,
                     'failed_count': 0,
                     'total_time': Decimal('0'),
                     'processes_by_type': {}
@@ -744,6 +1181,9 @@ def update_monthly_metrics(month_key, status, processing_time, process_type='UNK
         if status == 'SUCCESS':
             add_parts.append('success_count :succ')
             expr_values[':succ'] = 1
+            if is_prenota:
+                add_parts.append('success_prenota_count :pren')
+                expr_values[':pren'] = 1
         elif status == 'FAILED':
             add_parts.append('failed_count :fail')
             expr_values[':fail'] = 1

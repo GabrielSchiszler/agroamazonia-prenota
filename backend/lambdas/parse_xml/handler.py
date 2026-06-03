@@ -330,6 +330,7 @@ def parse_nfe_xml(xml_content):
                     'quantidade': get_text(r, 'nfe:qLote', ns)
                 })
         
+        v_desc_prod = get_text(prod, 'nfe:vDesc', ns)
         produto = {
             'item': n_item,
             'codigo': get_text(prod, 'nfe:cProd', ns),
@@ -355,6 +356,8 @@ def parse_nfe_xml(xml_content):
             'pis': extract_pis(imposto, ns),
             'cofins': extract_cofins(imposto, ns)
         }
+        if v_desc_prod is not None and str(v_desc_prod).strip() != '':
+            produto['valor_desconto'] = v_desc_prod
         produtos.append(produto)
     
     # Duplicatas

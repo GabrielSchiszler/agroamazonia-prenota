@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 from typing import Optional, Dict, Any, List, Literal
 from enum import Enum
 
@@ -134,6 +134,7 @@ class PedidoCompraMetadataRequest(BaseModel):
                         "itens": [
                             {
                                 "codigoProduto": "41500001BD00205",
+                                "codProdFornecedor": "00041500001BD00205",
                                 "quantidade": 1,
                                 "valorUnitario": 880,
                                 "codigoOperacao": "1B",
@@ -215,9 +216,16 @@ class ProcessResponse(BaseModel):
     )
     created_at: str
     error_info: Optional[Dict[str, Any]] = None
-    
-    class Config:
-        schema_extra = {
+    failure_summary: Optional[Dict[str, Any]] = None
+    metrics_failure_dedup_role: Optional[str] = None
+    metrics_failure_dedup_primary: Optional[str] = None
+    metrics_failure_dedup_label: Optional[str] = None
+    metrics_failure_keys: Optional[List[str]] = None
+    metrics_failure_keys_display: Optional[List[str]] = None
+    metrics_status: Optional[str] = None
+
+    model_config = ConfigDict(
+        json_schema_extra={
             "example": {
                 "process_id": "7d48cd96-c099-48dd-bbb6-d4fe8b2de318",
                 "process_type": "SEMENTES",
@@ -246,6 +254,7 @@ class ProcessResponse(BaseModel):
                 "created_at": "1733068800"
             }
         }
+    )
 
 MAX_FILES_PER_PROCESS = 10
 ALLOWED_CONTENT_TYPES = {

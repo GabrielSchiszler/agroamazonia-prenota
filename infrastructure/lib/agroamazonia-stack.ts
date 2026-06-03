@@ -356,12 +356,20 @@ export class AgroAmazoniaStack extends cdk.Stack {
       }));
     }
 
-    // Lambda: Update Metrics
+    // Lambda: Update Metrics (inclui lambdas/utils — protheus_regras, metrics_rates, catálogos JSON)
     const updateMetricsLambda = new lambda.Function(this, 'UpdateMetricsFunction', {
       functionName: name('lambda', 'update-metrics'),
       runtime: lambda.Runtime.PYTHON_3_12,
       handler: 'handler.lambda_handler',
-      code: lambda.Code.fromAsset('../backend/lambdas/update_metrics'),
+      code: lambda.Code.fromAsset('../backend/lambdas', {
+        bundling: {
+          image: lambda.Runtime.PYTHON_3_12.bundlingImage,
+          command: [
+            'bash', '-c',
+            'cd update_metrics && cp -au . /asset-output && cp -au ../utils /asset-output/'
+          ]
+        }
+      }),
       environment: {
         TABLE_NAME: documentTable.tableName,
         BEDROCK_MODEL_ID: process.env.BEDROCK_MODEL_ID || 'amazon.nova-pro-v1:0'

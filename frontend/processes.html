@@ -54,6 +54,7 @@
                             <div>
                                 <h3 id="selectedProcessId"></h3>
                                 <div id="sctaskInfo"></div>
+                                <div id="metricsDedupInfo"></div>
                             </div>
                             <div style="display: flex; gap: 10px; align-items: center;">
                                 <button class="btn-icon" onclick="refreshProcess()" title="Atualizar processo">🔄</button>
@@ -61,6 +62,8 @@
                             </div>
                         </div>
                     </div>
+
+                    <div id="failureDetailsCard" class="failure-details-card" style="display: none;"></div>
                     
                     <div class="details-grid">
                         <div class="details-card">

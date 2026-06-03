@@ -139,7 +139,7 @@ function renderComparisons(comparisons) {
 
 function renderDetailedValidation(v, bgColor, borderColor, textColor, icon, docs, isRastreabilidade = false, ruleName = '') {
     const comparison = docs[0];
-    const docFileName = comparison.doc_file || comparison.file_name || 'Documento';
+    const docFileName = comparison.doc_file || comparison.file_name || 'Pedido de compra';
     
     return `
         <div style="background: ${bgColor}; padding: 15px; border-radius: 8px; margin: 10px 0; border-left: 4px solid ${borderColor};">
@@ -160,7 +160,7 @@ function renderDetailedValidation(v, bgColor, borderColor, textColor, icon, docs
                     const positionInfo = isRastreabilidade
                         ? `Item ${item.item}: ${item.codigo} - ${item.descricao}`
                         : (item.doc_position 
-                            ? `Item ${item.danfe_position} (DANFE) → Item ${item.doc_position} (DOC)` 
+                            ? `Item ${item.danfe_position} (DANFE) → Item ${item.doc_position} (Pedido de compra)` 
                             : `Item ${item.danfe_position} (DANFE) → NÃO ENCONTRADO`);
                     
                     return `
@@ -172,7 +172,7 @@ function renderDetailedValidation(v, bgColor, borderColor, textColor, icon, docs
                                     <tr style="background: #e9ecef;">
                                         <th style="padding: 8px; text-align: left; border: 1px solid #dee2e6; font-weight: 600;">Campo</th>
                                         <th style="padding: 8px; text-align: left; border: 1px solid #dee2e6; font-weight: 600;">DANFE</th>
-                                        <th style="padding: 8px; text-align: left; border: 1px solid #dee2e6; font-weight: 600;">Documento</th>
+                                        <th style="padding: 8px; text-align: left; border: 1px solid #dee2e6; font-weight: 600;">Pedido de compra</th>
                                         <th style="padding: 8px; text-align: center; border: 1px solid #dee2e6; width: 80px; font-weight: 600;">Status</th>
                                     </tr>
                                 </thead>

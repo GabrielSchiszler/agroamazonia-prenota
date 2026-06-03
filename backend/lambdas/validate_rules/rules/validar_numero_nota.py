@@ -65,6 +65,6 @@ def validate(danfe_data, ocr_docs):
         'rule': 'validar_numero_nota',
         'status': 'PASSED' if all_match else 'FAILED',
         'danfe_value': danfe_numero,
-        'message': 'Número da nota validado em todos os documentos' if all_match else 'Divergência no número da nota',
+        'message': 'Número da nota validado em todos os pedidos de compra' if all_match else 'Divergência no número da nota',
         'comparisons': comparisons
     }

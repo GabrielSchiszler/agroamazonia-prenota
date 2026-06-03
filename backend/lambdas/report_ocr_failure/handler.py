@@ -242,7 +242,7 @@ def lambda_handler(event, context):
             
             # Para cada documento que falhou
             for comp in comparisons:
-                doc_file = comp.get('doc_file', 'Documento desconhecido')
+                doc_file = comp.get('doc_file', 'Pedido de compra desconhecido')
                 doc_value = comp.get('doc_value', 'N/A')
                 comp_status = comp.get('status', 'MISMATCH')
                 
@@ -259,8 +259,8 @@ def lambda_handler(event, context):
                                     detalhes.append({
                                         "pagina": 1,
                                         "campo": f"{rule_name} - Item {item.get('item', 'N/A')} - {', '.join(failed_fields)}",
-                                        "mensagemErro": f"Documento: {doc_file}. Divergências: " + 
-                                                       ", ".join([f"{f}: DANFE={fields[f].get('danfe', 'N/A')} vs DOC={fields[f].get('doc', 'N/A')}" 
+                                        "mensagemErro": f"Pedido de compra: {doc_file}. Divergências: " +
+                                                       ", ".join([f"{f}: DANFE={fields[f].get('danfe', 'N/A')} vs Pedido={fields[f].get('doc', 'N/A')}"
                                                               for f in failed_fields])
                                     })
                                 else:
@@ -268,21 +268,21 @@ def lambda_handler(event, context):
                                     detalhes.append({
                                         "pagina": 1,
                                         "campo": f"{rule_name} - Item {item.get('item', 'N/A')}",
-                                        "mensagemErro": f"Documento: {doc_file}. Item não corresponde ao esperado no DANFE"
+                                        "mensagemErro": f"Pedido de compra: {doc_file}. Item não corresponde ao esperado no DANFE"
                                     })
                     else:
                         # Comparação de produtos mas sem items (ex: 0 produtos encontrados)
                         detalhes.append({
                             "pagina": 1,
                             "campo": rule_name,
-                            "mensagemErro": f"Documento: {doc_file}. {message}. {doc_value}"
+                            "mensagemErro": f"Pedido de compra: {doc_file}. {message}. {doc_value}"
                         })
                 else:
                     # Validação simples (não produtos)
                     detalhes.append({
                         "pagina": 1,
                         "campo": rule_name,
-                        "mensagemErro": f"Documento: {doc_file}. {message}. DANFE: {danfe_value}, DOC: {doc_value}"
+                        "mensagemErro": f"Pedido de compra: {doc_file}. {message}. DANFE: {danfe_value}, Pedido: {doc_value}"
                     })
     else:
         # Falha técnica (não de validação)
@@ -323,13 +323,13 @@ def lambda_handler(event, context):
             if comparisons:
                 html_parts.append('<ul>')
                 for comp in comparisons:
-                    doc_file = comp.get('doc_file', 'Documento desconhecido')
+                    doc_file = comp.get('doc_file', 'Pedido de compra desconhecido')
                     doc_value = comp.get('doc_value', 'N/A')
                     comp_status = comp.get('status', 'MISMATCH')
                     
                     html_parts.append(f'<li>')
-                    html_parts.append(f'<strong>Documento:</strong> {html.escape(str(doc_file))}<br>')
-                    html_parts.append(f'<strong>Valor no Documento:</strong> {html.escape(str(doc_value))}<br>')
+                    html_parts.append(f'<strong>Pedido de compra:</strong> {html.escape(str(doc_file))}<br>')
+                    html_parts.append(f'<strong>Valor no pedido de compra:</strong> {html.escape(str(doc_value))}<br>')
                     
                     # Se for validação de produtos, detalhar campos que falharam
                     if 'items' in comp:
@@ -349,7 +349,7 @@ def lambda_handler(event, context):
                                             field_data = fields[field_name]
                                             danfe_val = field_data.get('danfe', 'N/A')
                                             doc_val = field_data.get('doc', 'N/A')
-                                            html_parts.append(f'<li><strong>{html.escape(str(field_name))}:</strong> DANFE={html.escape(str(danfe_val))} vs DOC={html.escape(str(doc_val))}</li>')
+                                            html_parts.append(f'<li><strong>{html.escape(str(field_name))}:</strong> DANFE={html.escape(str(danfe_val))} vs Pedido={html.escape(str(doc_val))}</li>')
                                         html_parts.append('</ul>')
                                         html_parts.append('</li>')
                                     else:

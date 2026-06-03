@@ -43,6 +43,8 @@ infrastructure/*.d.ts
 
 # Script local reports (may contain API responses / URLs)
 backend/scripts/presigned_batch_last_run.json
+backend/scripts/out_*/
+backend/scripts/test_nfe_barter_*.xml
 
 # OS
 .DS_Store
