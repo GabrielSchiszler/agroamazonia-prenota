@@ -134,9 +134,21 @@ body {
 /* Stats Grid */
 .stats-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    grid-template-columns: repeat(4, 1fr);
     gap: 15px;
     margin-bottom: 20px;
+}
+
+@media (max-width: 1200px) {
+    .stats-grid {
+        grid-template-columns: repeat(2, 1fr);
+    }
+}
+
+@media (max-width: 520px) {
+    .stats-grid {
+        grid-template-columns: 1fr;
+    }
 }
 
 .stat-card {
@@ -171,6 +183,17 @@ body {
 
 .stat-card.error .stat-info h3 {
     color: var(--danger);
+}
+
+.stat-card--process .stat-info h3 {
+    color: #b45309;
+}
+
+.stat-info-hint {
+    font-size: 0.72rem;
+    color: #94a3b8;
+    margin-top: 4px;
+    line-height: 1.2;
 }
 
 /* Charts */
@@ -210,6 +233,151 @@ body {
 
 .chart-card.full-width canvas {
     max-height: 220px !important;
+}
+
+.chart-card-subtitle {
+    margin: -8px 0 12px;
+    font-size: 0.85em;
+    color: #64748b;
+}
+
+.failed-rules-card {
+    height: auto;
+    min-height: 420px;
+}
+
+.failed-rules-card canvas {
+    max-height: 260px !important;
+}
+
+.failed-rules-layout {
+    display: grid;
+    grid-template-columns: minmax(220px, 300px) 1fr;
+    gap: 20px;
+    align-items: start;
+    flex: 1;
+    min-height: 0;
+}
+
+.failed-rules-donut-wrap {
+    height: 260px;
+    position: relative;
+}
+
+.failed-rules-ranking {
+    max-height: 340px;
+    overflow-y: auto;
+    padding-right: 6px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.failed-rules-ranking-item {
+    padding: 10px 12px;
+    border-radius: 8px;
+    background: #f8fafc;
+    border: 1px solid #e2e8f0;
+}
+
+.failed-rules-ranking-head {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    margin-bottom: 8px;
+}
+
+.failed-rules-ranking-rank {
+    flex-shrink: 0;
+    width: 26px;
+    height: 26px;
+    border-radius: 6px;
+    background: #ef4444;
+    color: #fff;
+    font-size: 0.75em;
+    font-weight: 700;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.failed-rules-ranking-title {
+    flex: 1;
+    font-size: 0.9em;
+    font-weight: 600;
+    color: #1e293b;
+    line-height: 1.35;
+}
+
+.failed-rules-ranking-count {
+    flex-shrink: 0;
+    font-size: 1.05em;
+    font-weight: 700;
+    color: #dc2626;
+}
+
+.failed-rules-ranking-bar {
+    height: 8px;
+    background: #e2e8f0;
+    border-radius: 4px;
+    overflow: hidden;
+    margin-bottom: 6px;
+}
+
+.failed-rules-ranking-bar > div {
+    height: 100%;
+    background: linear-gradient(90deg, #f87171, #ef4444);
+    border-radius: 4px;
+    min-width: 2px;
+    transition: width 0.35s ease;
+}
+
+.failed-rules-ranking-code {
+    font-size: 0.72em;
+    color: #94a3b8;
+    font-family: ui-monospace, monospace;
+    word-break: break-all;
+}
+
+.failed-rules-ranking-item--operacional {
+    border-color: #fcd34d;
+    background: #fffbeb;
+}
+
+.failed-rules-badge-operacional {
+    display: inline-block;
+    font-size: 0.7em;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    color: #b45309;
+    background: #fef3c7;
+    border-radius: 4px;
+    padding: 2px 6px;
+    margin-right: 4px;
+    vertical-align: middle;
+}
+
+.failed-rules-ranking-empty {
+    padding: 24px;
+    text-align: center;
+    color: #64748b;
+    font-size: 0.95em;
+}
+
+@media (max-width: 900px) {
+    .failed-rules-layout {
+        grid-template-columns: 1fr;
+    }
+
+    .failed-rules-donut-wrap {
+        max-width: 300px;
+        margin: 0 auto;
+    }
+
+    .failed-rules-ranking {
+        max-height: none;
+    }
 }
 
 @media (max-width: 768px) {
@@ -386,6 +554,135 @@ body {
     margin-bottom: 25px;
     padding-bottom: 20px;
     border-bottom: 1px solid var(--border);
+}
+
+.metrics-dedup-badge {
+    display: inline-block;
+    margin-top: 6px;
+    padding: 4px 10px;
+    border-radius: 6px;
+    font-size: 0.78rem;
+    font-weight: 600;
+    border: 1px solid transparent;
+}
+
+.metrics-dedup-badge.dedup-badge-primary {
+    background: #dbeafe;
+    color: #1d4ed8;
+    border-color: #93c5fd;
+}
+
+.metrics-dedup-badge.dedup-badge-duplicate {
+    background: #fef3c7;
+    color: #92400e;
+    border-color: #fcd34d;
+}
+
+.metrics-dedup-badge.dedup-badge-link {
+    cursor: pointer;
+    text-decoration: underline;
+}
+
+.failure-details-card {
+    margin: 16px 0 20px;
+    padding: 18px 20px;
+    background: #fff8e6;
+    border: 2px solid #f59e0b;
+    border-radius: 10px;
+}
+
+.failure-details-card h4 {
+    color: #92400e;
+    margin: 0 0 14px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.failure-details-section {
+    background: #fff;
+    border: 1px solid #fcd34d;
+    border-radius: 8px;
+    padding: 14px 16px;
+    margin-bottom: 12px;
+}
+
+.failure-details-section:last-child {
+    margin-bottom: 0;
+}
+
+.failure-details-section h5 {
+    margin: 0 0 10px;
+    font-size: 0.92rem;
+    color: #78350f;
+}
+
+.failure-details-row {
+    margin-bottom: 10px;
+}
+
+.failure-details-row:last-child {
+    margin-bottom: 0;
+}
+
+.failure-details-row strong {
+    display: block;
+    font-size: 0.82rem;
+    color: #92400e;
+    margin-bottom: 4px;
+}
+
+.failure-details-value {
+    color: #1e293b;
+    font-size: 0.9rem;
+}
+
+.failure-details-mono {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    background: #f8fafc;
+    border: 1px solid #e2e8f0;
+    border-radius: 6px;
+    padding: 10px 12px;
+    white-space: pre-wrap;
+    word-break: break-word;
+    max-height: 280px;
+    overflow-y: auto;
+    font-size: 0.85rem;
+}
+
+.failure-details-rules {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+}
+
+.failure-details-rules li {
+    padding: 8px 10px;
+    margin-bottom: 6px;
+    background: #fef2f2;
+    border-left: 3px solid #ef4444;
+    border-radius: 4px;
+    font-size: 0.88rem;
+}
+
+.failure-details-rules li code {
+    font-size: 0.8rem;
+    color: #64748b;
+}
+
+.failure-details-pre-toggle {
+    margin-top: 8px;
+    padding: 6px 12px;
+    font-size: 0.82rem;
+    background: #f1f5f9;
+    border: 1px solid #cbd5e1;
+    border-radius: 6px;
+    cursor: pointer;
+    color: #334155;
+}
+
+.failure-details-pre-toggle:hover {
+    background: #e2e8f0;
 }
 
 .sctask-badge {

@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 from typing import Optional, Dict, Any, List, Literal
 from enum import Enum
 
@@ -186,9 +186,17 @@ class ProcessResponse(BaseModel):
     files: Dict[str, List[Dict[str, Any]]]
     parsing_results: List[Dict[str, Any]] = []
     created_at: str
-    
-    class Config:
-        schema_extra = {
+    error_info: Optional[Dict[str, Any]] = None
+    failure_summary: Optional[Dict[str, Any]] = None
+    metrics_failure_dedup_role: Optional[str] = None
+    metrics_failure_dedup_primary: Optional[str] = None
+    metrics_failure_dedup_label: Optional[str] = None
+    metrics_failure_keys: Optional[List[str]] = None
+    metrics_failure_keys_display: Optional[List[str]] = None
+    metrics_status: Optional[str] = None
+
+    model_config = ConfigDict(
+        json_schema_extra={
             "example": {
                 "process_id": "7d48cd96-c099-48dd-bbb6-d4fe8b2de318",
                 "process_type": "SEMENTES",
@@ -217,6 +225,7 @@ class ProcessResponse(BaseModel):
                 "created_at": "1733068800"
             }
         }
+    )
 
 class UpdateFileMetadataRequest(BaseModel):
     process_id: str = Field(..., description="ID do processo")

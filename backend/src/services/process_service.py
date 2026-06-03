@@ -6,8 +6,127 @@ import logging
 from datetime import datetime
 from typing import Dict, Any
 from src.repositories.dynamodb_repository import DynamoDBRepository
+from src.utils.failure_dedup import dedup_badge_label, format_failure_key_display
 
 logger = logging.getLogger(__name__)
+
+_FAILURE_REASON_LABELS = {
+    "LAMBDA_ERROR": "Erro em etapa da pipeline (Lambda)",
+    "VALIDATION_FAILED": "Falha nas validações OCR/XML",
+    "PROTHEUS_FAILED": "Falha na integração com o Protheus",
+    "PROCESSING_ERROR": "Erro de processamento",
+    "OPERACIONAL_SKIP": "Ignorado nas métricas (falha operacional)",
+}
+
+
+def _coerce_json_field(value):
+    if value is None:
+        return None
+    if isinstance(value, (dict, list)):
+        return value
+    if isinstance(value, str):
+        try:
+            return json.loads(value)
+        except (json.JSONDecodeError, TypeError):
+            return None
+    return None
+
+
+def _protheus_failure_from_metadata(metadata: dict) -> dict | None:
+    info = _coerce_json_field(metadata.get("protheus_request_info"))
+    if info:
+        body = info.get("response_body")
+        if isinstance(body, str):
+            body = _coerce_json_field(body) or body
+        message = None
+        if isinstance(body, dict):
+            message = (
+                body.get("message")
+                or body.get("errorMessage")
+                or body.get("cause")
+                or body.get("detailedMessage")
+            )
+        out = {
+            "request_url": info.get("request_url"),
+            "response_status_code": info.get("response_status_code"),
+            "response_message": message,
+            "response_body": body,
+        }
+        return {k: v for k, v in out.items() if v is not None}
+
+    response = _coerce_json_field(metadata.get("protheus_response"))
+    if response:
+        message = response.get("message") if isinstance(response, dict) else None
+        return {
+            "response_body": response,
+            "response_message": message,
+        }
+    return None
+
+
+def _failure_summary_from_metadata(metadata: dict) -> dict | None:
+    """Resumo estruturado da falha para o detalhe do processo no frontend."""
+    summary: dict = {}
+
+    code = metadata.get("METRICS_FAILURE_ERROR_TYPE")
+    if code:
+        summary["reason_code"] = str(code)
+        summary["reason_label"] = _FAILURE_REASON_LABELS.get(str(code), str(code))
+
+    failed_rules = _coerce_json_field(metadata.get("METRICS_FAILED_RULES"))
+    if failed_rules:
+        summary["failed_rules"] = failed_rules
+
+    operacional = _coerce_json_field(metadata.get("METRICS_OPERACIONAL_RULES"))
+    if operacional:
+        summary["operacional_rules"] = operacional
+
+    protheus = _protheus_failure_from_metadata(metadata)
+    if protheus:
+        summary["protheus"] = protheus
+
+    if not summary.get("reason_code"):
+        if metadata.get("error_info") or metadata.get("ERROR_INFO"):
+            summary["reason_code"] = "LAMBDA_ERROR"
+            summary["reason_label"] = _FAILURE_REASON_LABELS["LAMBDA_ERROR"]
+        elif failed_rules:
+            summary["reason_code"] = "VALIDATION_FAILED"
+            summary["reason_label"] = _FAILURE_REASON_LABELS["VALIDATION_FAILED"]
+        elif metadata.get("protheus_request_info") or metadata.get("protheus_response"):
+            summary["reason_code"] = "PROTHEUS_FAILED"
+            summary["reason_label"] = _FAILURE_REASON_LABELS["PROTHEUS_FAILED"]
+
+    return summary or None
+
+
+def _metrics_dedup_fields(metadata: dict) -> dict:
+    """Campos de deduplicação de falhas no dashboard (exibição no frontend)."""
+    out: dict = {}
+    role = metadata.get("METRICS_FAILURE_DEDUP_ROLE")
+    primary = metadata.get("METRICS_FAILURE_DEDUP_PRIMARY")
+    if role:
+        out["metrics_failure_dedup_role"] = role
+    if primary:
+        out["metrics_failure_dedup_primary"] = primary
+        label = dedup_badge_label(role, primary)
+        if label:
+            out["metrics_failure_dedup_label"] = label
+    elif role:
+        label = dedup_badge_label(role, None)
+        if label:
+            out["metrics_failure_dedup_label"] = label
+    raw_keys = metadata.get("METRICS_FAILURE_KEYS")
+    if raw_keys:
+        try:
+            keys = json.loads(raw_keys) if isinstance(raw_keys, str) else raw_keys
+            if isinstance(keys, list) and keys:
+                out["metrics_failure_keys"] = keys
+                out["metrics_failure_keys_display"] = [
+                    format_failure_key_display(k) for k in keys
+                ]
+        except (json.JSONDecodeError, TypeError):
+            pass
+    return out
 
 class ProcessService:
     def __init__(self):
@@ -399,7 +518,8 @@ class ProcessService:
                 'additional': additional_files_list
             },
             'parsing_results': parsing_results,
-            'created_at': str(int(metadata.get('TIMESTAMP', 0)))
+            'created_at': str(int(metadata.get('TIMESTAMP', 0))),
+            **_metrics_dedup_fields(metadata),
         }
         
         # Adicionar error_info se existir (quando status é FAILED)
@@ -420,6 +540,13 @@ class ProcessService:
         else:
             logger.info(f"error_info não encontrado no metadata. Campos disponíveis: {list(metadata.keys())}")
             logger.info(f"Status do processo: {metadata.get('STATUS')}")
+
+        status = str(metadata.get("STATUS") or "")
+        failure_summary = _failure_summary_from_metadata(metadata)
+        if failure_summary:
+            result["failure_summary"] = failure_summary
+        if metadata.get("METRICS_STATUS"):
+            result["metrics_status"] = str(metadata.get("METRICS_STATUS"))
         
         logger.info(f"Returning result with {len(result.get('parsing_results', []))} parsing_results")
         logger.info(f"Result keys: {list(result.keys())}")
@@ -441,12 +568,14 @@ class ProcessService:
                 
                 if metadata_items:
                     metadata = metadata_items[0]
-                    processes.append({
+                    entry = {
                         'process_id': process_id,
                         'process_type': metadata.get('PROCESS_TYPE'),
                         'status': metadata.get('STATUS'),
-                        'created_at': str(int(metadata.get('TIMESTAMP', 0)))
-                    })
+                        'created_at': str(int(metadata.get('TIMESTAMP', 0))),
+                    }
+                    entry.update(_metrics_dedup_fields(metadata))
+                    processes.append(entry)
             
             return processes
         except Exception as e:

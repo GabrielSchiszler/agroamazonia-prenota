@@ -38,20 +38,202 @@ class _FakeTable:
         return {"ResponseMetadata": {"HTTPStatusCode": 200}}
 
 
-def test_build_failure_keys_uses_outros():
+def test_nf_cnpj_from_parsed_xml_example():
+    from update_metrics.handler import _build_failure_keys, _nf_cnpj_from_parsed_xml
+
+    xml_doc = {
+        "numero_nota": "448528",
+        "chave_acesso": "35260357600249000155552010004485281516323523",
+        "emitente": {"cnpj": "57600249000155"},
+    }
+    nf, cnpj = _nf_cnpj_from_parsed_xml(xml_doc)
+    assert nf == "448528"
+    assert cnpj == "57600249000155"
+    keys = _build_failure_keys(nf, cnpj, "A97057", ["validar_produtos"], "FAILED")
+    assert keys == ["448528|57600249000155|validar_produtos|A97057"]
+
+
+def test_pedido_numero_from_request_body_example():
+    from update_metrics.handler import _pedido_numero_from_request_body
+
+    pedido_doc = {
+        "requestBody": {
+            "itens": [
+                {
+                    "pedidoDeCompra": {"pedidoErp": "A97057", "itemPedidoErp": "0001"},
+                }
+            ],
+            "cnpjEmitente": "57600249000155",
+        }
+    }
+    assert _pedido_numero_from_request_body(pedido_doc["requestBody"]) == "A97057"
+
+
+def test_build_failure_keys_uses_outros_and_pedido():
     from update_metrics.handler import _build_failure_keys
 
-    keys = _build_failure_keys("NF27", "07467822000126", [], "FAILED")
-    assert keys == ["NF27|07467822000126|Outros"]
+    keys = _build_failure_keys("NF27", "07467822000126", "AACBKV", [], "FAILED")
+    assert keys == ["NF27|07467822000126|Outros|AACBKV"]
 
 
-def test_daily_metrics_dedup_same_nf_cnpj_rule(monkeypatch):
+def test_daily_metrics_dedup_same_nf_cnpj_rule_pedido(monkeypatch):
     import update_metrics.handler as h
 
     fake = _FakeTable()
     monkeypatch.setattr(h, "table", fake)
 
-    key = "NF27|07467822000126|validar_produtos"
+    key = "NF27|07467822000126|validar_produtos|PED001"
+    h.update_daily_metrics(
+        "2026-05-28",
+        "FAILED",
+        10,
+        "VALIDATION_FAILED",
+        11,
+        "AGROQUIMICOS",
+        ["validar_produtos"],
+        [key],
+        "p1",
+        False,
+    )
+    h.update_daily_metrics(
+        "2026-05-28",
+        "FAILED",
+        12,
+        "VALIDATION_FAILED",
+        11,
+        "AGROQUIMICOS",
+        ["validar_produtos"],
+        [key],
+        "p2",
+        False,
+    )
+
+    item = fake.get_item(Key={"PK": "METRICS#2026-05-28", "SK": "SUMMARY"})["Item"]
+    assert int(item["failed_count"]) == 1
+    assert int(item["failed_rules"]["validar_produtos"]) == 1
+    assert len(item["failure_dedup_registry"]) == 1
+
+
+def test_daily_metrics_dedup_distinct_pedido_counts_separately(monkeypatch):
+    import update_metrics.handler as h
+
+    fake = _FakeTable()
+    monkeypatch.setattr(h, "table", fake)
+
+    keys = [
+        "NF27|07467822000126|validar_produtos|PED001",
+        "NF27|07467822000126|validar_produtos|PED002",
+    ]
+    h.update_daily_metrics(
+        "2026-05-28",
+        "FAILED",
+        10,
+        "VALIDATION_FAILED",
+        11,
+        "USOCONSUMO",
+        ["validar_produtos"],
+        [keys[0]],
+        "p1",
+        False,
+    )
+    h.update_daily_metrics(
+        "2026-05-28",
+        "FAILED",
+        12,
+        "VALIDATION_FAILED",
+        11,
+        "USOCONSUMO",
+        ["validar_produtos"],
+        [keys[1]],
+        "p2",
+        False,
+    )
+
+    item = fake.get_item(Key={"PK": "METRICS#2026-05-28", "SK": "SUMMARY"})["Item"]
+    assert int(item["failed_count"]) == 2
+    assert int(item["failed_rules"]["validar_produtos"]) == 2
+
+
+def test_daily_metrics_dedup_distinct_rules_count_separately(monkeypatch):
+    import update_metrics.handler as h
+
+    fake = _FakeTable()
+    monkeypatch.setattr(h, "table", fake)
+
+    keys = [
+        "NF27|07467822000126|validar_produtos|PED001",
+        "NF27|07467822000126|validar_cnpj_fornecedor|PED001",
+    ]
+    h.update_daily_metrics(
+        "2026-05-28",
+        "FAILED",
+        10,
+        "VALIDATION_FAILED",
+        11,
+        "AGROQUIMICOS",
+        ["validar_produtos", "validar_cnpj_fornecedor"],
+        keys,
+        "p1",
+        False,
+    )
+
+    item = fake.get_item(Key={"PK": "METRICS#2026-05-28", "SK": "SUMMARY"})["Item"]
+    assert int(item["failed_count"]) == 2
+    assert int(item["failed_rules"]["validar_produtos"]) == 1
+    assert int(item["failed_rules"]["validar_cnpj_fornecedor"]) == 1
+
+
+def test_missing_identity_uses_nao_identificado_all_types():
+    from utils.failure_dedup import failure_identity_fallback as fb
+
+    assert fb("pedido") == "NAO_IDENTIFICADO_PEDIDO"
+    assert fb("cnpj") == "NAO_IDENTIFICADO_CNPJ"
+    assert fb("nf") == "NAO_IDENTIFICADO_NF"
+
+
+def test_update_daily_metrics_returns_dedup_role(monkeypatch):
+    import update_metrics.handler as h
+
+    fake = _FakeTable()
+    monkeypatch.setattr(h, "table", fake)
+
+    key = "NF27|07467822000126|validar_produtos|PED001"
+    r1 = h.update_daily_metrics(
+        "2026-05-28",
+        "FAILED",
+        10,
+        "VALIDATION_FAILED",
+        11,
+        "AGROQUIMICOS",
+        ["validar_produtos"],
+        [key],
+        "p1",
+        False,
+    )
+    r2 = h.update_daily_metrics(
+        "2026-05-28",
+        "FAILED",
+        12,
+        "VALIDATION_FAILED",
+        11,
+        "AGROQUIMICOS",
+        ["validar_produtos"],
+        [key],
+        "p2",
+        False,
+    )
+    assert r1["dedup_role"] == "primary"
+    assert r2["dedup_role"] == "duplicate"
+    assert r2["primary_process_id"] == "p1"
+
+
+def test_usoconsumo_dedup_with_nao_identificado_pedido(monkeypatch):
+    import update_metrics.handler as h
+
+    fake = _FakeTable()
+    monkeypatch.setattr(h, "table", fake)
+
+    key = "NF27|07467822000126|validar_produtos|NAO_IDENTIFICADO_PEDIDO"
     h.update_daily_metrics(
         "2026-05-28",
         "FAILED",
@@ -79,37 +261,6 @@ def test_daily_metrics_dedup_same_nf_cnpj_rule(monkeypatch):
 
     item = fake.get_item(Key={"PK": "METRICS#2026-05-28", "SK": "SUMMARY"})["Item"]
     assert int(item["failed_count"]) == 1
-    assert int(item["failed_rules"]["validar_produtos"]) == 1
-    assert len(item["failure_dedup_registry"]) == 1
-
-
-def test_daily_metrics_dedup_distinct_rules_count_separately(monkeypatch):
-    import update_metrics.handler as h
-
-    fake = _FakeTable()
-    monkeypatch.setattr(h, "table", fake)
-
-    keys = [
-        "NF27|07467822000126|validar_produtos",
-        "NF27|07467822000126|validar_cnpj_fornecedor",
-    ]
-    h.update_daily_metrics(
-        "2026-05-28",
-        "FAILED",
-        10,
-        "VALIDATION_FAILED",
-        11,
-        "USOCONSUMO",
-        ["validar_produtos", "validar_cnpj_fornecedor"],
-        keys,
-        "p1",
-        False,
-    )
-
-    item = fake.get_item(Key={"PK": "METRICS#2026-05-28", "SK": "SUMMARY"})["Item"]
-    assert int(item["failed_count"]) == 2
-    assert int(item["failed_rules"]["validar_produtos"]) == 1
-    assert int(item["failed_rules"]["validar_cnpj_fornecedor"]) == 1
 
 
 def test_decrement_daily_metrics_removes_failure_keys(monkeypatch):
@@ -118,7 +269,7 @@ def test_decrement_daily_metrics_removes_failure_keys(monkeypatch):
     fake = _FakeTable()
     monkeypatch.setattr(h, "table", fake)
 
-    key = "NF27|07467822000126|Outros"
+    key = "NF27|07467822000126|Outros|PED001"
     h.update_daily_metrics(
         "2026-05-28",
         "FAILED",

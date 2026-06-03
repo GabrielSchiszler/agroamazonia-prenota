@@ -1,0 +1,229 @@
+{
+  "regras": {
+    "CREATE_001": {
+      "tipo": "Operacional",
+      "mensagem_resumo": "Erro inesperado ao processar a requisicao.",
+      "categoria": "API / Schema"
+    },
+    "SCHEMA_001": {
+      "tipo": "OCR",
+      "mensagem_resumo": "O corpo da requisicao deve ser um objeto JSON.",
+      "categoria": "API / Schema"
+    },
+    "SCHEMA_002": {
+      "tipo": "OCR",
+      "mensagem_resumo": "O corpo da requisicao nao pode estar vazio.",
+      "categoria": "API / Schema"
+    },
+    "SCHEMA_003": {
+      "tipo": "OCR",
+      "mensagem_resumo": "O campo <campo> e obrigatorio no cabecalho.",
+      "categoria": "API / Schema"
+    },
+    "SCHEMA_004": {
+      "tipo": "OCR",
+      "mensagem_resumo": "O CNPJ do emitente, ou o CPF e IE do emitente, ou os dados do fornecedor devem ser informados.",
+      "categoria": "API / Schema"
+    },
+    "SCHEMA_005": {
+      "tipo": "OCR",
+      "mensagem_resumo": "O CNPJ do emitente deve conter 14 digitos.",
+      "categoria": "API / Schema"
+    },
+    "SCHEMA_006": {
+      "tipo": "OCR",
+      "mensagem_resumo": "O CPF do emitente deve conter 11 digitos.",
+      "categoria": "API / Schema"
+    },
+    "SCHEMA_007": {
+      "tipo": "OCR",
+      "mensagem_resumo": "A Inscricao Estadual do emitente deve conter no minimo 2 digitos.",
+      "categoria": "API / Schema"
+    },
+    "SCHEMA_008": {
+      "tipo": "OCR",
+      "mensagem_resumo": "Nao e permitido informar CNPJ e CPF/IE do emitente simultaneamente.",
+      "categoria": "API / Schema"
+    },
+    "SCHEMA_009": {
+      "tipo": "OCR",
+      "mensagem_resumo": "A Inscricao Estadual do emitente deve ser informada quando o CPF for fornecido.",
+      "categoria": "API / Schema"
+    },
+    "SCHEMA_010": {
+      "tipo": "OCR",
+      "mensagem_resumo": "O CPF do emitente deve ser informado quando a Inscricao Estadual for fornecida.",
+      "categoria": "API / Schema"
+    },
+    "SCHEMA_011": {
+      "tipo": "OCR",
+      "mensagem_resumo": "O codigo do fornecedor/loja deve ser informado no objeto fornecedor.",
+      "categoria": "API / Schema"
+    },
+    "SCHEMA_012": {
+      "tipo": "OCR",
+      "mensagem_resumo": "O codigo do fornecedor ou loja e invalido.",
+      "categoria": "API / Schema"
+    },
+    "SCHEMA_013": {
+      "tipo": "OCR",
+      "mensagem_resumo": "Nao e permitido informar dados do fornecedor quando o emitente ja foi especificado via CNPJ ou CPF/IE.",
+      "categoria": "API / Schema"
+    },
+    "SCHEMA_014": {
+      "tipo": "OCR",
+      "mensagem_resumo": "A chave de acesso deve ser informada e conter 44 digitos para documentos do tipo SPED.",
+      "categoria": "API / Schema"
+    },
+    "SCHEMA_015": {
+      "tipo": "OCR",
+      "mensagem_resumo": "A moeda informada e invalida. Aceitas: BRL, USD.",
+      "categoria": "API / Schema"
+    },
+    "SCHEMA_016": {
+      "tipo": "OCR",
+      "mensagem_resumo": "A taxa de cambio deve ser informada e maior que zero para moedas diferentes de BRL.",
+      "categoria": "API / Schema"
+    },
+    "SCHEMA_ITEM_001": {
+      "tipo": "OCR",
+      "mensagem_resumo": "O campo itens deve ser um array com pelo menos um item.",
+      "categoria": "API / Schema"
+    },
+    "SCHEMA_ITEM_002": {
+      "tipo": "OCR",
+      "mensagem_resumo": "O campo <campo> e obrigatorio no item <item>.",
+      "categoria": "API / Schema"
+    },
+    "SCHEMA_ITEM_003": {
+      "tipo": "OCR",
+      "mensagem_resumo": "O campo quantidade no item <item> deve ser maior que zero.",
+      "categoria": "API / Schema"
+    },
+    "SCHEMA_ITEM_004": {
+      "tipo": "OCR",
+      "mensagem_resumo": "O campo valorUnitario no item <item> deve ser maior que zero.",
+      "categoria": "API / Schema"
+    },
+    "SCHEMA_ITEM_005": {
+      "tipo": "OCR",
+      "mensagem_resumo": "Os campos pedidoErp e itemPedidoErp devem ser informados juntos no item <item>.",
+      "categoria": "API / Schema"
+    },
+    "SCHEMA_ITEM_006": {
+      "tipo": "OCR",
+      "mensagem_resumo": "O campo itemDocumentoOrigem deve ser informado quando o campo documentoOrigem for preenchido no item <item>.",
+      "categoria": "API / Schema"
+    },
+    "SCHEMA_ITEM_007": {
+      "tipo": "OCR",
+      "mensagem_resumo": "O campo documentoOrigem deve ser informado quando o campo itemDocumentoOrigem for preenchido no item <item>.",
+      "categoria": "API / Schema"
+    },
+    "SCHEMA_ITEM_008": {
+      "tipo": "OCR",
+      "mensagem_resumo": "O campo numero e obrigatorio no objeto lote do item <item>.",
+      "categoria": "API / Schema"
+    },
+    "SCHEMA_ITEM_009": {
+      "tipo": "OCR",
+      "mensagem_resumo": "O campo dataValidade e obrigatorio no objeto lote do item <item>.",
+      "categoria": "API / Schema"
+    },
+    "SCHEMA_ITEM_011": {
+      "tipo": "Operacional",
+      "mensagem_resumo": "Os dados de lote sao obrigatorios para o item <item>.",
+      "categoria": "API / Schema"
+    },
+    "SCHEMA_ITEM_012": {
+      "tipo": "OCR",
+      "mensagem_resumo": "Os dados de lote nao devem ser informados para o item <item> pois o produto nao exige controle de lote.",
+      "categoria": "API / Schema"
+    },
+    "SCHEMA_CC_001": {
+      "tipo": "OCR",
+      "mensagem_resumo": "O campo rateioCentroCusto deve ser um array com pelo menos um item.",
+      "categoria": "API / Schema"
+    },
+    "SCHEMA_CC_002": {
+      "tipo": "OCR",
+      "mensagem_resumo": "O campo <campo> e obrigatorio no rateio de centro de custo item <item>.",
+      "categoria": "API / Schema"
+    },
+    "SCHEMA_CC_003": {
+      "tipo": "OCR",
+      "mensagem_resumo": "O campo percentual no rateio de centro de custo item <item> deve ser maior que zero.",
+      "categoria": "API / Schema"
+    },
+    "SCHEMA_CC_004": {
+      "tipo": "OCR",
+      "mensagem_resumo": "O campo percentual no rateio de centro de custo item <item> nao pode ser maior que 100.",
+      "categoria": "API / Schema"
+    },
+    "SCHEMA_CC_005": {
+      "tipo": "OCR",
+      "mensagem_resumo": "O campo valor no rateio de centro de custo item <item> deve ser maior que zero.",
+      "categoria": "API / Schema"
+    },
+    "SCHEMA_CC_006": {
+      "tipo": "OCR",
+      "mensagem_resumo": "A soma dos percentuais no rateio de centro de custo nao pode ser maior que 100.",
+      "categoria": "API / Schema"
+    },
+    "SCHEMA_CC_007": {
+      "tipo": "OCR",
+      "mensagem_resumo": "A soma dos percentuais no rateio de centro de custo deve ser igual a 100.",
+      "categoria": "API / Schema"
+    },
+    "TRANSFORM_001": {
+      "tipo": "Operacional",
+      "mensagem_resumo": "Fornecedor nao encontrado para o CNPJ do emitente informado.",
+      "categoria": "API / Schema"
+    },
+    "TRANSFORM_002": {
+      "tipo": "Operacional",
+      "mensagem_resumo": "Fornecedor nao encontrado para o CPF e IE do emitente informados.",
+      "categoria": "API / Schema"
+    },
+    "TRANSFORM_003": {
+      "tipo": "Operacional",
+      "mensagem_resumo": "Nao foi possivel determinar a unidade de medida para o item <item>. Verifique o codigo do produto.",
+      "categoria": "API / Schema"
+    },
+    "TRANSFORM_004": {
+      "tipo": "Operacional",
+      "mensagem_resumo": "Nao foi possivel determinar o armazem para o item <item>. Verifique o codigo do produto.",
+      "categoria": "API / Schema"
+    },
+    "TRANSFORM_005": {
+      "tipo": "Operacional",
+      "mensagem_resumo": "Nao foi possivel determinar natureza, centro de custo e conta contabil para o item <item>. Pedido de Compra nao encontrado.",
+      "categoria": "API / Schema"
+    },
+    "TRANSFORM_006": {
+      "tipo": "OCR",
+      "mensagem_resumo": "O campo vencimento e obrigatorio na duplicata item <item>.",
+      "categoria": "API / Schema"
+    },
+    "TRANSFORM_007": {
+      "tipo": "OCR",
+      "mensagem_resumo": "O campo valor e obrigatorio na duplicata item <item>.",
+      "categoria": "API / Schema"
+    },
+    "EXEC_AUTO_002": {
+      "tipo": "Operacional",
+      "mensagem_resumo": "Erro ao salvar o documento de entrada como pre-nota.",
+      "categoria": "API / Schema"
+    },
+    "CALC_QTDVAL_001": {
+      "tipo": "Operacional",
+      "mensagem_resumo": "Nao foi possivel determinar a conversao de unidade de medida para o item <item>. Verifique o codigo do produto.",
+      "categoria": "API / Schema"
+    },
+    "CALC_QTDVAL_002": {
+      "tipo": "Operacional",
+      "mensagem_resumo": "Unidade de medida do item <item> nao e igual a unidade padrao ou de conversao do produto, nem a unidade de conversao cadastrada para o fornecedor. Verifique o codigo do produto.",
+      "categoria": "API / Schema"
+    }
+  }
+}
