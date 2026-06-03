@@ -77,42 +77,50 @@
                             <div class="stat-icon">📋</div>
                             <div class="stat-info">
                                 <h3 id="totalToday">0</h3>
-                            <p id="totalLabel">Processos Hoje</p>
+                                <p id="totalLabel">Processos Hoje</p>
                             </div>
                         </div>
                         <div class="stat-card success">
                             <div class="stat-icon">✅</div>
                             <div class="stat-info">
                                 <h3 id="successToday">0</h3>
-                            <p id="successLabel">Sucessos Hoje</p>
+                                <p id="successLabel">Sucessos Hoje</p>
                             </div>
                         </div>
                         <div class="stat-card" style="border-left: 4px solid #f59e0b;">
                             <div class="stat-icon">📝</div>
                             <div class="stat-info">
                                 <h3 id="prenotaToday">0</h3>
-                                <p id="prenotaLabel">Pré-notas</p>
+                                <p id="prenotaLabel">Pré-notas Hoje</p>
                             </div>
                         </div>
                         <div class="stat-card success" style="border-left: 4px solid #059669;">
                             <div class="stat-icon">📗</div>
                             <div class="stat-info">
                                 <h3 id="classifiedToday">0</h3>
-                                <p id="classifiedLabel">Classificadas</p>
+                                <p id="classifiedLabel">Classificadas Hoje</p>
                             </div>
                         </div>
                         <div class="stat-card error">
                             <div class="stat-icon">❌</div>
                             <div class="stat-info">
                                 <h3 id="failedToday">0</h3>
-                            <p id="failedLabel">Falhas Hoje</p>
+                                <p id="failedLabel">Falhas OCR Hoje</p>
+                            </div>
+                        </div>
+                        <div class="stat-card stat-card--process" style="border-left: 4px solid #d97706;">
+                            <div class="stat-icon">🏭</div>
+                            <div class="stat-info">
+                                <h3 id="processFailureToday">0</h3>
+                                <p id="processFailureLabel">Falhas de Processos Hoje</p>
                             </div>
                         </div>
                         <div class="stat-card">
                             <div class="stat-icon">📊</div>
                             <div class="stat-info">
                                 <h3 id="successRate">0%</h3>
-                                <p>Taxa de Sucesso</p>
+                                <p>Taxa Sucesso</p>
+                                <p class="stat-info-hint" title="sucesso ÷ (sucesso + falha OCR)">sucesso ÷ (sucesso + falha OCR)</p>
                             </div>
                         </div>
                         <div class="stat-card">
@@ -150,10 +158,16 @@
                     </div>
                 </div>
 
-                <div class="chart-card full-width">
+                <div class="chart-card full-width failed-rules-card">
                     <h3>🚫 Regras que Mais Falharam</h3>
-                    <canvas id="failedRulesChart"></canvas>
+                    <p class="chart-card-subtitle">Falhas OCR (taxa) e falhas de processos no ranking</p>
+                    <div class="failed-rules-layout">
+                        <div class="failed-rules-donut-wrap">
+                            <canvas id="failedRulesChart"></canvas>
+                        </div>
+                        <div id="failedRulesRanking" class="failed-rules-ranking" aria-label="Ranking de regras que falharam"></div>
                     </div>
+                </div>
                     
                 <div class="chart-card full-width">
                     <h3>📋 Regras que Falharam por Dia</h3>

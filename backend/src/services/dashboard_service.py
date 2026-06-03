@@ -1,12 +1,26 @@
 import os
+
 import boto3
 from datetime import datetime, timedelta
 from decimal import Decimal
+
+from src.utils.metrics_rates import success_rate_pct
+from src.utils.regras_labels import get_regras_labels_for_dashboard
+
 
 class DashboardService:
     def __init__(self):
         self.dynamodb = boto3.resource('dynamodb')
         self.table = self.dynamodb.Table(os.environ.get('TABLE_NAME', 'DocumentProcessorTable'))
+
+    @staticmethod
+    def _success_rate_pct(success_count: int, failed_count: int) -> float:
+        return success_rate_pct(success_count, failed_count)
+
+    @staticmethod
+    def _attach_regras_labels(payload: dict) -> dict:
+        payload["regras_labels"] = get_regras_labels_for_dashboard()
+        return payload
 
     @staticmethod
     def _failed_rules_with_gap(failed_rules: dict, failed_count: int) -> dict:
@@ -57,9 +71,11 @@ class DashboardService:
                         'success_prenota': sp,
                         'success_classified': sc,
                         'failed': daily_metrics.get('failed_count', 0),
+                        'skipped_operacional': daily_metrics.get('skipped_operacional', 0),
                         'success_rate': daily_metrics.get('success_rate', 0),
                         'avg_processing_time': avg_time,
                         'failed_rules': fr_day,
+                        'failed_rules_operacional': daily_metrics.get('failed_rules_operacional', {}),
                         'processes_by_type': daily_metrics.get('processes_by_type', {})
                     })
                 else:
@@ -99,11 +115,19 @@ class DashboardService:
 
             # Calcular tempo médio do período
             avg_processing_time_period = (total_time_period / total_count_period) if total_count_period > 0 else 0
+            failed_rules_operacional_period = {}
+            for daily in period_days:
+                for rule, count in daily.get('failed_rules_operacional', {}).items():
+                    failed_rules_operacional_period[rule] = (
+                        failed_rules_operacional_period.get(rule, 0) + int(count)
+                    )
+
             sum_success = sum(d['success'] for d in period_days)
             sum_prenota = sum(d.get('success_prenota', 0) for d in period_days)
             sum_classified = sum(d.get('success_classified', 0) for d in period_days)
+            sum_skipped_op = sum(d.get('skipped_operacional', 0) for d in period_days)
 
-            return {
+            return self._attach_regras_labels({
                 'period': period_days,
                 'summary': {
                     'total': sum(d['total'] for d in period_days),
@@ -111,14 +135,18 @@ class DashboardService:
                     'success_prenota': sum_prenota,
                     'success_classified': sum_classified,
                     'failed': sum(d['failed'] for d in period_days),
-                    'success_rate': round((sum_success / sum(d['total'] for d in period_days) * 100) if sum(d['total'] for d in period_days) > 0 else 0, 2),
+                    'skipped_operacional': sum_skipped_op,
+                    'success_rate': self._success_rate_pct(
+                        sum_success, sum(d['failed'] for d in period_days)
+                    ),
                     'avg_processing_time': round(avg_processing_time_period, 2)
                 },
                 'processes_by_type': processes_by_type_period,
                 'failed_rules': failed_rules_period,
+                'failed_rules_operacional': failed_rules_operacional_period,
                 'start_date': start_date,
                 'end_date': end_date
-            }
+            })
         else:
             # Comportamento padrão: hoje e últimos 7 dias
             today = datetime.now().strftime('%Y-%m-%d')
@@ -156,9 +184,11 @@ class DashboardService:
                         'success_prenota': sp,
                         'success_classified': sc,
                         'failed': daily_metrics.get('failed_count', 0),
+                        'skipped_operacional': daily_metrics.get('skipped_operacional', 0),
                         'success_rate': daily_metrics.get('success_rate', 0),
                         'avg_processing_time': avg_time,
                         'failed_rules': fr_day,
+                        'failed_rules_operacional': daily_metrics.get('failed_rules_operacional', {}),
                         'processes_by_type': daily_metrics.get('processes_by_type', {})
                     })
         
@@ -181,11 +211,19 @@ class DashboardService:
                 )
 
             avg_processing_time_week = (total_time_week / total_count_week) if total_count_week > 0 else 0
+            failed_rules_operacional_week = {}
+            for daily in last_7_days:
+                for rule, count in daily.get('failed_rules_operacional', {}).items():
+                    failed_rules_operacional_week[rule] = (
+                        failed_rules_operacional_week.get(rule, 0) + int(count)
+                    )
+
             sum_success_w = sum(d['success'] for d in last_7_days)
             sum_prenota_w = sum(d.get('success_prenota', 0) for d in last_7_days)
             sum_classified_w = sum(d.get('success_classified', 0) for d in last_7_days)
+            sum_skipped_op_w = sum(d.get('skipped_operacional', 0) for d in last_7_days)
 
-            return {
+            return self._attach_regras_labels({
                 'today': today_metrics,
                 'last_7_days': last_7_days,
                 'summary': {
@@ -194,12 +232,16 @@ class DashboardService:
                     'success_prenota_week': sum_prenota_w,
                     'success_classified_week': sum_classified_w,
                     'failed_week': sum(d['failed'] for d in last_7_days),
-                    'success_rate_week': round((sum_success_w / sum(d['total'] for d in last_7_days) * 100) if sum(d['total'] for d in last_7_days) > 0 else 0, 2),
+                    'skipped_operacional_week': sum_skipped_op_w,
+                    'success_rate_week': self._success_rate_pct(
+                        sum_success_w, sum(d['failed'] for d in last_7_days)
+                    ),
                     'avg_processing_time': round(avg_processing_time_week, 2)
                 },
                 'processes_by_type_week': processes_by_type_week,
-                'failed_rules_week': failed_rules_week
-            }
+                'failed_rules_week': failed_rules_week,
+                'failed_rules_operacional_week': failed_rules_operacional_week,
+            })
     
     def _get_raw_hourly(self, date):
         """Busca processes_by_hour raw (UTC) de uma data específica"""
@@ -277,7 +319,9 @@ class DashboardService:
                     'processes_by_hour': {},
                     'failure_reasons': {},
                     'processes_by_type': {},
-                    'failed_rules': {}
+                    'failed_rules': {},
+                    'failed_rules_operacional': {},
+                    'skipped_operacional': 0,
                 }
             
             item = response['Item']
@@ -291,7 +335,7 @@ class DashboardService:
             total_time = float(item.get('total_time', 0))
             
             # Calcular métricas derivadas
-            success_rate = (success_count / total_count * 100) if total_count > 0 else 0
+            success_rate = self._success_rate_pct(success_count, failed_count)
             avg_time = (total_time / total_count) if total_count > 0 else 0
             
             # Converter horas UTC para BRT buscando dados do dia atual e seguinte
@@ -339,6 +383,18 @@ class DashboardService:
                             print(f"Erro ao converter failed_rules[{rule}]: {e}")
                             failed_rules[rule] = 0
                 print(f"DEBUG: failed_rules converted: {failed_rules}")
+
+            failed_rules_operacional = {}
+            if 'failed_rules_operacional' in item:
+                fr_op = item['failed_rules_operacional']
+                if isinstance(fr_op, dict):
+                    for rule, count in fr_op.items():
+                        try:
+                            failed_rules_operacional[rule] = int(count)
+                        except (TypeError, ValueError):
+                            failed_rules_operacional[rule] = 0
+
+            skipped_operacional = int(item.get('skipped_operacional', 0) or 0)
             
             # Calcular taxa de sucesso por tipo
             success_by_type = {}
@@ -358,7 +414,9 @@ class DashboardService:
                 'processes_by_hour': processes_by_hour,
                 'failure_reasons': failure_reasons,
                 'processes_by_type': processes_by_type,
-                'failed_rules': failed_rules
+                'failed_rules': failed_rules,
+                'failed_rules_operacional': failed_rules_operacional,
+                'skipped_operacional': skipped_operacional,
             }
             
         except Exception as e:

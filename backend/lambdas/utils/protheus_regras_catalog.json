@@ -1,0 +1,117 @@
+{
+  "_comment": "Somente as 17 regras Protheus acordadas. Secundários (ERRO_NO_ITEM_SD1, CAMPO_INVALIDO_*, etc.) são ignorados.",
+  "metrics": {
+    "skip_tipos": ["Operacional"],
+    "count_tipos": ["OCR"],
+    "regras_operacional": [
+      "validar_cnpj_fornecedor",
+      "SCHEMA_ITEM_011"
+    ]
+  },
+  "ordem_exibicao": [
+    "QTD_MAIOR_PEDIDO",
+    "A103PCNSLD",
+    "QTDLIBMAI",
+    "A103RATEI",
+    "DIVERGENCIA_DE_VALOR_TOTAL_DA_NOTA_FISCAL_DIGITADA_COM_VALOR_TOTAL_NO_XML",
+    "DIVERGENCIA_DE_VALOR_ICMS_DA_NOTA_FISCAL_DIGITADA_COM_VALOR_ICMS_NO_XML",
+    "FILE_NOT_FOUND_CAMINHO_XML_NFE",
+    "ARQUIVO_XML_NAO_ENCONTRADO_VERIFIQUE_IMPORTACAO_OU_FILIAL",
+    "DIVERGENCIA_DE_VALOR_DO_DESCONTO_DA_NOTA_FISCAL_DIGITADA_COM_VALOR_DO_DESCONTO_N",
+    "DIVERGENCIA_DE_VALOR_ICMS_ST_DA_NOTA_FISCAL_DIGITADA_COM_VALOR_ICMS_ST_NO_XML",
+    "DIVERGENCIA_DE_VALOR_IPI_DA_NOTA_FISCAL_DIGITADA_COM_VALOR_IPI_NO_XML",
+    "EXISTNF",
+    "REGNOIS",
+    "USEDCODE",
+    "NVAZIO",
+    "A140VZ",
+    "P0200113"
+  ],
+  "regras": {
+    "QTD_MAIOR_PEDIDO": {
+      "categoria": "Pedido de Compra",
+      "mensagem_resumo": "Quantidade da NF maior que saldo do pedido de compra",
+      "tipo": "Operacional"
+    },
+    "A103PCNSLD": {
+      "categoria": "Pedido de Compra",
+      "mensagem_resumo": "Item do pedido de compras não possui mais saldo",
+      "tipo": "Operacional"
+    },
+    "QTDLIBMAI": {
+      "categoria": "Pedido de Compra",
+      "mensagem_resumo": "Quantidade de liberação superior à do pedido",
+      "tipo": "Operacional"
+    },
+    "A103RATEI": {
+      "categoria": "Pedido de Compra",
+      "mensagem_resumo": "Centro de custo / conta / rateio inválidos",
+      "tipo": "OCR"
+    },
+    "DIVERGENCIA_DE_VALOR_TOTAL_DA_NOTA_FISCAL_DIGITADA_COM_VALOR_TOTAL_NO_XML": {
+      "categoria": "NF × XML",
+      "mensagem_resumo": "Divergência de valor total",
+      "tipo": "OCR"
+    },
+    "DIVERGENCIA_DE_VALOR_ICMS_DA_NOTA_FISCAL_DIGITADA_COM_VALOR_ICMS_NO_XML": {
+      "categoria": "NF × XML",
+      "mensagem_resumo": "Divergência de valor ICMS",
+      "tipo": "OCR"
+    },
+    "FILE_NOT_FOUND_CAMINHO_XML_NFE": {
+      "categoria": "NF × XML",
+      "mensagem_resumo": "Caminho do XML inexistente no servidor",
+      "tipo": "Operacional"
+    },
+    "ARQUIVO_XML_NAO_ENCONTRADO_VERIFIQUE_IMPORTACAO_OU_FILIAL": {
+      "categoria": "NF × XML",
+      "mensagem_resumo": "XML não encontrado no ERP",
+      "tipo": "Operacional"
+    },
+    "DIVERGENCIA_DE_VALOR_DO_DESCONTO_DA_NOTA_FISCAL_DIGITADA_COM_VALOR_DO_DESCONTO_N": {
+      "categoria": "NF × XML",
+      "mensagem_resumo": "Divergência de desconto",
+      "tipo": "OCR"
+    },
+    "DIVERGENCIA_DE_VALOR_ICMS_ST_DA_NOTA_FISCAL_DIGITADA_COM_VALOR_ICMS_ST_NO_XML": {
+      "categoria": "NF × XML",
+      "mensagem_resumo": "Divergência de ICMS-ST",
+      "tipo": "OCR"
+    },
+    "DIVERGENCIA_DE_VALOR_IPI_DA_NOTA_FISCAL_DIGITADA_COM_VALOR_IPI_NO_XML": {
+      "categoria": "NF × XML",
+      "mensagem_resumo": "Divergência de IPI",
+      "tipo": "OCR"
+    },
+    "EXISTNF": {
+      "categoria": "Nota / Cadastro / Produto",
+      "mensagem_resumo": "Número de Nota Fiscal já cadastrado",
+      "tipo": "Operacional"
+    },
+    "REGNOIS": {
+      "categoria": "Nota / Cadastro / Produto",
+      "mensagem_resumo": "Registro inexistente (TES/SF4)",
+      "tipo": "Operacional"
+    },
+    "USEDCODE": {
+      "categoria": "Nota / Cadastro / Produto",
+      "mensagem_resumo": "Código bloqueado / em uso por outro usuário",
+      "tipo": "Operacional"
+    },
+    "NVAZIO": {
+      "categoria": "Nota / Cadastro / Produto",
+      "mensagem_resumo": "Campo obrigatório não informado",
+      "tipo": "OCR"
+    },
+    "A140VZ": {
+      "categoria": "Nota / Cadastro / Produto",
+      "mensagem_resumo": "Quantidade, valor unitário ou valor total em branco",
+      "tipo": "OCR"
+    },
+    "P0200113": {
+      "categoria": "Nota / Cadastro / Produto",
+      "mensagem_resumo": "Centro de custo obrigatório",
+      "tipo": "OCR"
+    }
+  }
+}

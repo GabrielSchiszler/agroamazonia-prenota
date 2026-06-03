@@ -10,8 +10,53 @@ let selectedProcess = null;
 let refreshInterval = null;
 let currentPage = 'dashboard';
 let dailyProcessesChart, successErrorRateChart, hourlyChart, errorChart, typeChart, failedRulesChart, failedRulesByDayChart;
+let regrasLabelsCatalog = null;
 
 // Removido: PROCESS_RULES hardcoded - agora busca do backend
+
+/** Catálogo de labels (API ou regras_labels_catalog.json estático). */
+async function ensureRegrasLabelsCatalog(metricsPayload) {
+    if (metricsPayload?.regras_labels) {
+        regrasLabelsCatalog = metricsPayload.regras_labels;
+        return;
+    }
+    if (regrasLabelsCatalog) return;
+    try {
+        const res = await fetch('regras_labels_catalog.json', { cache: 'no-cache' });
+        if (res.ok) {
+            regrasLabelsCatalog = await res.json();
+        }
+    } catch (e) {
+        console.warn('[Dashboard] Catálogo de labels de regras não carregado:', e);
+    }
+}
+
+function formatRegraLabel(regraId, catalog) {
+    const cat = catalog || regrasLabelsCatalog;
+    if (!regraId) return '';
+    const meta = cat?.[regraId];
+    if (meta) {
+        return meta.label || meta.mensagem_resumo || regraId;
+    }
+    return regraId;
+}
+
+function regraLabelWithCategory(regraId, catalog) {
+    const cat = catalog || regrasLabelsCatalog;
+    const meta = cat?.[regraId];
+    if (!meta) return formatRegraLabel(regraId, cat);
+    const msg = meta.mensagem_resumo || meta.label || regraId;
+    const categoria = meta.categoria;
+    if (categoria && categoria !== msg) {
+        return `${categoria}: ${msg}`;
+    }
+    return msg;
+}
+
+function truncateRegraLabel(text, maxLen = 56) {
+    if (!text || text.length <= maxLen) return text;
+    return text.slice(0, maxLen - 1) + '…';
+}
 
 document.addEventListener('DOMContentLoaded', async function() {
     console.log('[App] DOMContentLoaded - Iniciando...');
@@ -109,6 +154,7 @@ async function loadDashboardMetrics() {
         }
 
         const data = await response.json();
+        await ensureRegrasLabelsCatalog(data);
         
         // Verificar novamente se os elementos existem antes de atualizar
         if (isDashboardPage()) {
@@ -244,6 +290,8 @@ function updateMetricCards(data) {
     const classifiedTodayEl = document.getElementById('classifiedToday');
     const prenotaLabelEl = document.getElementById('prenotaLabel');
     const classifiedLabelEl = document.getElementById('classifiedLabel');
+    const processFailureTodayEl = document.getElementById('processFailureToday');
+    const processFailureLabelEl = document.getElementById('processFailureLabel');
     
     // Se nenhum elemento existir, não fazer nada (não estamos na página do dashboard)
     if (!totalTodayEl && !successTodayEl && !failedTodayEl) {
@@ -257,7 +305,7 @@ function updateMetricCards(data) {
     // Determinar se há filtro de período ativo
     const hasPeriodFilter = currentStartDate && currentEndDate;
     
-    let total, success, failed, successRate, avgTime, periodLabel;
+    let total, success, failed, processFailure, successRate, avgTime, periodLabel;
     let prenota = 0;
     let classified = 0;
     
@@ -266,10 +314,12 @@ function updateMetricCards(data) {
         total = summary.total ?? 0;
         success = summary.success ?? 0;
         failed = summary.failed ?? 0;
-        successRate = summary.success_rate ?? 0;
+        processFailure = summary.skipped_operacional ?? 0;
         avgTime = summary.avg_processing_time ?? 0;
         prenota = summary.success_prenota ?? 0;
         classified = summary.success_classified ?? Math.max(0, success - prenota);
+        const outcomeTotal = success + failed;
+        successRate = outcomeTotal > 0 ? (success / outcomeTotal) * 100 : (summary.success_rate ?? 0);
         
         const startDate = parseDateLocal(currentStartDate);
         const endDate = parseDateLocal(currentEndDate);
@@ -283,10 +333,14 @@ function updateMetricCards(data) {
         total = todayData.total_count ?? 0;
         success = todayData.success_count ?? 0;
         failed = todayData.failed_count ?? 0;
-        successRate = todayData.success_rate ?? 0;
+        processFailure = todayData.skipped_operacional ?? 0;
         avgTime = todayData.avg_processing_time ?? 0;
         prenota = todayData.success_prenota_count ?? 0;
         classified = todayData.success_classified_count ?? Math.max(0, success - prenota);
+        const outcomeTotalToday = success + failed;
+        successRate = outcomeTotalToday > 0
+            ? (success / outcomeTotalToday) * 100
+            : (todayData.success_rate ?? 0);
         periodLabel = 'Hoje';
     }
     
@@ -296,13 +350,15 @@ function updateMetricCards(data) {
     if (prenotaTodayEl) prenotaTodayEl.textContent = prenota;
     if (classifiedTodayEl) classifiedTodayEl.textContent = classified;
     if (failedTodayEl) failedTodayEl.textContent = failed;
+    if (processFailureTodayEl) processFailureTodayEl.textContent = processFailure ?? 0;
     if (successRateEl) successRateEl.textContent = successRate.toFixed(1) + '%';
     
     if (totalLabelEl) totalLabelEl.textContent = `Processos ${periodLabel}`;
-    if (successLabelEl) successLabelEl.textContent = `Sucessos (total) ${periodLabel}`;
+    if (successLabelEl) successLabelEl.textContent = `Sucessos ${periodLabel}`;
     if (prenotaLabelEl) prenotaLabelEl.textContent = `Pré-notas ${periodLabel}`;
     if (classifiedLabelEl) classifiedLabelEl.textContent = `Classificadas ${periodLabel}`;
-    if (failedLabelEl) failedLabelEl.textContent = `Falhas ${periodLabel}`;
+    if (failedLabelEl) failedLabelEl.textContent = `Falhas OCR ${periodLabel}`;
+    if (processFailureLabelEl) processFailureLabelEl.textContent = `Falhas de Processos ${periodLabel}`;
     
     // Formatar tempo médio de processamento
     if (avgTimeEl) {
@@ -380,7 +436,12 @@ function createDailyProcessesChart(data) {
                 yAxisID: 'y'
             }, {
                 label: 'Taxa de acerto (%)',
-                data: periodData.map(d => Number(d.success_rate) || 0),
+                data: periodData.map(d => {
+                    const s = Number(d.success) || 0;
+                    const f = Number(d.failed) || 0;
+                    const t = s + f;
+                    return t > 0 ? (s / t) * 100 : (Number(d.success_rate) || 0);
+                }),
                 type: 'line',
                 borderColor: '#0ea5e9',
                 backgroundColor: 'rgba(14, 165, 233, 0.15)',
@@ -772,110 +833,203 @@ function createTypeChart(data) {
     });
 }
 
-function createFailedRulesChart(data) {
-    const chartEl = document.getElementById('failedRulesChart');
-    if (!chartEl) return;
-    const ctx = chartEl.getContext('2d');
+const FAILED_RULES_DONUT_COLORS = [
+    'rgba(239, 68, 68, 0.9)',
+    'rgba(245, 158, 11, 0.9)',
+    'rgba(139, 92, 246, 0.9)',
+    'rgba(236, 72, 153, 0.9)',
+    'rgba(6, 182, 212, 0.9)',
+    'rgba(34, 197, 94, 0.9)',
+    'rgba(99, 102, 241, 0.9)',
+    'rgba(148, 163, 184, 0.9)'
+];
 
+function collectFailedRulesForDashboard(data) {
     const hasPeriodFilter = currentStartDate && currentEndDate;
-
-    let failedRules;
+    let ocrRules = {};
+    let operacionalRules = {};
     if (hasPeriodFilter) {
-        failedRules = data.failed_rules || {};
+        ocrRules = data.failed_rules || {};
+        operacionalRules = data.failed_rules_operacional || {};
     } else {
-        failedRules = data.today?.failed_rules || {};
+        ocrRules = data.today?.failed_rules || {};
+        operacionalRules = data.today?.failed_rules_operacional || {};
     }
-
-    if (failedRulesChart) failedRulesChart.destroy();
-
-    const labels = Object.keys(failedRules);
-    const values = Object.values(failedRules);
-
-    const ruleTranslations = {
-        'validar_produtos': 'Validar Produtos',
-        'validar_cnpj_fornecedor': 'Validar CNPJ Fornecedor',
-        'validar_numero_pedido': 'Validar Número Pedido',
-        'validar_valor_total': 'Validar Valor Total',
-        'validar_data_emissao': 'Validar Data Emissão',
-        'validar_cfop_chave': 'Validar CFOP Chave',
-        'Outros': 'Outros (lambda / integração / sem regra nomeada)'
+    const merged = { ...ocrRules };
+    Object.entries(operacionalRules).forEach(([rule, count]) => {
+        merged[rule] = (Number(merged[rule]) || 0) + (Number(count) || 0);
+    });
+    return {
+        ocrRules,
+        operacionalRules,
+        merged,
+        operacionalRuleIds: new Set(Object.keys(operacionalRules || {}))
     };
+}
 
-    const totalFailedAttributed = values.reduce((a, b) => a + (Number(b) || 0), 0);
-
-    if (labels.length === 0 || totalFailedAttributed === 0) {
-        failedRulesChart = new Chart(ctx, {
-            type: 'bar',
-            data: {
-                labels: ['Nenhuma falha por regra neste recorte'],
-                datasets: [{
-                    data: [0],
-                    backgroundColor: ['rgba(16, 185, 129, 0.8)']
-                }]
-            },
-            options: {
-                responsive: true,
-                maintainAspectRatio: false,
-                plugins: { legend: { display: false } },
-                scales: { y: { beginAtZero: true } }
-            }
-        });
-        return;
-    }
-
-    const sorted = labels
+function sortFailedRulesEntries(failedRules) {
+    const labels = Object.keys(failedRules || {});
+    const values = Object.values(failedRules || {});
+    return labels
         .map((label, i) => ({ label, value: Number(values[i]) || 0 }))
+        .filter(item => item.value > 0)
         .sort((a, b) => {
             const ao = a.label === 'Outros';
             const bo = b.label === 'Outros';
             if (ao !== bo) return ao ? 1 : -1;
             return b.value - a.value;
         });
+}
+
+function buildFailedRulesDonutSlices(sorted, topN = 7) {
+    const withoutOutros = sorted.filter(x => x.label !== 'Outros');
+    const outros = sorted.find(x => x.label === 'Outros');
+    const top = withoutOutros.slice(0, topN);
+    const rest = withoutOutros.slice(topN);
+    const slices = top.map(item => ({
+        regraId: item.label,
+        value: item.value,
+        shortLabel: truncateRegraLabel(formatRegraLabel(item.label), 36)
+    }));
+    let demais = rest.reduce((s, x) => s + x.value, 0);
+    if (outros) demais += outros.value;
+    if (demais > 0) {
+        slices.push({
+            regraId: '__demais__',
+            value: demais,
+            shortLabel: 'Demais regras'
+        });
+    }
+    return slices;
+}
+
+function renderFailedRulesRanking(sorted, operacionalRuleIds = new Set()) {
+    const container = document.getElementById('failedRulesRanking');
+    if (!container) return;
+
+    if (!sorted.length) {
+        container.innerHTML = '<div class="failed-rules-ranking-empty">Nenhuma falha por regra neste recorte</div>';
+        return;
+    }
+
+    const maxVal = Math.max(...sorted.map(s => s.value), 1);
+    container.innerHTML = sorted.map((item, index) => {
+        const regraId = item.label;
+        const title = formatRegraLabel(regraId);
+        const pct = Math.round((item.value / maxVal) * 100);
+        const categoria = regrasLabelsCatalog?.[regraId]?.categoria;
+        const isOp = operacionalRuleIds.has(regraId);
+        const badge = isOp
+            ? '<span class="failed-rules-badge-operacional">Falhas de Processos</span> '
+            : '';
+        const catLine = categoria && categoria !== title
+            ? `<span class="failed-rules-ranking-code">${escapeHtml(categoria)}</span><br>`
+            : '';
+        return `
+            <div class="failed-rules-ranking-item${isOp ? ' failed-rules-ranking-item--operacional' : ''}" title="${escapeHtml(regraLabelWithCategory(regraId))}">
+                <div class="failed-rules-ranking-head">
+                    <span class="failed-rules-ranking-rank">${index + 1}</span>
+                    <span class="failed-rules-ranking-title">${badge}${escapeHtml(title)}</span>
+                    <span class="failed-rules-ranking-count">${item.value}</span>
+                </div>
+                <div class="failed-rules-ranking-bar" aria-hidden="true">
+                    <div style="width: ${pct}%"></div>
+                </div>
+                ${catLine}<span class="failed-rules-ranking-code">${escapeHtml(regraId)}</span>
+            </div>`;
+    }).join('');
+}
+
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text == null ? '' : String(text);
+    return div.innerHTML;
+}
+
+function createFailedRulesChart(data) {
+    const chartEl = document.getElementById('failedRulesChart');
+    if (!chartEl) return;
+    const ctx = chartEl.getContext('2d');
+
+    const rulesBundle = collectFailedRulesForDashboard(data);
+    const failedRules = rulesBundle.merged;
+
+    if (failedRulesChart) failedRulesChart.destroy();
+
+    const sorted = sortFailedRulesEntries(failedRules);
+    const totalFailedAttributed = sorted.reduce((a, b) => a + b.value, 0);
+
+    renderFailedRulesRanking(sorted, rulesBundle.operacionalRuleIds);
+
+    if (totalFailedAttributed === 0) {
+        failedRulesChart = new Chart(ctx, {
+            type: 'doughnut',
+            data: {
+                labels: ['Sem falhas'],
+                datasets: [{ data: [1], backgroundColor: ['rgba(16, 185, 129, 0.5)'] }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: { legend: { display: false } }
+            }
+        });
+        return;
+    }
+
+    const donutSlices = buildFailedRulesDonutSlices(sorted);
+    const donutRuleIds = donutSlices.map(s => s.regraId);
 
     failedRulesChart = new Chart(ctx, {
-        type: 'bar',
+        type: 'doughnut',
         data: {
-            labels: sorted.map(item => ruleTranslations[item.label] || item.label),
+            labels: donutSlices.map(s => s.shortLabel),
             datasets: [{
-                label: 'Ocorrências',
-                data: sorted.map(item => item.value),
-                backgroundColor: 'rgba(239, 68, 68, 0.8)',
-                borderColor: '#ef4444',
+                data: donutSlices.map(s => s.value),
+                backgroundColor: donutSlices.map((_, i) => FAILED_RULES_DONUT_COLORS[i % FAILED_RULES_DONUT_COLORS.length]),
                 borderWidth: 2,
-                borderRadius: 6
+                borderColor: '#fff',
+                hoverOffset: 6
             }]
         },
         options: {
             responsive: true,
             maintainAspectRatio: false,
-            indexAxis: 'y',
             plugins: {
-                legend: { display: false },
+                legend: {
+                    position: 'bottom',
+                    labels: {
+                        boxWidth: 12,
+                        padding: 8,
+                        font: { size: 10, weight: '600' }
+                    }
+                },
                 tooltip: {
-                    backgroundColor: 'rgba(0, 0, 0, 0.8)',
-                    padding: 10,
+                    backgroundColor: 'rgba(0, 0, 0, 0.85)',
+                    padding: 12,
                     callbacks: {
-                        label: function(context) {
-                            return `Ocorrências: ${context.parsed.x}`;
+                        title(items) {
+                            if (!items?.length) return '';
+                            const regraId = donutRuleIds[items[0].dataIndex];
+                            if (regraId === '__demais__') return 'Demais regras (restante do ranking)';
+                            return regraLabelWithCategory(regraId);
                         },
-                        footer: function(items) {
-                            const sum = items.reduce((a, it) => a + (it.parsed.x || 0), 0);
-                            return `Soma exibida: ${sum}`;
+                        label(context) {
+                            const value = context.parsed || 0;
+                            const total = context.dataset.data.reduce((a, b) => a + b, 0);
+                            const pct = total > 0 ? ((value / total) * 100).toFixed(1) : 0;
+                            return `Ocorrências: ${value} (${pct}%)`;
+                        },
+                        afterBody(items) {
+                            if (!items?.length) return [];
+                            const regraId = donutRuleIds[items[0].dataIndex];
+                            if (regraId === '__demais__') return ['Ver lista ao lado para detalhes'];
+                            return [`Código: ${regraId}`];
                         }
                     }
                 }
             },
-            scales: {
-                x: {
-                    beginAtZero: true,
-                    grid: { color: 'rgba(0, 0, 0, 0.05)' },
-                    ticks: { font: { size: 11 }, precision: 0 }
-                },
-                y: {
-                    grid: { display: false },
-                    ticks: { font: { size: 11 } }
-                }
-            }
+            cutout: '55%'
         }
     });
 }
@@ -892,6 +1046,7 @@ function createFailedRulesByDayChart(data) {
     const allRules = new Set();
     periodData.forEach(day => {
         Object.keys(day.failed_rules || {}).forEach(rule => allRules.add(rule));
+        Object.keys(day.failed_rules_operacional || {}).forEach(rule => allRules.add(rule));
     });
 
     if (allRules.size === 0) {
@@ -913,16 +1068,6 @@ function createFailedRulesByDayChart(data) {
         });
         return;
     }
-
-    const ruleTranslations = {
-        'validar_produtos': 'Validar Produtos',
-        'validar_cnpj_fornecedor': 'Validar CNPJ Fornecedor',
-        'validar_numero_pedido': 'Validar Número Pedido',
-        'validar_valor_total': 'Validar Valor Total',
-        'validar_data_emissao': 'Validar Data Emissão',
-        'validar_cfop_chave': 'Validar CFOP Chave',
-        'Outros': 'Outros (lambda / integração / sem regra nomeada)'
-    };
 
     let rulesArray = Array.from(allRules).filter(r => r !== 'Outros');
     rulesArray.sort((a, b) => a.localeCompare(b));
@@ -956,8 +1101,13 @@ function createFailedRulesByDayChart(data) {
     });
 
     const datasets = rulesArray.map((rule, index) => ({
-        label: ruleTranslations[rule] || rule,
-        data: periodData.map(d => (d.failed_rules || {})[rule] || 0),
+        label: truncateRegraLabel(formatRegraLabel(rule), 48),
+        _regraId: rule,
+        data: periodData.map(d => {
+            const ocr = (d.failed_rules || {})[rule] || 0;
+            const op = (d.failed_rules_operacional || {})[rule] || 0;
+            return (Number(ocr) || 0) + (Number(op) || 0);
+        }),
         backgroundColor: colorPalette[index % colorPalette.length],
         borderColor: colorPalette[index % colorPalette.length].replace('0.8', '1'),
         borderWidth: 2,
@@ -988,6 +1138,11 @@ function createFailedRulesByDayChart(data) {
                     backgroundColor: 'rgba(0, 0, 0, 0.8)',
                     padding: 10,
                     callbacks: {
+                        afterLabel(context) {
+                            const regraId = context.dataset?._regraId;
+                            if (!regraId) return '';
+                            return `Código: ${regraId}`;
+                        },
                         footer: function(items) {
                             let sum = 0;
                             items.forEach(it => {
