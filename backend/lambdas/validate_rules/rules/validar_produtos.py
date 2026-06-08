@@ -432,11 +432,24 @@ def try_resolve_multi_lot_single_pedido_line(
     return doc_idx, doc_prod, has_equivalent_code
 
 
-def _append_matched_line_detail(
-    items_detail, danfe_idx, doc_idx, danfe_prod, doc_prod, has_equivalent_code, logger
-):
-    """Acrescenta item MATCH/MISMATCH de comparação nome; retorna True se nome deu MISMATCH."""
-    fields = {}
+def _codigo_fornecedor_field(danfe_prod, doc_prod):
+    """Compara cProd do XML com codProdFornecedor do pedido (quando informado)."""
+    danfe_cod = str(danfe_prod.get('codigo') or '').strip()
+    doc_cod_forn = str(doc_prod.get('codProdFornecedor') or '').strip()
+    if not doc_cod_forn:
+        return None
+    dc_norm = normalize_codigo(danfe_cod)
+    dpf_norm = normalize_codigo(doc_cod_forn)
+    status = 'MATCH' if dc_norm and dpf_norm and dc_norm == dpf_norm else 'MISMATCH'
+    return {
+        'danfe': danfe_cod or '-',
+        'doc': doc_cod_forn,
+        'status': status,
+    }
+
+
+def _nome_comparison(danfe_prod, doc_prod, has_equivalent_code):
+    """Comparação por nome (Bedrock + heurísticas). Retorna (status, field_dict)."""
     danfe_nome = (
         danfe_prod.get('produto', '').strip()
         or danfe_prod.get('nome', '').strip()
@@ -476,14 +489,34 @@ def _append_matched_line_detail(
         else:
             nome_status = 'MISMATCH'
 
-    fields["nome"] = {
+    field = {
         "danfe": danfe_nome,
         "doc": doc_nome,
         "status": nome_status,
     }
     if bedrock_meta:
-        fields["nome"]["bedrock_analise"] = bedrock_meta
-    item_has_mismatch = nome_status == "MISMATCH"
+        field["bedrock_analise"] = bedrock_meta
+    return nome_status, field
+
+
+def _append_matched_line_detail(
+    items_detail, danfe_idx, doc_idx, danfe_prod, doc_prod, has_equivalent_code, logger
+):
+    """Acrescenta item MATCH/MISMATCH; retorna True se a comparação exibida deu MISMATCH."""
+    fields = {}
+    codigo_field = _codigo_fornecedor_field(danfe_prod, doc_prod)
+
+    if codigo_field:
+        fields['codigo'] = codigo_field
+        if has_equivalent_code:
+            item_has_mismatch = codigo_field['status'] == 'MISMATCH'
+        else:
+            nome_status, _ = _nome_comparison(danfe_prod, doc_prod, False)
+            item_has_mismatch = nome_status == 'MISMATCH'
+    else:
+        nome_status, nome_field = _nome_comparison(danfe_prod, doc_prod, has_equivalent_code)
+        fields['nome'] = nome_field
+        item_has_mismatch = nome_status == 'MISMATCH'
 
     items_detail.append(
         {

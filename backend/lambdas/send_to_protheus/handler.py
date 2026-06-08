@@ -13,7 +13,7 @@ import sys
 sys.path.insert(0, os.path.dirname(__file__))
 try:
     from utils.bedrock_error_summary import generate_error_summary_with_bedrock
-    from utils.pedido_request_body import uso_e_consumo_active
+    from utils.pedido_request_body import rateio_centro_custo_from_request_body, uso_e_consumo_active
     from utils.ritm_metadata import get_ritm_from_request_body
     from utils.primary_xml import pick_best_parsed_xml_item
     from utils.nfse_detection import detect_nfse_from_sources, NFSE_SERIE_PROTHEUS
@@ -21,7 +21,7 @@ except ImportError:
     # Fallback: tentar importar do diretório pai
     sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
     from utils.bedrock_error_summary import generate_error_summary_with_bedrock
-    from utils.pedido_request_body import uso_e_consumo_active
+    from utils.pedido_request_body import rateio_centro_custo_from_request_body, uso_e_consumo_active
     from utils.ritm_metadata import get_ritm_from_request_body
     from utils.primary_xml import pick_best_parsed_xml_item
     from utils.nfse_detection import detect_nfse_from_sources, NFSE_SERIE_PROTHEUS
@@ -1978,6 +1978,10 @@ def lambda_handler(event, context):
         if nat is not None and str(nat).strip() != "":
             payload["natureza"] = str(nat).strip()
             print(f"[7.1.0.nat] natureza do metadado incluída no payload")
+        rateio = rateio_centro_custo_from_request_body(request_body_data)
+        if rateio:
+            payload["rateioCentroCusto"] = rateio
+            print(f"[7.1.0.rateio] rateioCentroCusto incluído no payload ({len(rateio)} item(ns))")
     
     print(f"\n[7.1] Payload base montado")
     if cnpj_emitente:

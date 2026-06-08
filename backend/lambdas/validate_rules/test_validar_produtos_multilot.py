@@ -208,7 +208,13 @@ class TestCodProdFornecedor(unittest.TestCase):
         out = validate_products_comparison(danfe, doc, "pedido.json", "METADADOS JSON", None)
         self.assertTrue(out["has_match"], msg=out)
         self.assertEqual(out["matched_danfe_positions"], [1], msg=out)
-        self.assertEqual(out["comparison"]["items"][0]["status"], "MATCH")
+        item = out["comparison"]["items"][0]
+        self.assertEqual(item["status"], "MATCH")
+        self.assertIn("codigo", item["fields"])
+        self.assertNotIn("nome", item["fields"])
+        self.assertEqual(item["fields"]["codigo"]["danfe"], "00026480")
+        self.assertEqual(item["fields"]["codigo"]["doc"], "26480")
+        self.assertEqual(item["fields"]["codigo"]["status"], "MATCH")
 
     @patch("rules.utils.compare_with_bedrock")
     def test_fallback_nome_quando_cod_prod_fornecedor_nao_bate(self, mock_bedrock):

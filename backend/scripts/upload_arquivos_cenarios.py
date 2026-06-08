@@ -33,51 +33,20 @@ from pathlib import Path
 
 import requests
 
+from api_auth import (
+    DEV_API_URL,
+    build_auth_headers,
+    build_config_env,
+    cfg_str as _cfg_str,
+    load_env_file as _load_env_file,
+    resolve_env_file,
+)
+
 _SCRIPT_DIR = Path(__file__).resolve().parent
 _BACKEND_DIR = _SCRIPT_DIR.parent
 
-_DEFAULT_BROWSER_UA = (
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-    "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
-)
-
-DEFAULT_API_URL = "https://api-dev.agroamazonia.com/fast/v1"
+DEFAULT_API_URL = DEV_API_URL
 DEFAULT_SCENARIOS = ("53", "61", "71", "78")
-
-
-def _load_env_file(path: Path) -> dict[str, str]:
-    out: dict[str, str] = {}
-    if not path.is_file():
-        return out
-    for line in path.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        if line.startswith("cdk ") or line.startswith("cd "):
-            continue
-        line = line.replace("export ", "", 1)
-        k, _, v = line.partition("=")
-        k, v = k.strip(), v.strip().strip('"').strip("'")
-        if k:
-            out[k] = v
-    return out
-
-
-def _cfg_str(
-    arg_val: str | None,
-    file_env: dict[str, str],
-    env_key: str,
-    default: str | None = None,
-) -> str | None:
-    if arg_val is not None and str(arg_val).strip():
-        return str(arg_val).strip()
-    v = os.environ.get(env_key)
-    if v is not None and str(v).strip():
-        return v.strip()
-    v = file_env.get(env_key)
-    if v is not None and str(v).strip():
-        return str(v).strip()
-    return default
 
 
 def _process_base_url(api_url: str, path_prefix: str) -> str:
@@ -86,96 +55,6 @@ def _process_base_url(api_url: str, path_prefix: str) -> str:
     if p:
         return f"{api_url}/{p}/process"
     return f"{api_url}/process"
-
-
-def _browser_like_headers(file_env: dict[str, str], no_browser_ua: bool) -> dict[str, str]:
-    if no_browser_ua:
-        return {}
-    ua = _cfg_str(None, file_env, "AGRO_API_USER_AGENT", _DEFAULT_BROWSER_UA)
-    if not ua:
-        return {}
-    return {
-        "User-Agent": ua,
-        "Accept": "*/*",
-        "Accept-Language": "pt-BR,pt;q=0.9,en;q=0.8",
-    }
-
-
-def fetch_oauth2_token(
-    token_url: str,
-    client_id: str,
-    client_secret: str,
-    scope: str,
-) -> str:
-    r = requests.post(
-        token_url,
-        data={
-            "grant_type": "client_credentials",
-            "client_id": client_id,
-            "client_secret": client_secret,
-            "scope": scope,
-        },
-        headers={"Content-Type": "application/x-www-form-urlencoded"},
-        timeout=60,
-    )
-    if not r.ok:
-        raise RuntimeError(f"OAuth2 token HTTP {r.status_code}: {r.text[:500]}")
-    data = r.json()
-    token = data.get("access_token") or data.get("accessToken") or data.get("token")
-    if not token:
-        raise RuntimeError(f"Resposta OAuth2 sem access_token: {data}")
-    return str(token)
-
-
-def build_auth_headers(
-    file_env: dict[str, str],
-    args: argparse.Namespace,
-) -> dict[str, str]:
-    api_key = _cfg_str(args.api_key, file_env, "API_KEY")
-    base = {
-        "Content-Type": "application/json",
-        **_browser_like_headers(file_env, getattr(args, "no_browser_ua", False)),
-    }
-
-    token_manual = _cfg_str(args.token, file_env, "AUTH_TOKEN") or _cfg_str(
-        None, file_env, "BEARER_TOKEN"
-    )
-    if token_manual:
-        out = {**base, "Authorization": f"Bearer {token_manual}"}
-        if api_key:
-            out["x-api-key"] = api_key
-        return out
-
-    cid = _cfg_str(args.oauth_client_id, file_env, "OAUTH2_FRONTEND_CLIENT_ID")
-    csec = _cfg_str(args.oauth_client_secret, file_env, "OAUTH2_FRONTEND_CLIENT_SECRET")
-    if cid and csec:
-        token_url = _cfg_str(
-            args.oauth_token_url,
-            file_env,
-            "OAUTH2_FRONTEND_TOKEN_URL",
-            "https://api-auth-hml.agroamazonia.io/oauth2/token",
-        )
-        assert token_url
-        scope = _cfg_str(
-            args.oauth_scope,
-            file_env,
-            "OAUTH2_FRONTEND_SCOPE",
-            "App_Fast/HML",
-        )
-        assert scope
-        token = fetch_oauth2_token(token_url, cid, csec, scope)
-        out = {**base, "Authorization": f"Bearer {token}"}
-        if api_key:
-            out["x-api-key"] = api_key
-        return out
-
-    if api_key:
-        return {**base, "x-api-key": api_key}
-
-    raise RuntimeError(
-        "Defina OAuth2 (OAUTH2_FRONTEND_CLIENT_ID + OAUTH2_FRONTEND_CLIENT_SECRET), "
-        "AUTH_TOKEN/BEARER_TOKEN, ou API_KEY."
-    )
 
 
 def _content_type_for_path(path: Path) -> str:
@@ -416,28 +295,27 @@ def main() -> int:
     parser.add_argument("--oauth-client-secret", help="OAUTH2_FRONTEND_CLIENT_SECRET")
     parser.add_argument("--oauth-scope", help="OAUTH2_FRONTEND_SCOPE")
     parser.add_argument("--no-browser-ua", action="store_true")
-    parser.add_argument("--env-file", default=None, help="Ex.: .env.homolog")
+    parser.add_argument("--env-file", default=None, help="Ex.: .env.homolog ou ../.env.development")
+    parser.add_argument(
+        "--dev",
+        action="store_true",
+        help=f"Carrega {_BACKEND_DIR / '.env.development'} e API dev padrão",
+    )
     parser.add_argument("--timeout", type=int, default=120, help="Timeout HTTP (s)")
     args = parser.parse_args()
 
-    env_file: Path | None = None
-    if args.env_file:
-        env_file = Path(args.env_file).expanduser()
-    else:
-        for p in (Path(".env.homolog"), _BACKEND_DIR / ".env.homolog"):
-            if p.is_file():
-                env_file = p.resolve()
-                break
-
-    file_env: dict[str, str] = _load_env_file(env_file) if env_file else {}
+    env_file, prefer_file = resolve_env_file(
+        args.env_file, dev=args.dev, homolog=False
+    )
     if env_file and env_file.is_file():
         print(f"Carregado: {env_file.resolve()}")
 
-    api_url = _cfg_str(args.api_url, file_env, "API_URL", DEFAULT_API_URL)
+    config_env = build_config_env(env_file, prefer_file=prefer_file)
+    api_url = _cfg_str(args.api_url, config_env, "API_URL", DEFAULT_API_URL)
     assert api_url
-    path_prefix = (_cfg_str(args.api_path_prefix, file_env, "PROCESS_API_PATH_PREFIX", "") or "").strip().strip("/")
+    path_prefix = (_cfg_str(args.api_path_prefix, config_env, "PROCESS_API_PATH_PREFIX", "") or "").strip().strip("/")
     _legacy = args.legacy_api_process or (
-        (file_env.get("LEGACY_API_PROCESS") or os.environ.get("LEGACY_API_PROCESS") or "")
+        (config_env.get("LEGACY_API_PROCESS") or "")
         .strip()
         .lower()
         in ("1", "true", "yes")
@@ -446,7 +324,7 @@ def main() -> int:
         path_prefix = "api"
 
     try:
-        headers = build_auth_headers(file_env, args)
+        headers = build_auth_headers(config_env, args, env_file=env_file)
     except RuntimeError as e:
         print(str(e), file=sys.stderr)
         return 1

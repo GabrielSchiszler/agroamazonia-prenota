@@ -1,0 +1,18 @@
+{
+  "header": {
+    "tenantId": "00,010101"
+  },
+  "requestBody": {
+    "isCommodities": true,
+    "moeda": "BRL",
+    "itens": [
+      {
+        "codigoProduto": "AAK00001KG00600",
+        "produto": "SOJA EM GRAOS",
+        "quantidade": 10,
+        "codigoOperacao": "1B",
+        "pedidoDeCompra": { "pedidoErp": "PEDTEST", "itemPedidoErp": "0001" }
+      }
+    ]
+  }
+}

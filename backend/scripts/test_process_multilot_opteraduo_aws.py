@@ -60,14 +60,15 @@ from pathlib import Path
 
 import requests
 
+from api_auth import (
+    build_auth_headers,
+    build_config_env,
+    cfg_str as _cfg_str,
+    resolve_env_file,
+)
+
 _SCRIPT_DIR = Path(__file__).resolve().parent
 DEFAULT_XML_NAME = "23260307467822000126551010000878991216037201.xml"
-
-# WAF / CloudFront costumam bloquear o User-Agent padrão do requests.
-_DEFAULT_BROWSER_UA = (
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-    "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
-)
 
 # Pedido de exemplo (1 linha) alinhado à NFe OPTERADUO multi-lote
 PEDIDO_MULTILOT_OPTERADUO = {
@@ -91,136 +92,6 @@ PEDIDO_MULTILOT_OPTERADUO = {
         "cnpjDestinatario": "13563680004603",
     },
 }
-
-
-def _load_env_file(path: Path) -> dict[str, str]:
-    out: dict[str, str] = {}
-    if not path.is_file():
-        return out
-    for line in path.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        line = line.replace("export ", "", 1)
-        k, _, v = line.partition("=")
-        k, v = k.strip(), v.strip().strip('"').strip("'")
-        out[k] = v
-    return out
-
-
-def _cfg_str(
-    arg_val: str | None,
-    file_env: dict[str, str],
-    env_key: str,
-    default: str | None = None,
-) -> str | None:
-    """Prioridade: CLI > variáveis exportadas no shell > arquivo .env > default."""
-    if arg_val is not None and str(arg_val).strip():
-        return str(arg_val).strip()
-    v = os.environ.get(env_key)
-    if v is not None and str(v).strip():
-        return v.strip()
-    v = file_env.get(env_key)
-    if v is not None and str(v).strip():
-        return str(v).strip()
-    return default
-
-
-def fetch_oauth2_token(
-    token_url: str,
-    client_id: str,
-    client_secret: str,
-    scope: str,
-) -> str:
-    """Mesmo fluxo que frontend/auth.js (grant_type=client_credentials)."""
-    r = requests.post(
-        token_url,
-        data={
-            "grant_type": "client_credentials",
-            "client_id": client_id,
-            "client_secret": client_secret,
-            "scope": scope,
-        },
-        headers={"Content-Type": "application/x-www-form-urlencoded"},
-        timeout=60,
-    )
-    if not r.ok:
-        raise RuntimeError(f"OAuth2 token HTTP {r.status_code}: {r.text[:500]}")
-    data = r.json()
-    token = data.get("access_token") or data.get("accessToken") or data.get("token")
-    if not token:
-        raise RuntimeError(f"Resposta OAuth2 sem access_token: {data}")
-    return str(token)
-
-
-def _browser_like_headers(
-    file_env: dict[str, str],
-    args: argparse.Namespace,
-) -> dict[str, str]:
-    if getattr(args, "no_browser_ua", False):
-        return {}
-    ua = _cfg_str(
-        getattr(args, "user_agent", None),
-        file_env,
-        "AGRO_API_USER_AGENT",
-        _DEFAULT_BROWSER_UA,
-    )
-    if not ua:
-        return {}
-    return {
-        "User-Agent": ua,
-        "Accept": "*/*",
-        "Accept-Language": "pt-BR,pt;q=0.9,en;q=0.8",
-    }
-
-
-def build_auth_headers(
-    file_env: dict[str, str],
-    args: argparse.Namespace,
-) -> dict[str, str]:
-    """
-    Headers para chamadas à API JSON (Bearer como o front; x-api-key se API_KEY existir,
-    pois o config.js do front carrega a mesma chave e o API Gateway pode exigir nos dois).
-    """
-    api_key = _cfg_str(args.api_key, file_env, "API_KEY")
-    base = {"Content-Type": "application/json", **_browser_like_headers(file_env, args)}
-
-    cid = _cfg_str(args.oauth_client_id, file_env, "OAUTH2_FRONTEND_CLIENT_ID")
-    csec = _cfg_str(args.oauth_client_secret, file_env, "OAUTH2_FRONTEND_CLIENT_SECRET")
-    if cid and csec:
-        token_url = _cfg_str(
-            args.oauth_token_url,
-            file_env,
-            "OAUTH2_FRONTEND_TOKEN_URL",
-            "https://api-auth-hml.agroamazonia.io/oauth2/token",
-        )
-        assert token_url
-        scope = _cfg_str(
-            args.oauth_scope,
-            file_env,
-            "OAUTH2_FRONTEND_SCOPE",
-            "App_Fast/HML",
-        )
-        assert scope
-        token = fetch_oauth2_token(token_url, cid, csec, scope)
-        parts = [f"OAuth2 Bearer ({len(token)} chars)"]
-        out = {**base, "Authorization": f"Bearer {token}"}
-        if api_key:
-            out["x-api-key"] = api_key
-            parts.append("x-api-key")
-        else:
-            parts.append("(sem API_KEY — se a API retornar 403, exporte a mesma API_KEY do config.js)")
-        print(f"Autenticação: {' + '.join(parts)}")
-        return out
-
-    if api_key:
-        print("Autenticação: x-api-key")
-        return {**base, "x-api-key": api_key}
-
-    raise RuntimeError(
-        "Defina OAuth2 (OAUTH2_FRONTEND_CLIENT_ID + OAUTH2_FRONTEND_CLIENT_SECRET) "
-        "ou API_KEY / --api-key. Mesmas variáveis do frontend (config.js / .env.homolog)."
-    )
 
 
 def _upload_put(presigned_url: str, body: bytes, content_type: str) -> None:
@@ -405,22 +276,28 @@ def main() -> int:
     )
     parser.add_argument(
         "--env-file",
-        default=str(_SCRIPT_DIR / ".env"),
-        help=(
-            "Arquivo .env opcional; valores exportados no shell têm prioridade sobre este arquivo."
-        ),
+        default=None,
+        help="Arquivo .env (com --dev usa backend/.env.development com prioridade sobre o shell)",
+    )
+    parser.add_argument(
+        "--dev",
+        action="store_true",
+        help="Carrega backend/.env.development (OAuth dev) com prioridade sobre variáveis do shell",
     )
     args = parser.parse_args()
 
-    env = _load_env_file(Path(args.env_file))
-    api_url = _cfg_str(args.api_url, env, "API_URL")
-    api_key_only = _cfg_str(args.api_key, env, "API_KEY")
+    env_path, prefer_file = resolve_env_file(args.env_file, dev=args.dev, homolog=False)
+    if env_path and env_path.is_file():
+        print(f"Carregado: {env_path.resolve()}")
+    config_env = build_config_env(env_path, prefer_file=prefer_file)
+    api_url = _cfg_str(args.api_url, config_env, "API_URL")
+    api_key_only = _cfg_str(args.api_key, config_env, "API_KEY")
 
     # Erro comum: passar a URL em --api-key (modo API key)
     if api_key_only and _looks_like_url(api_key_only):
         if not api_url:
             api_url = api_key_only.strip()
-            api_key_only = _cfg_str(None, env, "API_KEY")
+            api_key_only = _cfg_str(None, config_env, "API_KEY")
             print(
                 "Aviso: a URL foi informada em --api-key; usando como API_URL. "
                 "Para OAuth2 use --env-file com OAUTH2_*; para API key use --api-key com o valor x-api-key.",
@@ -442,7 +319,7 @@ def main() -> int:
         return 1
 
     try:
-        auth_headers = build_auth_headers(env, args)
+        auth_headers = build_auth_headers(config_env, args, env_file=env_path)
     except RuntimeError as e:
         print(str(e), file=sys.stderr)
         return 1

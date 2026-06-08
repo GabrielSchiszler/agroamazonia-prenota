@@ -53,3 +53,28 @@ def natureza_from_pedido(pedido_compra: dict | None) -> str:
             return ""
         return str(v).strip()
     return ""
+
+
+def rateio_centro_custo_from_request_body(request_body: dict | None) -> list[dict] | None:
+    """
+    Extrai rateioCentroCusto do requestBody do pedido para repasse ao Protheus.
+    Retorna None se ausente, vazio ou sem itens válidos (centroDeCusto preenchido).
+    """
+    if not isinstance(request_body, dict):
+        return None
+    raw = request_body.get("rateioCentroCusto")
+    if not isinstance(raw, list) or not raw:
+        return None
+    out: list[dict] = []
+    for entry in raw:
+        if not isinstance(entry, dict):
+            continue
+        cc = entry.get("centroDeCusto")
+        if cc is None or str(cc).strip() == "":
+            continue
+        item: dict[str, str] = {"centroDeCusto": str(cc).strip()}
+        pct = entry.get("percentual")
+        if pct is not None and str(pct).strip() != "":
+            item["percentual"] = str(pct).strip()
+        out.append(item)
+    return out or None

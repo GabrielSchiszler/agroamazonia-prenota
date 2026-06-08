@@ -23,6 +23,8 @@ import re
 from pathlib import Path
 from io import BytesIO
 
+from api_auth import DEV_API_URL, build_auth_headers, build_config_env, resolve_env_file
+
 try:
     from reportlab.pdfgen import canvas
     from reportlab.lib.pagesizes import letter
@@ -260,18 +262,20 @@ def upload_file_to_s3(presigned_url: str, file_content: bytes, content_type: str
     return response
 
 
-def test_create_process(api_url: str, api_key: str = None, xml_file: str = None, start_process: bool = False, auth_token: str = None):
+def test_create_process(
+    api_url: str,
+    auth_headers: dict[str, str] | None = None,
+    xml_file: str = None,
+    start_process: bool = False,
+):
     """Cria um processo de teste BARTER com documentos - SEMPRE gera um novo processo único"""
     
     print("="*80)
     print("TESTE DE CRIAÇÃO DE PROCESSO BARTER (COMMODITIES) COM DOCUMENTOS")
     print("="*80)
     print(f"\nAPI URL: {api_url}")
-    if auth_token:
-        print(f"Authorization Token: Bearer {auth_token[:30]}..." if len(auth_token) > 30 else f"Authorization Token: Bearer {auth_token}")
-    elif api_key:
-        print(f"API Key: {api_key[:20]}..." if len(api_key) > 20 else f"API Key: {api_key}")
-    else:
+    headers = dict(auth_headers or {})
+    if not headers.get("Authorization") and not headers.get("x-api-key"):
         print("Autenticação: Não fornecida (pode falhar se API Gateway exigir autenticação)")
     print()
     
@@ -312,13 +316,8 @@ def test_create_process(api_url: str, api_key: str = None, xml_file: str = None,
     xml_filename = os.path.basename(xml_file)
     print(f"✓ XML carregado ({len(xml_content)} bytes)")
     
-    # Preparar headers de autenticação
-    headers = {}
-    if auth_token:
-        headers['Authorization'] = f'Bearer {auth_token}'
-    elif api_key:
-        headers['x-api-key'] = api_key
-    
+    request_headers = {**headers, "Content-Type": "application/json"}
+
     # 0. Verificar se o processo já existe (não deveria, mas vamos validar)
     print(f"\n{'='*80}")
     print("0️⃣  VERIFICANDO SE PROCESSO JÁ EXISTE")
@@ -353,14 +352,6 @@ def test_create_process(api_url: str, api_key: str = None, xml_file: str = None,
     print(f"{'='*80}")
     print(f"   Process ID: {process_id}")
     print(f"   Arquivo: {xml_filename}")
-    
-    request_headers = {
-        'Content-Type': 'application/json'
-    }
-    if auth_token:
-        request_headers['Authorization'] = f'Bearer {auth_token}'
-    elif api_key:
-        request_headers['x-api-key'] = api_key
     
     xml_url_response = requests.post(
         f"{api_url}/process/presigned-url/xml",
@@ -528,58 +519,59 @@ def test_create_process(api_url: str, api_key: str = None, xml_file: str = None,
 
 
 def main():
+    backend_root = Path(__file__).resolve().parent.parent
     parser = argparse.ArgumentParser(description='Cria um processo de teste BARTER (Commodities) com documentos')
-    parser.add_argument('--api-url', help='URL base da API (ex: https://g7qrbptvqj.execute-api.sa-east-1.amazonaws.com/hml)')
-    parser.add_argument('--token', '--bearer-token', dest='auth_token', help='Token Bearer para autenticação (header Authorization)')
-    parser.add_argument('--api-key', help='Chave de API (opcional, legado)')
+    parser.add_argument('--api-url', help='URL base da API')
+    parser.add_argument('--token', '--bearer-token', dest='auth_token', help='Token Bearer legado (preferir OAuth2 no .env)')
+    parser.add_argument('--api-key', help='Chave de API (opcional)')
+    parser.add_argument('--oauth-token-url', help='OAUTH2_FRONTEND_TOKEN_URL')
+    parser.add_argument('--oauth-client-id', help='OAUTH2_FRONTEND_CLIENT_ID')
+    parser.add_argument('--oauth-client-secret', help='OAUTH2_FRONTEND_CLIENT_SECRET')
+    parser.add_argument('--oauth-scope', help='OAUTH2_FRONTEND_SCOPE')
     parser.add_argument('--xml-file', help='Caminho para arquivo XML (padrão: test_nfe_barter.xml)')
     parser.add_argument('--start', action='store_true', help='Iniciar processamento após criar')
-    parser.add_argument('--env-file', default='.env', help='Arquivo .env para carregar variáveis (padrão: .env)')
-    
+    parser.add_argument('--env-file', default=None, help='Arquivo .env (ex.: ../.env.development)')
+    parser.add_argument(
+        '--dev',
+        action='store_true',
+        help=f'Carrega {backend_root / ".env.development"} e API dev padrão',
+    )
+
     args = parser.parse_args()
-    
-    # Valores padrão
-    default_api_url = 'https://g7qrbptvqj.execute-api.sa-east-1.amazonaws.com/hml'
-    
-    # Tentar carregar do arquivo .env se existir
-    api_url = args.api_url
-    api_key = args.api_key
-    auth_token = args.auth_token
-    
-    if os.path.exists(args.env_file):
-        print(f"Carregando variáveis do arquivo {args.env_file}...")
-        with open(args.env_file, 'r') as f:
-            for line in f:
-                line = line.strip()
-                if line and not line.startswith('#') and '=' in line:
-                    # Remover 'export ' se presente
-                    line = line.replace('export ', '')
-                    key, value = line.split('=', 1)
-                    value = value.strip('"\'')
-                    
-                    if key == 'API_URL' and not api_url:
-                        api_url = value
-                    elif key == 'API_KEY' and not api_key:
-                        api_key = value
-                    elif key in ['AUTH_TOKEN', 'BEARER_TOKEN', 'TOKEN'] and not auth_token:
-                        auth_token = value
-    
-    # Usar valores padrão se não fornecidos
+
+    env_path, prefer_file = resolve_env_file(
+        args.env_file, dev=args.dev, homolog=False
+    )
+    if env_path and env_path.is_file():
+        print(f"Carregando variáveis do arquivo {env_path}...")
+    merged_env = build_config_env(env_path, prefer_file=prefer_file)
+
+    api_url = (args.api_url or merged_env.get('API_URL') or '').strip()
+    if not api_url and args.dev:
+        api_url = DEV_API_URL
     if not api_url:
-        api_url = default_api_url
+        api_url = 'https://api-hml.agroamazonia.com/fast/v1'
         print(f"ℹ️  Usando API URL padrão: {api_url}")
-    if not auth_token and not api_key:
-        print(f"⚠️  Aviso: Token Bearer ou API Key não fornecidos")
-        print(f"   Se o API Gateway exigir autenticação, as requisições podem falhar")
-        print(f"   Use --token <TOKEN> ou defina AUTH_TOKEN no .env")
-    
-    # Executar teste
+
+    auth_headers: dict[str, str]
+    try:
+        auth_headers = build_auth_headers(merged_env, args, env_file=env_path)
+    except RuntimeError:
+        auth_headers = {'Content-Type': 'application/json'}
+        if getattr(args, 'auth_token', None):
+            auth_headers['Authorization'] = f'Bearer {args.auth_token}'
+        elif merged_env.get('AUTH_TOKEN'):
+            auth_headers['Authorization'] = f'Bearer {merged_env["AUTH_TOKEN"]}'
+        elif args.api_key or merged_env.get('API_KEY'):
+            auth_headers['x-api-key'] = args.api_key or merged_env['API_KEY']
+        else:
+            print('⚠️  OAuth2/API_KEY ausentes — requisições podem retornar 403')
+
     process_id = test_create_process(
         api_url=api_url,
-        api_key=api_key,
+        auth_headers=auth_headers,
         xml_file=args.xml_file,
         start_process=args.start,
-        auth_token=auth_token
     )
     
     if process_id:

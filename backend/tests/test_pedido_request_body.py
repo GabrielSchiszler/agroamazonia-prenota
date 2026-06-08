@@ -1,8 +1,14 @@
 """Tests for lambdas/utils/pedido_request_body.py."""
 
-from utils.pedido_request_body import (
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lambdas"))
+
+from utils.pedido_request_body import (  # noqa: E402
     any_pedido_de_compra_in_itens,
     natureza_from_pedido,
+    rateio_centro_custo_from_request_body,
     uso_e_consumo_active,
 )
 
@@ -29,3 +35,23 @@ def test_any_pedido_de_compra():
 def test_natureza_from_pedido():
     pedido = {"requestBody": {"natureza": "Compra de Mercadorias"}}
     assert natureza_from_pedido(pedido) == "Compra de Mercadorias"
+
+
+def test_rateio_centro_custo_from_request_body():
+    rb = {
+        "natureza": "3310201401",
+        "rateioCentroCusto": [
+            {"centroDeCusto": "10001105", "percentual": "100"},
+        ],
+    }
+    assert rateio_centro_custo_from_request_body(rb) == [
+        {"centroDeCusto": "10001105", "percentual": "100"},
+    ]
+
+
+def test_rateio_centro_custo_ignora_vazio():
+    assert rateio_centro_custo_from_request_body({"rateioCentroCusto": []}) is None
+    assert rateio_centro_custo_from_request_body({}) is None
+    assert rateio_centro_custo_from_request_body(
+        {"rateioCentroCusto": [{"centroDeCusto": ""}]}
+    ) is None

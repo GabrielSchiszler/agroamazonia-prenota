@@ -1,0 +1,22 @@
+{
+  "header": {
+    "tenantId": "00,010157"
+  },
+  "requestBody": {
+    "ritm": "RITM2952474",
+    "moeda": "BRL",
+    "cnpjEmitente": "53148896000460",
+    "cnpjDestinatario": "13563680004948",
+    "itens": [
+      {
+        "codigoProduto": "AFU00001FR250M0",
+        "codProdFornecedor": "10001",
+        "produto": "UMBICURA FR 250 ML",
+        "valorUnitario": 26.5,
+        "codigoOperacao": "1B",
+        "tipoDeProduto": { "chave": "ME", "descricao": "MERCADORIA" },
+        "pedidoDeCompra": { "pedidoErp": "A97267", "itemPedidoErp": "0001" }
+      }
+    ]
+  }
+}

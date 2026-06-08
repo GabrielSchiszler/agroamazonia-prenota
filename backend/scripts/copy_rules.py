@@ -37,7 +37,8 @@ def copy_rules(
     dry_run,
     process_type=None,
     source_profile=None,
-    target_profile=None
+    target_profile=None,
+    yes=False,
 ):
     """
     Copia regras de validação de uma tabela DynamoDB para outra.
@@ -125,16 +126,14 @@ def copy_rules(
         print("--------------------")
         return
     
-    # Confirmação do usuário
-    print(f"\n⚠️  ATENÇÃO: Você está prestes a copiar {len(all_items)} regra(s) de")
-    print(f"   '{source_table_name}' para '{target_table_name}'")
+    print(f"\n⚠️  Copiando {len(all_items)} regra(s) de '{source_table_name}' → '{target_table_name}'")
     print(f"   Origem  → região: {source_region_name}, profile: {source_profile or 'default'}")
     print(f"   Destino → região: {target_region_name}, profile: {target_profile or 'default'}")
-    response = input("\nDeseja continuar? (sim/não): ").strip().lower()
-    
-    if response not in ['sim', 's', 'yes', 'y']:
-        print("Operação cancelada pelo usuário.")
-        return
+    if not yes:
+        response = input("\nDeseja continuar? (sim/não): ").strip().lower()
+        if response not in ['sim', 's', 'yes', 'y']:
+            print("Operação cancelada pelo usuário.")
+            return
     
     print(f"\nIniciando cópia de {len(all_items)} regra(s) para '{target_table_name}'...")
     copied_count = 0
@@ -205,14 +204,14 @@ Exemplos:
     
     parser.add_argument(
         '--source-region',
-        default='us-east-1',
-        help='Região AWS da tabela de origem (padrão: us-east-1)'
+        default='sa-east-1',
+        help='Região AWS da tabela de origem (padrão: sa-east-1)'
     )
 
     parser.add_argument(
         '--target-region',
-        default='us-east-1',
-        help='Região AWS da tabela de destino (padrão: us-east-1)'
+        default='sa-east-1',
+        help='Região AWS da tabela de destino (padrão: sa-east-1)'
     )
     
     parser.add_argument(
@@ -236,6 +235,12 @@ Exemplos:
         '--target-profile',
         help='AWS profile para acessar a conta/tabela de destino (opcional)'
     )
+
+    parser.add_argument(
+        '--yes', '-y',
+        action='store_true',
+        help='Confirma a cópia sem prompt interativo'
+    )
     
     args = parser.parse_args()
     
@@ -248,7 +253,8 @@ Exemplos:
             args.dry_run,
             args.process_type,
             args.source_profile,
-            args.target_profile
+            args.target_profile,
+            args.yes,
         )
     except KeyboardInterrupt:
         print("\n\nOperação cancelada pelo usuário.")

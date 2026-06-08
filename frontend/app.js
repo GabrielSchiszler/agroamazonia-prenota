@@ -1871,7 +1871,7 @@ async function sendMetadataOnly() {
         }
         
         const data = await response.json();
-        showToast(`✓ Metadados do pedido de compra vinculados com sucesso!`, 'success');
+        showToast('✓ Metadados do Pedido de Compra vinculados com sucesso!', 'success');
         
         // Limpar campo de metadados
         document.getElementById('docsMetadata').value = '';

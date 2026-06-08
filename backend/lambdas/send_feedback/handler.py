@@ -162,7 +162,7 @@ def lambda_handler(event, context):
                         # Detalhar cada comparação/documento que falhou
                         comparacoes_detalhadas = []
                         for comp in comparisons:
-                            doc_file = comp.get('doc_file', 'Pedido de compra desconhecido')
+                            doc_file = comp.get('doc_file', 'Pedido de Compra desconhecido')
                             doc_value = comp.get('doc_value', 'N/A')
                             comp_status = comp.get('status', 'MISMATCH')
                             
@@ -257,7 +257,7 @@ def lambda_handler(event, context):
                                         # Detalhar cada comparação/documento que falhou
                                         comparacoes_detalhadas = []
                                         for comp in comparisons:
-                                            doc_file = comp.get('doc_file', 'Pedido de compra desconhecido')
+                                            doc_file = comp.get('doc_file', 'Pedido de Compra desconhecido')
                                             doc_value = comp.get('doc_value', 'N/A')
                                             comp_status = comp.get('status', 'MISMATCH')
                                             

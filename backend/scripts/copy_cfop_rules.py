@@ -148,14 +148,20 @@ Exemplos:
     
     parser.add_argument(
         '--region',
-        default='us-east-1',
-        help='Região AWS (padrão: us-east-1)'
+        default='sa-east-1',
+        help='Região AWS (padrão: sa-east-1)'
     )
     
     parser.add_argument(
         '--dry-run',
         action='store_true',
         help='Apenas visualizar o que seria copiado, sem fazer a cópia'
+    )
+
+    parser.add_argument(
+        '--yes', '-y',
+        action='store_true',
+        help='Confirma a cópia sem prompt interativo'
     )
     
     args = parser.parse_args()
@@ -187,8 +193,7 @@ Exemplos:
         print("⚠️  Nenhuma regra encontrada na tabela origem")
         sys.exit(0)
     
-    # Confirmar antes de copiar (se não for dry-run)
-    if not args.dry_run:
+    if not args.dry_run and not args.yes:
         print(f"\n⚠️  ATENÇÃO: Você está prestes a copiar {len(items)} itens para a tabela destino.")
         print(f"   Isso pode sobrescrever dados existentes!")
         resposta = input("   Deseja continuar? (sim/não): ").strip().lower()

@@ -1,4 +1,10 @@
 // Renderiza validações com detalhes de produtos
+const PEDIDO_COMPRA_LABEL = 'Pedido de Compra';
+const VALIDATION_FIELD_LABELS = {
+    codigo: 'Código do produto',
+    nome: 'Nome',
+};
+
 function renderValidation(v) {
     const isPassed = v.status === 'PASSED';
     const bgColor = isPassed ? '#d4edda' : '#f8d7da';
@@ -139,7 +145,7 @@ function renderComparisons(comparisons) {
 
 function renderDetailedValidation(v, bgColor, borderColor, textColor, icon, docs, isRastreabilidade = false, ruleName = '') {
     const comparison = docs[0];
-    const docFileName = comparison.doc_file || comparison.file_name || 'Pedido de compra';
+    const docFileName = comparison.doc_file || comparison.file_name || PEDIDO_COMPRA_LABEL;
     
     return `
         <div style="background: ${bgColor}; padding: 15px; border-radius: 8px; margin: 10px 0; border-left: 4px solid ${borderColor};">
@@ -160,7 +166,7 @@ function renderDetailedValidation(v, bgColor, borderColor, textColor, icon, docs
                     const positionInfo = isRastreabilidade
                         ? `Item ${item.item}: ${item.codigo} - ${item.descricao}`
                         : (item.doc_position 
-                            ? `Item ${item.danfe_position} (DANFE) → Item ${item.doc_position} (Pedido de compra)` 
+                            ? `Item ${item.danfe_position} (DANFE) → Item ${item.doc_position} (${PEDIDO_COMPRA_LABEL})`
                             : `Item ${item.danfe_position} (DANFE) → NÃO ENCONTRADO`);
                     
                     return `
@@ -172,7 +178,7 @@ function renderDetailedValidation(v, bgColor, borderColor, textColor, icon, docs
                                     <tr style="background: #e9ecef;">
                                         <th style="padding: 8px; text-align: left; border: 1px solid #dee2e6; font-weight: 600;">Campo</th>
                                         <th style="padding: 8px; text-align: left; border: 1px solid #dee2e6; font-weight: 600;">DANFE</th>
-                                        <th style="padding: 8px; text-align: left; border: 1px solid #dee2e6; font-weight: 600;">Pedido de compra</th>
+                                        <th style="padding: 8px; text-align: left; border: 1px solid #dee2e6; font-weight: 600;">${PEDIDO_COMPRA_LABEL}</th>
                                         <th style="padding: 8px; text-align: center; border: 1px solid #dee2e6; width: 80px; font-weight: 600;">Status</th>
                                     </tr>
                                 </thead>
@@ -185,7 +191,7 @@ function renderDetailedValidation(v, bgColor, borderColor, textColor, icon, docs
                                         
                                         return `
                                             <tr style="background: ${rowBg};">
-                                                <td style="padding: 6px; border: 1px solid #dee2e6;"><strong>${fieldName}</strong></td>
+                                                <td style="padding: 6px; border: 1px solid #dee2e6;"><strong>${VALIDATION_FIELD_LABELS[fieldName] || fieldName}</strong></td>
                                                 <td style="padding: 6px; border: 1px solid #dee2e6;">${fieldData.danfe || '-'}</td>
                                                 <td style="padding: 6px; border: 1px solid #dee2e6;">${fieldData.doc || '-'}</td>
                                                 <td style="padding: 6px; border: 1px solid #dee2e6; text-align: center;">

@@ -39,145 +39,19 @@ import re
 from pathlib import Path
 from io import BytesIO
 
-# HML — mesmo padrão do frontend (app.js) e test_ritm_stg.py: …/fast/v1 + /process/…
-HOMOLOG_API_URL = "https://api-hml.agroamazonia.com/fast/v1"
-SCRIPT_DIR = Path(__file__).resolve().parent
-BACKEND_ROOT = SCRIPT_DIR.parent
-
-_DEFAULT_BROWSER_UA = (
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-    "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+from api_auth import (
+    DEV_API_URL,
+    HOMOLOG_API_URL,
+    build_auth_headers,
+    build_config_env,
+    cfg_str as _cfg_str,
+    fetch_oauth2_token,
+    load_env_file as _load_env_file,
+    resolve_env_file,
 )
 
-
-def _load_env_file(path: Path) -> dict[str, str]:
-    """Lê KEY=VAL de um .env (ignora comentários; suporta export). Igual ao multilot."""
-    out: dict[str, str] = {}
-    if not path.is_file():
-        return out
-    for line in path.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        line = line.replace("export ", "", 1)
-        k, _, v = line.partition("=")
-        k, v = k.strip(), v.strip().strip('"').strip("'")
-        out[k] = v
-    return out
-
-
-def _cfg_str(
-    arg_val: str | None,
-    file_env: dict[str, str],
-    env_key: str,
-    default: str | None = None,
-) -> str | None:
-    """Prioridade: CLI > variável no shell > arquivo .env > default."""
-    if arg_val is not None and str(arg_val).strip():
-        return str(arg_val).strip()
-    v = os.environ.get(env_key)
-    if v is not None and str(v).strip():
-        return v.strip()
-    v = file_env.get(env_key)
-    if v is not None and str(v).strip():
-        return str(v).strip()
-    return default
-
-
-def fetch_oauth2_token(
-    token_url: str,
-    client_id: str,
-    client_secret: str,
-    scope: str,
-) -> str:
-    """Mesmo fluxo que frontend/auth.js (grant_type=client_credentials)."""
-    r = requests.post(
-        token_url,
-        data={
-            "grant_type": "client_credentials",
-            "client_id": client_id,
-            "client_secret": client_secret,
-            "scope": scope,
-        },
-        headers={"Content-Type": "application/x-www-form-urlencoded"},
-        timeout=60,
-    )
-    if not r.ok:
-        raise RuntimeError(f"OAuth2 token HTTP {r.status_code}: {r.text[:500]}")
-    data = r.json()
-    token = data.get("access_token") or data.get("accessToken") or data.get("token")
-    if not token:
-        raise RuntimeError(f"Resposta OAuth2 sem access_token: {data}")
-    return str(token)
-
-
-def _browser_like_headers(
-    file_env: dict[str, str],
-    args: argparse.Namespace,
-) -> dict[str, str]:
-    if getattr(args, "no_browser_ua", False):
-        return {}
-    ua = _cfg_str(
-        getattr(args, "user_agent", None),
-        file_env,
-        "AGRO_API_USER_AGENT",
-        _DEFAULT_BROWSER_UA,
-    )
-    if not ua:
-        return {}
-    return {
-        "User-Agent": ua,
-        "Accept": "*/*",
-        "Accept-Language": "pt-BR,pt;q=0.9,en;q=0.8",
-    }
-
-
-def build_auth_headers(
-    file_env: dict[str, str],
-    args: argparse.Namespace,
-) -> dict[str, str]:
-    """
-    Headers JSON: Bearer (OAuth) e/ou x-api-key — alinhado ao multilot / frontend.
-    """
-    api_key = _cfg_str(args.api_key, file_env, "API_KEY")
-    base = {"Content-Type": "application/json", **_browser_like_headers(file_env, args)}
-
-    cid = _cfg_str(args.oauth_client_id, file_env, "OAUTH2_FRONTEND_CLIENT_ID")
-    csec = _cfg_str(args.oauth_client_secret, file_env, "OAUTH2_FRONTEND_CLIENT_SECRET")
-    if cid and csec:
-        token_url = _cfg_str(
-            args.oauth_token_url,
-            file_env,
-            "OAUTH2_FRONTEND_TOKEN_URL",
-            "https://api-auth-hml.agroamazonia.io/oauth2/token",
-        )
-        assert token_url
-        scope = _cfg_str(
-            args.oauth_scope,
-            file_env,
-            "OAUTH2_FRONTEND_SCOPE",
-            "App_Fast/HML",
-        )
-        assert scope
-        token = fetch_oauth2_token(token_url, cid, csec, scope)
-        parts = [f"OAuth2 Bearer ({len(token)} chars)"]
-        out = {**base, "Authorization": f"Bearer {token}"}
-        if api_key:
-            out["x-api-key"] = api_key
-            parts.append("x-api-key")
-        else:
-            parts.append("(sem API_KEY — se 403, exporte API_KEY do config.js)")
-        print(f"Autenticação: {' + '.join(parts)}")
-        return out
-
-    if api_key:
-        print("Autenticação: x-api-key")
-        return {**base, "x-api-key": api_key}
-
-    raise RuntimeError(
-        "Defina OAuth2 (OAUTH2_FRONTEND_CLIENT_ID + OAUTH2_FRONTEND_CLIENT_SECRET) "
-        "ou API_KEY / --api-key. Mesmas variáveis do frontend (config.js / .env.homolog)."
-    )
+SCRIPT_DIR = Path(__file__).resolve().parent
+BACKEND_ROOT = SCRIPT_DIR.parent
 
 
 def _process_http_base(api_url: str, path_prefix: str) -> str:
@@ -815,6 +689,13 @@ def main() -> None:
             f"e usa API_URL padrão {HOMOLOG_API_URL} se API_URL não estiver definida"
         ),
     )
+    parser.add_argument(
+        "--dev",
+        action="store_true",
+        help=(
+            f"Carrega {BACKEND_ROOT / '.env.development'} e usa API_URL padrão {DEV_API_URL}"
+        ),
+    )
 
     args = parser.parse_args()
 
@@ -822,24 +703,22 @@ def main() -> None:
     default_api_url = "https://gx3eyeb4i1.execute-api.us-east-1.amazonaws.com/v1/api"
     default_api_key = "agroamazonia_key_UPXsb8Hb8sjbxWBQqouzYnTL5w-V_dJx"
 
-    merged_env: dict[str, str] = {}
-    env_path = Path(args.env_file)
-    if not env_path.is_absolute():
-        env_path = Path.cwd() / env_path
-    if env_path.is_file():
-        print(f"Carregando {env_path}...")
-        merged_env.update(_load_env_file(env_path))
+    env_path, prefer_file = resolve_env_file(
+        args.env_file,
+        dev=args.dev,
+        homolog=args.homolog,
+    )
+    if env_path and env_path.is_file():
+        print(f"Carregando {env_path.resolve()}...")
+    elif args.homolog:
+        print(
+            f"⚠️  {BACKEND_ROOT / '.env.homolog'} não encontrado.",
+            file=sys.stderr,
+        )
+    elif args.dev:
+        print(f"⚠️  {BACKEND_ROOT / '.env.development'} não encontrado.", file=sys.stderr)
 
-    if args.homolog:
-        hf = BACKEND_ROOT / ".env.homolog"
-        if hf.is_file():
-            print(f"Carregando {hf} (--homolog)...")
-            merged_env.update(_load_env_file(hf))
-        else:
-            print(
-                f"⚠️  {hf} não encontrado; use --env-file ../.env.homolog ou export das variáveis.",
-                file=sys.stderr,
-            )
+    merged_env = build_config_env(env_path, prefer_file=prefer_file)
 
     api_url = _cfg_str(args.api_url, merged_env, "API_URL")
     api_key_only = _cfg_str(args.api_key, merged_env, "API_KEY")
@@ -865,6 +744,10 @@ def main() -> None:
         api_url = HOMOLOG_API_URL
         print(f"ℹ️  API URL homolog (default): {api_url}")
 
+    if not api_url and args.dev:
+        api_url = DEV_API_URL
+        print(f"ℹ️  API URL dev (default): {api_url}")
+
     if not api_url:
         api_url = default_api_url
         print(f"ℹ️  Usando API URL padrão (dev): {api_url}")
@@ -872,14 +755,13 @@ def main() -> None:
     api_url = _normalize_cloudfront_api_url(api_url)
 
     try:
-        auth_headers = build_auth_headers(merged_env, args)
+        auth_headers = build_auth_headers(merged_env, args, env_file=env_path)
     except RuntimeError as e:
-        if args.homolog:
+        if args.homolog or args.dev:
             print(str(e), file=sys.stderr)
             sys.exit(1)
         auth_headers = {
             "Content-Type": "application/json",
-            **_browser_like_headers(merged_env, args),
             "x-api-key": default_api_key,
         }
         print("Autenticação: x-api-key (fallback dev — sem OAuth/API_KEY no .env)")
