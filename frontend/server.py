@@ -8,7 +8,7 @@ import socketserver
 import os
 from pathlib import Path
 
-PORT = 8080
+PORT = int(os.environ.get('PORT') or os.environ.get('FRONTEND_PORT') or 8080)
 
 def load_env_file():
     """Carrega variáveis de ambiente de um arquivo .env"""
@@ -41,10 +41,12 @@ def generate_config_js():
     oauth2_client_id = os.environ.get('OAUTH2_FRONTEND_CLIENT_ID') or env_vars.get('OAUTH2_FRONTEND_CLIENT_ID') or ''
     oauth2_client_secret = os.environ.get('OAUTH2_FRONTEND_CLIENT_SECRET') or env_vars.get('OAUTH2_FRONTEND_CLIENT_SECRET') or ''
     oauth2_scope = os.environ.get('OAUTH2_FRONTEND_SCOPE') or env_vars.get('OAUTH2_FRONTEND_SCOPE') or 'App_Fast/HML'
+    env_name = os.environ.get('ENV_NAME') or env_vars.get('ENV_NAME') or 'dev'
     
     config_content = f'''// Configuração da API - gerada automaticamente a partir de variáveis de ambiente
 // Para alterar, edite o arquivo .env ou defina as variáveis de ambiente
 window.ENV = {{
+    ENV_NAME: '{env_name}',
     API_URL: '{api_url}',
     API_KEY: '{api_key}',
     OAUTH2_FRONTEND_TOKEN_URL: '{oauth2_token_url}',
@@ -59,12 +61,17 @@ window.ENV = {{
         f.write(config_content)
     
     print(f"✓ config.js gerado:")
+    print(f"  ENV_NAME: {env_name}")
     print(f"  API_URL: {api_url}")
     print(f"  API_KEY: {api_key[:20]}..." if len(api_key) > 20 else f"  API_KEY: {api_key}")
     print(f"  OAUTH2_FRONTEND_TOKEN_URL: {oauth2_token_url}")
     print(f"  OAUTH2_FRONTEND_CLIENT_ID: {oauth2_client_id[:20]}..." if len(oauth2_client_id) > 20 else f"  OAUTH2_FRONTEND_CLIENT_ID: {oauth2_client_id}")
     print(f"  OAUTH2_FRONTEND_CLIENT_SECRET: {'*' * 20}..." if oauth2_client_secret else "  OAUTH2_FRONTEND_CLIENT_SECRET: (não definido)")
     print(f"  OAUTH2_FRONTEND_SCOPE: {oauth2_scope}")
+
+class ReuseAddrTCPServer(socketserver.TCPServer):
+    allow_reuse_address = True
+
 
 class MyHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
     def end_headers(self):
@@ -84,7 +91,17 @@ if __name__ == '__main__':
     # Gerar config.js antes de iniciar o servidor
     generate_config_js()
     
-    with socketserver.TCPServer(("", PORT), MyHTTPRequestHandler) as httpd:
+    try:
+        httpd = ReuseAddrTCPServer(("", PORT), MyHTTPRequestHandler)
+    except OSError as e:
+        if e.errno == 98:
+            print(f"\n❌ Porta {PORT} já está em uso.")
+            print(f"   Encerre o processo: fuser -k {PORT}/tcp")
+            print(f"   Ou use outra porta: PORT=8081 ./start.sh prd")
+            raise SystemExit(1) from e
+        raise
+
+    with httpd:
         print(f"\n🚀 Servidor rodando em http://localhost:{PORT}")
         print(f"📁 Servindo arquivos de: {os.getcwd()}")
         print("\n💡 Dica: Para alterar configurações, crie um arquivo .env ou defina variáveis de ambiente:")

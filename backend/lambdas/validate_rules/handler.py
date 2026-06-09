@@ -352,7 +352,17 @@ def handler(event, context):
     for rule in rules:
         rule_name = rule['rule_name']
         logger.info(f"Executing rule: {rule_name}")
-        
+
+        if rule_name == "validar_identidade_documento":
+            logger.info("[handler] validar_identidade_documento desativada — ignorando")
+            results.append({
+                'rule': rule_name,
+                'status': 'SKIPPED',
+                'danfe_value': 'N/A',
+                'message': 'Regra desativada',
+            })
+            continue
+
         # Ignorar validar_cfop_chave se codigoOperacao já veio no pedido de compra
         if rule_name == 'validar_cfop_chave' and has_codigo_operacao_in_metadata:
             logger.info(f"[handler] Regra {rule_name} ignorada - codigoOperacao já definido no pedido de compra")

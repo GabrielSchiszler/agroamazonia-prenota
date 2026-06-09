@@ -57,11 +57,15 @@ function getOAuth2Config() {
     return defaults;
 }
 
-const OAUTH2_CACHE_KEY = 'oauth2_agroamazonia_token';
+function oauth2CacheKey() {
+    const scope = (window.ENV && window.ENV.OAUTH2_FRONTEND_SCOPE) || 'default';
+    const env = (window.ENV && window.ENV.ENV_NAME) || 'dev';
+    return `oauth2_agroamazonia_token_${env}_${scope}`;
+}
 
 function logout() {
     authToken = null;
-    localStorage.removeItem(OAUTH2_CACHE_KEY);
+    localStorage.removeItem(oauth2CacheKey());
 }
 
 function isAuthenticated() {
@@ -180,7 +184,7 @@ async function getOAuth2Token(forceRefresh = false) {
             tokenType: data.token_type || data.tokenType || 'Bearer',
             expiresAt: Date.now() + ((data.expires_in || data.expiresIn || 3600) * 1000)
         };
-        localStorage.setItem(OAUTH2_CACHE_KEY, JSON.stringify(cacheData));
+        localStorage.setItem(oauth2CacheKey(), JSON.stringify(cacheData));
 
         // Atualizar authToken global
         authToken = token;
@@ -196,7 +200,8 @@ async function getOAuth2Token(forceRefresh = false) {
 }
 
 function getCachedToken() {
-    const cached = localStorage.getItem(OAUTH2_CACHE_KEY);
+    const cacheKey = oauth2CacheKey();
+    const cached = localStorage.getItem(cacheKey);
     
     if (!cached) {
         return null;
@@ -209,27 +214,27 @@ function getCachedToken() {
         
         const bufferTime = TOKEN_BUFFER_SECONDS * 1000;
         if (now >= (expiresAt - bufferTime)) {
-            localStorage.removeItem(OAUTH2_CACHE_KEY);
+            localStorage.removeItem(cacheKey);
             return null;
         }
         
         return data;
     } catch (e) {
-        localStorage.removeItem(OAUTH2_CACHE_KEY);
+        localStorage.removeItem(cacheKey);
         return null;
     }
 }
 
 function clearOAuth2TokenCache() {
     authToken = null;
-    localStorage.removeItem(OAUTH2_CACHE_KEY);
+    localStorage.removeItem(oauth2CacheKey());
     console.log(`[OAuth2] Cache limpo`);
 }
 
 function clearAllOAuth2TokenCache() {
     const keys = Object.keys(localStorage);
     keys.forEach(key => {
-        if (key.startsWith(OAUTH2_CACHE_KEY)) {
+        if (key.startsWith('oauth2_agroamazonia_token_')) {
             localStorage.removeItem(key);
         }
     });

@@ -13,7 +13,15 @@ import sys
 sys.path.insert(0, os.path.dirname(__file__))
 try:
     from utils.bedrock_error_summary import generate_error_summary_with_bedrock
-    from utils.pedido_request_body import rateio_centro_custo_from_request_body, uso_e_consumo_active
+    from utils.boleto_duplicatas import extract_duplicatas_from_sources
+    from utils.duplicatas_protheus import build_duplicatas_protheus_payload
+    from utils.document_field_resolver import resolve_protheus_document_fields
+    from utils.ocr_identity import pick_matching_ocr_per_document
+    from utils.pedido_request_body import (
+        centro_custo_from_item_rb,
+        rateio_centro_custo_from_request_body,
+        uso_e_consumo_active,
+    )
     from utils.ritm_metadata import get_ritm_from_request_body
     from utils.primary_xml import pick_best_parsed_xml_item
     from utils.nfse_detection import detect_nfse_from_sources, NFSE_SERIE_PROTHEUS
@@ -21,7 +29,15 @@ except ImportError:
     # Fallback: tentar importar do diretório pai
     sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
     from utils.bedrock_error_summary import generate_error_summary_with_bedrock
-    from utils.pedido_request_body import rateio_centro_custo_from_request_body, uso_e_consumo_active
+    from utils.boleto_duplicatas import extract_duplicatas_from_sources
+    from utils.duplicatas_protheus import build_duplicatas_protheus_payload
+    from utils.document_field_resolver import resolve_protheus_document_fields
+    from utils.ocr_identity import pick_matching_ocr_per_document
+    from utils.pedido_request_body import (
+        centro_custo_from_item_rb,
+        rateio_centro_custo_from_request_body,
+        uso_e_consumo_active,
+    )
     from utils.ritm_metadata import get_ritm_from_request_body
     from utils.primary_xml import pick_best_parsed_xml_item
     from utils.nfse_detection import detect_nfse_from_sources, NFSE_SERIE_PROTHEUS
@@ -123,7 +139,7 @@ def _pedido_de_compra_from_item_rb(item_rb):
 
 def _merge_uso_consumo_protheus_item(item: dict, item_rb):
     """Preenche codigoProduto a partir do pedido: prioriza ``id``; senão ``codigoProduto`` do item.
-    Repassa codigoOperacao, unidadeMedida e pedidoDeCompra (metadado). Remove ``produto`` do payload Protheus."""
+    Repassa codigoOperacao, unidadeMedida, centroCusto e pedidoDeCompra (metadado). Remove ``produto`` do payload Protheus."""
     if not item_rb:
         return item
     iid = item_rb.get("id")
@@ -143,6 +159,9 @@ def _merge_uso_consumo_protheus_item(item: dict, item_rb):
     pdc = _pedido_de_compra_from_item_rb(item_rb)
     if pdc:
         item["pedidoDeCompra"] = pdc
+    cc = centro_custo_from_item_rb(item_rb)
+    if cc:
+        item["centroCusto"] = cc
     return item
 
 
@@ -230,10 +249,13 @@ def _valor_total_documento_nota_ou_boleto(xml_data, ocr_data, bedrock_extraction
     return 0.0
 
 
-def _valor_unitario_payload(produto_xml, quantidade, valor_total_doc, n_linhas):
+def _valor_unitario_payload(produto_xml, quantidade, valor_total_doc, n_linhas, uso_consumo=False):
     """
-    valorUnitario no Protheus: prioriza total da nota/documento quando há uma única linha no payload;
-    senão valor de linha do XML (vProd/qCom ou vUnCom).
+    valorUnitario no Protheus.
+
+    AGROQUÍMICOS / demais tipos (legado): vProd÷qCom, vUnCom, ou vNF÷quantidade.
+    USO E CONSUMO: quando não há preço de linha e há uma única linha, usa o total
+    do documento como valor unitário (qty=1 na nota de serviço/boleto).
     """
     q = float(quantidade or 0)
     v_doc = float(valor_total_doc or 0)
@@ -241,12 +263,12 @@ def _valor_unitario_payload(produto_xml, quantidade, valor_total_doc, n_linhas):
     v_un = _safe_float(px.get("valor_unitario"))
     v_prod_tot = _safe_float(px.get("valor_total"))
 
-    if v_doc > 0 and n_linhas == 1:
-        return v_doc
     if v_prod_tot > 0 and q > 0:
         return v_prod_tot / q
     if v_un > 0:
         return v_un
+    if uso_consumo and v_doc > 0 and n_linhas == 1:
+        return v_doc
     if v_doc > 0 and q > 0:
         return v_doc / q
     return 0.0
@@ -656,6 +678,19 @@ def map_especie(modelo):
     
     # Retornar mapeamento se existir, senão usar padrão
     return especie_map.get(modelo_str, "NF")
+
+
+def map_especie_payload(especie, serie=None):
+    """Normaliza espécie para o Protheus (NFS-e / NFSE → NFS)."""
+    s = str(especie or "").strip()
+    if not s:
+        return "NF"
+    serie_s = str(serie or "").strip().upper()
+    norm = s.upper().replace(" ", "").replace("_", "-")
+    if serie_s == "NFS" or norm in ("NFS-E", "NFSE", "NFS"):
+        return "NFS"
+    return s
+
 
 def map_serie(serie):
     """
@@ -1347,18 +1382,12 @@ def _emitente_cnpj_from_ocr_per_document(ocr_data: dict) -> str | None:
     return candidatos[0] if candidatos else None
 
 
-def _backfill_xml_data_from_ocr_hints(xml_data: dict, ocr_data: dict) -> dict:
-    """Preenche campos ausentes do XML com parsed_xml_style dos hints Textract (fluxo PDF/NFS-e)."""
-    out = dict(xml_data) if isinstance(xml_data, dict) else {}
-    if not isinstance(ocr_data, dict):
-        return out
-    for pd in ocr_data.get("per_document") or []:
-        if not isinstance(pd, dict):
-            continue
-        hints = pd.get("protheus_hints")
-        hints = hints if isinstance(hints, dict) else {}
-        px = hints.get("parsed_xml_style")
-        px = px if isinstance(px, dict) else {}
+def _apply_ocr_per_document_hints(out: dict, pd: dict, *, fiscal_hints: bool = True) -> None:
+    hints = pd.get("protheus_hints")
+    hints = hints if isinstance(hints, dict) else {}
+    px = hints.get("parsed_xml_style")
+    px = px if isinstance(px, dict) else {}
+    if fiscal_hints:
         for key in ("numero_nota", "serie", "chave_acesso", "tipo_documento_fiscal"):
             if not out.get(key) and px.get(key):
                 out[key] = px[key]
@@ -1374,6 +1403,37 @@ def _backfill_xml_data_from_ocr_hints(xml_data: dict, ocr_data: dict) -> dict:
         dest = px.get("destinatario")
         if isinstance(dest, dict) and dest.get("cnpj") and not (out.get("destinatario") or {}).get("cnpj"):
             out.setdefault("destinatario", {})["cnpj"] = dest["cnpj"]
+
+
+def _backfill_xml_data_from_ocr_hints(
+    xml_data: dict,
+    ocr_data: dict,
+    *,
+    primary_file_name: str | None = None,
+    strict_identity: bool = False,
+    fiscal_hints: bool = True,
+) -> dict:
+    """
+    Preenche campos ausentes do XML com hints Textract.
+
+    strict_identity=True (uso e consumo): só o anexo que corresponde ao documento principal.
+    fiscal_hints=False quando há BEDROCK_EXTRACTION — campos fiscais vêm da IA primeiro.
+    """
+    out = dict(xml_data) if isinstance(xml_data, dict) else {}
+    if not isinstance(ocr_data, dict):
+        return out
+
+    if strict_identity:
+        pd = pick_matching_ocr_per_document(
+            out, ocr_data, primary_file_name=primary_file_name
+        )
+        if isinstance(pd, dict):
+            _apply_ocr_per_document_hints(out, pd, fiscal_hints=fiscal_hints)
+        return out
+
+    for pd in ocr_data.get("per_document") or []:
+        if isinstance(pd, dict):
+            _apply_ocr_per_document_hints(out, pd, fiscal_hints=fiscal_hints)
     return out
 
 
@@ -1695,7 +1755,25 @@ def lambda_handler(event, context):
     else:
         print(f"[6.3] OCR data não disponível")
 
-    xml_data = _backfill_xml_data_from_ocr_hints(xml_data, ocr_data)
+    _json_uc = pedido_compra_json if pedido_compra_json else input_json
+    _process_type_uc = (metadata.get("PROCESS_TYPE") or "").strip()
+    _strict_ocr_backfill = _process_type_uc == "USOCONSUMO"
+    if not _strict_ocr_backfill and isinstance(_json_uc, dict):
+        try:
+            _strict_ocr_backfill = bool(uso_e_consumo_active(_json_uc))
+        except Exception:
+            _strict_ocr_backfill = False
+
+    _has_bedrock = bool(bedrock_extraction)
+    # USO E CONSUMO: sem backfill fiscal no OCR quando há Bedrock (IA é fonte primária).
+    # Demais tipos: backfill legado completo (inclui hints fiscais de todos os anexos).
+    xml_data = _backfill_xml_data_from_ocr_hints(
+        xml_data,
+        ocr_data,
+        primary_file_name=(parsed_xml or {}).get("FILE_NAME"),
+        strict_identity=_strict_ocr_backfill,
+        fiscal_hints=not (_has_bedrock and _strict_ocr_backfill),
+    )
     
     # Montar payload para Protheus
     print(f"\n[7] Montando payload para Protheus...")
@@ -1743,86 +1821,64 @@ def lambda_handler(event, context):
 
     valor_total_doc = _valor_total_documento_nota_ou_boleto(xml_data, ocr_data, bedrock_extraction)
     print(f"[7.0.10] Valor total documento (XML NF / cobrança / IA): {valor_total_doc}")
-    
-    # Extrair dados do XML (fallback se não tiver requestBody)
-    emitente = xml_data.get('emitente', {})
+
     destinatario = xml_data.get('destinatario', {})
     entrega = xml_data.get('entrega', {})
     totais = xml_data.get('totais', {})
     produtos_xml = xml_data.get('produtos', [])
     cobranca = xml_data.get('cobranca', {})
     transporte = xml_data.get('transporte', {})
-    
-    # Extrair dados do XML para aplicar regras de mapeamento
-    modelo = xml_data.get('modelo', '')
-    serie_xml = xml_data.get('serie', '')
-    data_emissao_xml = xml_data.get('data_emissao', '')
-    chave_acesso_xml = xml_data.get('chave_acesso', '')
-    modalidade_frete = transporte.get('modalidade_frete', '')
-    # Número do documento (NF-e no XML); fluxo só-PDF/Bedrock preenche depois em [7.1.IA]
-    numero_documento = (xml_data.get('numero_nota') or '').strip()
-    
-    # Aplicar regras de mapeamento
-    tipo_documento = map_tipo_documento(modelo)
-    especie = map_especie(modelo)
+
+    resolved = resolve_protheus_document_fields(
+        bedrock_extraction=bedrock_extraction,
+        xml_data=xml_data,
+        ocr_data=ocr_data,
+        request_body_data=request_body_data,
+        primary_file_name=(parsed_xml or {}).get("FILE_NAME"),
+        bedrock_first=uso_merge,
+    )
+    _prio_label = "Bedrock→XML→OCR" if uso_merge else "XML→OCR→Bedrock (legado)"
+    print(f"[7.0.IA] Prioridade campos fiscais: {_prio_label}")
+    for field_name, source in resolved.sources.items():
+        print(f"[7.0.IA] {field_name} ← {source}")
+
+    modelo = resolved.modelo or xml_data.get('modelo', '')
+    serie_xml = resolved.serie_raw or xml_data.get('serie', '')
+    data_emissao_xml = resolved.data_emissao_raw or xml_data.get('data_emissao', '')
+    chave_acesso_xml = resolved.chave_acesso_raw or xml_data.get('chave_acesso', '')
+    modalidade_frete = (
+        resolved.tipo_frete_raw
+        if resolved.tipo_frete_raw is not None
+        else transporte.get('modalidade_frete', '')
+    )
+    numero_documento = (resolved.numero_documento or xml_data.get('numero_nota') or '').strip()
+
+    if uso_merge and resolved.sources.get('tipoDeDocumento') == 'bedrock' and resolved.tipo_documento_raw:
+        tipo_documento = resolved.tipo_documento_raw
+    elif not modelo and resolved.sources.get('tipoDeDocumento') == 'bedrock' and resolved.tipo_documento_raw:
+        tipo_documento = resolved.tipo_documento_raw
+    else:
+        tipo_documento = map_tipo_documento(modelo)
+
+    if uso_merge and resolved.sources.get('especie') == 'bedrock' and resolved.especie_raw:
+        especie = resolved.especie_raw
+    else:
+        especie = map_especie(modelo)
+
     serie = map_serie(serie_xml)
     data_emissao = map_data_emissao(data_emissao_xml)
     chave_acesso = map_chave_acesso(chave_acesso_xml)
     tipo_frete = map_tipo_frete(modalidade_frete)
-    
-    # Moeda e taxa de câmbio (metadado requestBody tem prioridade sobre OCR)
-    moeda_informada = None
-    if isinstance(request_body_data, dict):
-        if request_body_data.get("moeda") is not None and str(request_body_data.get("moeda")).strip() != "":
-            moeda_informada = request_body_data.get("moeda")
-    if moeda_informada is None and isinstance(ocr_data, dict):
-        moeda_informada = ocr_data.get("moeda")
+    moeda_informada = resolved.moeda_informada
     moeda = map_moeda(modelo, moeda_informada)
-    taxa_informada_meta = None
-    if isinstance(request_body_data, dict) and request_body_data.get("taxaCambio") is not None:
+    taxa_informada_meta = resolved.taxa_informada
+    if taxa_informada_meta is not None:
         try:
-            taxa_informada_meta = float(request_body_data.get("taxaCambio"))
+            taxa_informada_meta = float(taxa_informada_meta)
         except (TypeError, ValueError):
             taxa_informada_meta = None
     taxa_cambio = map_taxa_cambio(moeda, taxa_informada_meta)
-    
-    # Bedrock enrichment: fill gaps from AI-extracted fields (fase 6 multi-anexo)
-    if bedrock_extraction:
-        if not modelo and bedrock_extraction.get('tipoDeDocumento'):
-            tipo_documento = bedrock_extraction['tipoDeDocumento']
-            print(f"[7.1.IA] tipoDeDocumento preenchido via Bedrock: {tipo_documento}")
-        if not numero_documento and bedrock_extraction.get('documento'):
-            numero_documento = bedrock_extraction['documento']
-            print(f"[7.1.IA] documento preenchido via Bedrock: {numero_documento}")
-        if not serie_xml and bedrock_extraction.get('serie'):
-            serie = bedrock_extraction['serie']
-            print(f"[7.1.IA] serie preenchida via Bedrock: {serie}")
-        if not data_emissao_xml and bedrock_extraction.get('dataEmissao'):
-            data_emissao = map_data_emissao(bedrock_extraction['dataEmissao'])
-            print(f"[7.1.IA] dataEmissao preenchida via Bedrock: {data_emissao}")
-        if not chave_acesso_xml and bedrock_extraction.get('chaveAcesso'):
-            chave_acesso = bedrock_extraction['chaveAcesso']
-            print(f"[7.1.IA] chaveAcesso preenchida via Bedrock")
-        if not modalidade_frete and bedrock_extraction.get('tipoFrete'):
-            tipo_frete = bedrock_extraction['tipoFrete']
-            print(f"[7.1.IA] tipoFrete preenchido via Bedrock: {tipo_frete}")
-        meta_tem_moeda = (
-            isinstance(request_body_data, dict)
-            and request_body_data.get("moeda") is not None
-            and str(request_body_data.get("moeda")).strip() != ""
-        )
-        if not meta_tem_moeda and bedrock_extraction.get("moeda") is not None:
-            moeda = map_moeda(modelo, bedrock_extraction.get("moeda"))
-            tx_bd = None
-            if bedrock_extraction.get("taxaCambio") is not None:
-                try:
-                    tx_bd = float(bedrock_extraction["taxaCambio"])
-                except (TypeError, ValueError):
-                    tx_bd = None
-            taxa_cambio = map_taxa_cambio(moeda, tx_bd)
-            print(f"[7.1.IA] moeda preenchida via Bedrock: {moeda}")
 
-    # Normalizar data (YYYYMMDD, ISO, etc.) para YYYY-MM-DD
     data_emissao = map_data_emissao(data_emissao)
 
     if uso_merge:
@@ -1839,6 +1895,7 @@ def lambda_handler(event, context):
         bedrock_extraction=bedrock_extraction,
         uso_merge=uso_merge,
     )
+    especie = map_especie_payload(especie, serie=serie)
 
     print(f"[7.2] Campos mapeados:")
     print(f"  tipoDeDocumento: {tipo_documento} (modelo: {modelo})")
@@ -1850,67 +1907,22 @@ def lambda_handler(event, context):
     print(f"  moeda: {moeda} (modelo: {modelo}, informada: {moeda_informada})")
     print(f"  taxaCambio: {taxa_cambio}")
     
-    # Montar payload com APENAS os campos especificados (numero_documento já vem do XML + Bedrock acima)
-    # Extrair CNPJ ou CPF do emitente - APENAS do XML
-    print(f"\n[7.3] Extraindo CNPJ/CPF do emitente (APENAS do XML)...")
-    cnpj_emitente = None
-    cpf_emitente = None
-    ie_emitente = None
-    
-    # Buscar CNPJ primeiro, depois CPF
-    if emitente and emitente.get('cnpj'):
-        cnpj_emitente = emitente.get('cnpj')
-        # Normalizar CNPJ (apenas dígitos)
-        cnpj_emitente = ''.join(filter(str.isdigit, str(cnpj_emitente)))
-        print(f"  [7.3.1] CNPJ encontrado no XML emitente.cnpj: {cnpj_emitente} ({len(cnpj_emitente)} dígitos)")
-    elif emitente and emitente.get('cpf'):
-        cpf_emitente = emitente.get('cpf')
-        # Normalizar CPF (apenas dígitos)
-        cpf_emitente = ''.join(filter(str.isdigit, str(cpf_emitente)))
-        print(f"  [7.3.1] CPF encontrado no XML emitente.cpf: {cpf_emitente} ({len(cpf_emitente)} dígitos)")
-        
-        # Quando for CPF, também buscar IE (Inscrição Estadual)
-        ie_emitente_raw = emitente.get('ie') if emitente else None
-        if ie_emitente_raw:
-            ie_emitente = str(ie_emitente_raw).strip()
-            if ie_emitente:
-                print(f"  [7.3.2] IE encontrado no XML emitente.ie: {ie_emitente}")
-            else:
-                ie_emitente = None
-                print(f"  [7.3.2] IE encontrado mas está vazio no XML emitente")
-        else:
-            ie_emitente = None
-            print(f"  [7.3.2] IE não disponível no emitente")
+    print(f"\n[7.3] CNPJ/CPF emitente (prioridade: {_prio_label})...")
+    cnpj_emitente = resolved.cnpj_emitente
+    cpf_emitente = resolved.cpf_emitente
+    ie_emitente = resolved.ie_emitente
+    if cnpj_emitente:
+        print(
+            f"  [7.3.1] CNPJ emitente: {cnpj_emitente} "
+            f"(fonte: {resolved.sources.get('cnpjEmitente', '?')})"
+        )
+    elif cpf_emitente:
+        print(
+            f"  [7.3.1] CPF emitente: {cpf_emitente} "
+            f"(fonte: {resolved.sources.get('cpfEmitente', '?')})"
+        )
     else:
-        print(f"  [7.3.2] CNPJ/CPF do emitente não encontrado no XML - campo não será incluído no payload")
-        if emitente:
-            print(f"    - emitente.cnpj: {emitente.get('cnpj')}")
-            print(f"    - emitente.cpf: {emitente.get('cpf')}")
-
-    # Fallback: TEXTRACT por ficheiro (parsed_xml_style / protheus_hints) — fluxo só-PDF / NFS-e
-    if not cnpj_emitente and not cpf_emitente:
-        ocr_cnpj = _emitente_cnpj_from_ocr_per_document(ocr_data)
-        if ocr_cnpj:
-            cnpj_emitente = ocr_cnpj
-            print(f"  [7.3.3] CNPJ emitente a partir de OCR (per_document / parsed_xml_style): {cnpj_emitente}")
-
-    # Bedrock: CNPJ emitente se ainda faltar (IA já devolve 14 dígitos)
-    if not cnpj_emitente and not cpf_emitente and isinstance(bedrock_extraction, dict):
-        bc = bedrock_extraction.get("cnpjEmitente")
-        if bc:
-            d = "".join(c for c in str(bc) if c.isdigit())
-            if len(d) == 14:
-                cnpj_emitente = d
-                print(f"  [7.3.4] CNPJ emitente a partir de BEDROCK_EXTRACTION: {cnpj_emitente}")
-
-    # Metadados pedido: requestBody.cnpjEmitente (validação CNPJ fornecedor usa este campo)
-    if not cnpj_emitente and not cpf_emitente and isinstance(request_body_data, dict):
-        rb_c = request_body_data.get("cnpjEmitente")
-        if rb_c:
-            d = "".join(c for c in str(rb_c) if c.isdigit())
-            if len(d) == 14:
-                cnpj_emitente = d
-                print(f"  [7.3.5] CNPJ emitente a partir de requestBody (pedido): {cnpj_emitente}")
+        print(f"  [7.3.2] CNPJ/CPF do emitente não resolvido — campo omitido no payload")
 
     # # Extrair CNPJ destinatário - tentar múltiplas fontes
     # print(f"\n[7.4] Extraindo CNPJ do destinatário...")
@@ -2417,6 +2429,7 @@ def lambda_handler(event, context):
                 float(quantidade or 0),
                 valor_total_doc,
                 n_linhas_payload,
+                uso_consumo=uso_merge,
             )
             print(f"[8.{idx}.6] Valor unitário (após quantidade final): {valor_unitario}")
 
@@ -2452,6 +2465,12 @@ def lambda_handler(event, context):
             if unidade:
                 item["unidadeMedida"] = unidade
                 print(f"[8.{idx}.7.u] unidadeMedida incluída (XML ou pedido): {unidade}")
+
+            rb_cc = _find_request_body_item_for_codigo(request_body_data, codigo_produto)
+            cc_item = centro_custo_from_item_rb(rb_cc)
+            if cc_item:
+                item["centroCusto"] = cc_item
+                print(f"[8.{idx}.7.cc] centroCusto do item (pedido): {cc_item}")
             
             # Adicionar lote se disponível
             if lote:
@@ -2538,6 +2557,7 @@ def lambda_handler(event, context):
                     qtd_fb,
                     valor_total_doc,
                     n_fallback_lines,
+                    uso_consumo=uso_merge,
                 )
                 
                 item = {
@@ -2600,41 +2620,55 @@ def lambda_handler(event, context):
         duplicatas = cobranca.get('duplicatas')
         duplicatas_source = "xml_data.cobranca"
         print(f"[8.5.1] Campo 'duplicatas' encontrado em xml_data.cobranca")
+
+    # Prioridade 3 (USO E CONSUMO): anexos OCR/Bedrock (todos os documentos)
+    elif uso_merge:
+        duplicatas = extract_duplicatas_from_sources(
+            ocr_data,
+            bedrock_extraction,
+            bedrock_first=True,
+        )
+        if duplicatas:
+            duplicatas_source = "anexos_ocr_bedrock"
+            print(
+                f"[8.5.1] {len(duplicatas)} duplicata(s) extraída(s) dos anexos "
+                f"(OCR/Bedrock, uso_consumo)"
+            )
     
     if duplicatas and isinstance(duplicatas, list) and len(duplicatas) > 0:
         print(f"[8.5.2] Processando {len(duplicatas)} duplicata(s) de {duplicatas_source}")
-        # Validar formato das duplicatas
-        duplicatas_validas = []
-        for dup in duplicatas:
-            if isinstance(dup, dict) and all(key in dup for key in ['vencimento', 'valor']):
-                try:
-                    # Converter valor para numérico (float)
-                    valor_numerico = float(dup.get('valor', 0))
-                    duplicata_valida = {
-                        'vencimento': str(dup.get('vencimento', '')),
-                        'valor': valor_numerico
-                    }
-                    # Sempre incluir numero se existir no JSON original
-                    if 'numero' in dup and dup.get('numero') is not None:
-                        duplicata_valida['numero'] = str(dup.get('numero', ''))
-                    duplicatas_validas.append(duplicata_valida)
-                except (ValueError, TypeError) as e:
-                    print(f"[8.5.3] WARNING: Erro ao converter valor da duplicata para numérico: {e}, duplicata ignorada: {dup}")
-            else:
-                print(f"[8.5.3] WARNING: Duplicata inválida ignorada (campos obrigatórios: vencimento, valor): {dup}")
-        
+        duplicatas_validas = build_duplicatas_protheus_payload(
+            duplicatas,
+            uso_consumo=uso_merge,
+            valor_total_doc=valor_total_doc,
+        )
         if duplicatas_validas:
-            payload['duplicatas'] = duplicatas_validas
-            print(f"[8.5.4] {len(duplicatas_validas)} duplicata(s) adicionada(s) ao payload")
+            payload["duplicatas"] = duplicatas_validas
+            print(
+                f"[8.5.4] {len(duplicatas_validas)} duplicata(s) adicionada(s) ao payload "
+                f"(uso_consumo={uso_merge}, valor_nota_ref={valor_total_doc})"
+            )
             for idx, dup in enumerate(duplicatas_validas, 1):
-                numero_info = f", numero={dup.get('numero', 'N/A')}" if 'numero' in dup else ""
-                print(f"[8.5.5] Duplicata {idx}: vencimento={dup['vencimento']}, valor={dup['valor']}{numero_info}")
+                numero_info = f", numero={dup.get('numero', 'N/A')}" if "numero" in dup else ""
+                print(
+                    f"[8.5.5] Duplicata {idx}: vencimento={dup['vencimento']}, "
+                    f"valor={dup['valor']}{numero_info}"
+                )
         else:
             print(f"[8.5.6] WARNING: Nenhuma duplicata válida encontrada, campo não será incluído")
     elif duplicatas is not None:
         print(f"[8.5.7] Campo 'duplicatas' vazio ou inválido, não será incluído")
     else:
-        print(f"[8.5.8] Campo 'duplicatas' não encontrado em request_body_data nem em xml_data.cobranca, não será incluído")
+        if uso_merge:
+            print(
+                "[8.5.8] Campo 'duplicatas' não encontrado (pedido/XML/anexos), "
+                "não será incluído"
+            )
+        else:
+            print(
+                "[8.5.8] Campo 'duplicatas' não encontrado em request_body_data "
+                "nem em xml_data.cobranca, não será incluído"
+            )
 
     # Impostos (NF-e total / ICMSTot): vDesc → impostos.cabecalho.desconto no Protheus
     v_desc_raw = None

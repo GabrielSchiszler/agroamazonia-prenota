@@ -55,6 +55,37 @@ def natureza_from_pedido(pedido_compra: dict | None) -> str:
     return ""
 
 
+def centro_custo_from_item_rb(item_rb: dict | None) -> str | None:
+    """centroCusto do item do pedido (requestBody.itens[]) para repasse ao Protheus."""
+    if not isinstance(item_rb, dict):
+        return None
+    for key in ("centroCusto", "centroDeCusto", "centro_custo"):
+        v = item_rb.get(key)
+        if v is not None and str(v).strip() != "":
+            return str(v).strip()
+    return None
+
+
+def _percentual_rateio_value(pct: Any) -> int | float | None:
+    """Converte percentual do rateio para número (Protheus espera decimal, não string)."""
+    if pct is None or isinstance(pct, bool):
+        return None
+    if isinstance(pct, int):
+        return pct if pct > 0 else None
+    if isinstance(pct, float):
+        return pct if pct > 0 else None
+    s = str(pct).strip().replace(",", ".")
+    if not s:
+        return None
+    try:
+        val = float(s)
+    except (TypeError, ValueError):
+        return None
+    if val <= 0:
+        return None
+    return int(val) if val.is_integer() else val
+
+
 def rateio_centro_custo_from_request_body(request_body: dict | None) -> list[dict] | None:
     """
     Extrai rateioCentroCusto do requestBody do pedido para repasse ao Protheus.
@@ -72,9 +103,9 @@ def rateio_centro_custo_from_request_body(request_body: dict | None) -> list[dic
         cc = entry.get("centroDeCusto")
         if cc is None or str(cc).strip() == "":
             continue
-        item: dict[str, str] = {"centroDeCusto": str(cc).strip()}
-        pct = entry.get("percentual")
-        if pct is not None and str(pct).strip() != "":
-            item["percentual"] = str(pct).strip()
+        item: dict[str, Any] = {"centroDeCusto": str(cc).strip()}
+        pct = _percentual_rateio_value(entry.get("percentual"))
+        if pct is not None:
+            item["percentual"] = pct
         out.append(item)
     return out or None

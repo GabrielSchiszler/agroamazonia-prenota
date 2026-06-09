@@ -2,7 +2,22 @@
 
 ## Configuração
 
-### Opção 1: Usando arquivo `.env` (Recomendado)
+### Opção 1: `start.sh` por ambiente (recomendado)
+
+O script lê OAuth de `backend/.env.prod`, `.env.homolog` ou `.env.development` e gera `frontend/.env` + `config.js`.
+
+```bash
+cd frontend
+chmod +x start.sh
+
+./start.sh prd   # produção  → https://api-prd.agroamazonia.com/fast
+./start.sh hml   # homolog   → https://api-hml.agroamazonia.com/fast
+./start.sh dev   # dev       → https://api-dev.agroamazonia.com/fast
+```
+
+Acesse: http://localhost:8080
+
+### Opção 2: Usando arquivo `.env` manual
 
 1. Criar arquivo `.env` na pasta `frontend/`:
 

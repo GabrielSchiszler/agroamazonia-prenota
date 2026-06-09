@@ -45,6 +45,18 @@ def test_merge_prioriza_id_sobre_codigoProduto():
     assert out["codigoProduto"] == "26480"
 
 
+def test_merge_repassa_centro_custo_do_pedido():
+    from send_to_protheus.handler import _merge_uso_consumo_protheus_item
+
+    item = {"codigoProduto": "X", "quantidade": 1}
+    rb = {
+        "codigoProduto": "CH200001UN00010",
+        "centroCusto": "10001105",
+    }
+    out = _merge_uso_consumo_protheus_item(dict(item), rb)
+    assert out["centroCusto"] == "10001105"
+
+
 def test_merge_repassa_pedidoDeCompra_do_pedido():
     from send_to_protheus.handler import _merge_uso_consumo_protheus_item
 
@@ -96,3 +108,12 @@ def test_quantidade_uc_sem_item_pedido_usa_xml_se_positivo():
 
     assert _quantidade_uso_consumo_pedido(None, 5.0) == 5.0
     assert _quantidade_uso_consumo_pedido(None, 0.0) == 1.0
+
+
+def test_map_especie_payload_nfse_para_nfs():
+    from send_to_protheus.handler import map_especie_payload
+
+    assert map_especie_payload("NFS-e", serie="NFS") == "NFS"
+    assert map_especie_payload("NFS-e") == "NFS"
+    assert map_especie_payload("NFSE") == "NFS"
+    assert map_especie_payload("SPED", serie="001") == "SPED"

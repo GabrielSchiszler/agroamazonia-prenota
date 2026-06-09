@@ -148,6 +148,7 @@ def handler(event, context):
                 {
                     "file_name": d.get("file_name", ""),
                     "file_upload_id": d.get("file_upload_id"),
+                    "raw_text": d.get("raw_text") or "",
                     "protheus_hints": d.get("protheus_hints") or {},
                     "tables_count": len(d.get("tables") or []),
                     "job_id": d.get("job_id") or "",

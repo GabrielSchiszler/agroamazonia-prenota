@@ -43,7 +43,7 @@ Se o valor não puder ser determinado com confiança, use null.
   "documento": "string — número do documento / nota",
   "serie": "string — série da nota; se for NFS-e (Nota Fiscal de Serviço Eletrônica), use SEMPRE \"NFS\"",
   "dataEmissao": "string — formato YYYYMMDD",
-  "especie": "string — ex: SPED",
+  "especie": "string — ex: SPED; para NFS-e use NFS (não NFS-e)",
   "chaveAcesso": "string — 44 dígitos da NFe ou null",
   "tipoFrete": "string — C, F, T, D, S, N",
   "moeda": "int — 1=BRL, 2=USD, 3=EUR",
@@ -51,6 +51,13 @@ Se o valor não puder ser determinado com confiança, use null.
   "cnpjEmitente": "string — 14 dígitos, apenas números",
   "cpfEmitente": "string — 11 dígitos (se PF) ou null",
   "ieEmitente": "string ou null",
+  "duplicatas": [
+    {
+      "vencimento": "string — YYYY-MM-DD ou DD/MM/YYYY",
+      "valorVencimento": "number — valor da parcela (boleto: Valor do Documento)",
+      "numero": "string — opcional, número da duplicata"
+    }
+  ],
   "itens": [
     {
       "codigoProduto": "string",
@@ -101,6 +108,12 @@ def _build_prompt(merged_data: dict, pedido_metadata: Optional[dict]) -> str:
         "",
         "Se o XML NF-e está disponível, **priorize** seus campos (são estruturados e confiáveis).",
         "Use o texto OCR apenas para complementar campos ausentes no XML.",
+        "",
+        "### Boletos e anexos complementares",
+        "Boletos bancários (SICOOB, linha digitável, ficha de compensação) **não** são notas fiscais.",
+        "Nunca use linha digitável ou código de barras do boleto como chaveAcesso ou cnpjEmitente.",
+        "Para NFS-e/NF de serviço, extraia dados do PDF da nota — ignore o boleto para campos fiscais.",
+        "NÃO invente, NÃO monte chave de 44 dígitos por concatenação; use null se não estiver no documento.",
         "",
         "### NFS-e (Nota Fiscal de Serviço Eletrônica)",
         "Indícios: cabeçalho \"NFS-e\" ou \"Nota Fiscal de Serviço\", ISSQN, código de serviço, ",
@@ -159,6 +172,13 @@ def _build_prompt_single_doc(
         "",
         "Se existir XML NF-e de referência, use-o para priorizar campos estruturados da nota; "
         "o texto/tabelas deste arquivo servem para o que for específico deste anexo.",
+        "",
+        "Se este arquivo for **boleto bancário**, retorne null em chaveAcesso, serie, documento fiscal "
+        "e cnpjEmitente (salvo CNPJ formatado do beneficiário visível no texto). "
+        "Nunca derive chave/CNPJ da linha digitável.",
+        "Se o documento tiver data de vencimento e valor de parcela, preencha **duplicatas** "
+        "(vencimento + valorVencimento). Caso contrário use [] ou null.",
+        "NÃO invente valores; use null quando não houver evidência clara no documento.",
         "",
         "### NFS-e (Nota Fiscal de Serviço Eletrônica)",
         "Se este PDF for NFS-e (serviço): serie=\"NFS\", documento=número da nota.",
@@ -223,21 +243,95 @@ def _parse_bedrock_json(raw_response: str) -> Optional[dict[str, Any]]:
         return None
 
 
-def _merge_bedrock_extractions(extractions: list[dict[str, Any]]) -> dict[str, Any]:
-    """Agrega vários JSONs Bedrock num único dict (primeiro não-nulo por campo; itens concatenados)."""
+_FISCAL_MERGE_KEYS = frozenset({
+    "tipoDeDocumento",
+    "documento",
+    "serie",
+    "dataEmissao",
+    "especie",
+    "chaveAcesso",
+    "tipoFrete",
+    "moeda",
+    "taxaCambio",
+    "cnpjEmitente",
+    "cpfEmitente",
+    "ieEmitente",
+})
+
+
+def _bedrock_file_priority(file_name: str) -> int:
+    """Maior = preferido no merge (NF/NFS-e sobre boleto)."""
+    fn = (file_name or "").lower()
+    if "boleto" in fn:
+        return 0
+    if any(tok in fn for tok in ("nfse", "nfs-e", "nfs_e", "danfe", "nota", "nf_")):
+        return 2
+    if fn.startswith("nf") or "_nf" in fn or " nf" in fn:
+        return 2
+    return 1
+
+
+def _merge_bedrock_extractions(
+    extractions: list[dict[str, Any]] | list[tuple[str, dict[str, Any]]],
+    *,
+    prefer_fiscal_doc: bool = False,
+) -> dict[str, Any]:
+    """
+    Agrega JSONs Bedrock por arquivo.
+    USO E CONSUMO (prefer_fiscal_doc): NF/NFS-e sobre boleto nos campos fiscais.
+    Demais tipos: primeiro arquivo com valor não nulo (ordem original).
+    """
+    rows: list[tuple[int, int, dict[str, Any]]] = []
+    for idx, item in enumerate(extractions):
+        if isinstance(item, tuple) and len(item) == 2:
+            fn, ext = item
+            if isinstance(ext, dict):
+                prio = _bedrock_file_priority(str(fn)) if prefer_fiscal_doc else 0
+                rows.append((prio, idx, ext))
+        elif isinstance(item, dict):
+            rows.append((0, idx, item))
+    rows.sort(key=lambda r: (-r[0], r[1]) if prefer_fiscal_doc else (r[1],))
+
     merged: dict[str, Any] = {}
     all_itens: list[Any] = []
-    for ext in extractions:
+    for _prio, _idx, ext in rows:
         if not isinstance(ext, dict):
             continue
         for k, v in ext.items():
             if k == "itens" and isinstance(v, list):
                 all_itens.extend(v)
-            elif v is not None:
-                if k not in merged or merged[k] is None:
-                    merged[k] = v
+            elif v is not None and (k not in merged or merged[k] is None):
+                merged[k] = v
     if all_itens:
         merged["itens"] = all_itens
+
+    dup_merged: dict[str, dict[str, Any]] = {}
+    for item in extractions:
+        if not isinstance(item, tuple) or len(item) != 2:
+            continue
+        _fn, ext = item
+        if not isinstance(ext, dict):
+            continue
+        raw_dups = ext.get("duplicatas")
+        if not isinstance(raw_dups, list):
+            continue
+        for dup in raw_dups:
+            if not isinstance(dup, dict):
+                continue
+            ven = dup.get("vencimento")
+            if not ven:
+                continue
+            key = str(ven)
+            bucket = dup_merged.setdefault(key, {"vencimento": key})
+            for vk in ("valorVencimento", "valor"):
+                if dup.get(vk) is not None:
+                    bucket["valorVencimento"] = dup[vk]
+                    break
+            if dup.get("numero") is not None and bucket.get("numero") is None:
+                bucket["numero"] = dup["numero"]
+    if dup_merged:
+        merged["duplicatas"] = list(dup_merged.values())
+
     return merged
 
 
@@ -318,12 +412,15 @@ def handler(event, context):
                 if uid:
                     bedrock_item["FILE_UPLOAD_ID"] = uid
                 table.put_item(Item=bedrock_item)
-                per_file_extracted.append((storage_key, parsed))
+                per_file_extracted.append((fn, parsed))
             else:
                 logger.warning("Bedrock per-file inválido ou vazio: %s", storage_key)
 
         if per_file_extracted:
-            extracted = _merge_bedrock_extractions([d for _, d in per_file_extracted])
+            extracted = _merge_bedrock_extractions(
+                per_file_extracted,
+                prefer_fiscal_doc=_pedido_uso_e_consumo(pedido_metadata),
+            )
         else:
             logger.warning("Todas as extrações por arquivo falharam — prompt agregado")
             prompt = _build_prompt(merged_data, pedido_metadata)
@@ -370,7 +467,9 @@ def handler(event, context):
             if isinstance(pd, dict):
                 pd["documento_entrada_protheus"] = extracted
                 pd["_campos_estruturados_fonte"] = "bedrock"
-                by_key = {k: d for k, d in per_file_extracted}
+                by_key = {}
+                for fn, d in per_file_extracted:
+                    by_key[fn] = d
                 for row in pd.get("per_document") or []:
                     if not isinstance(row, dict):
                         continue
