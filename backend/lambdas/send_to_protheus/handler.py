@@ -13,9 +13,12 @@ import sys
 sys.path.insert(0, os.path.dirname(__file__))
 try:
     from utils.bedrock_error_summary import generate_error_summary_with_bedrock
-    from utils.boleto_duplicatas import extract_duplicatas_from_sources
+    from utils.boleto_duplicatas import extract_duplicatas_from_sources, resolve_duplicatas_uc
     from utils.duplicatas_protheus import build_duplicatas_protheus_payload
-    from utils.document_field_resolver import resolve_protheus_document_fields
+    from utils.document_field_resolver import (
+        normalize_documento_numero,
+        resolve_protheus_document_fields,
+    )
     from utils.ocr_identity import pick_matching_ocr_per_document
     from utils.pedido_request_body import (
         centro_custo_from_item_rb,
@@ -29,9 +32,12 @@ except ImportError:
     # Fallback: tentar importar do diretório pai
     sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
     from utils.bedrock_error_summary import generate_error_summary_with_bedrock
-    from utils.boleto_duplicatas import extract_duplicatas_from_sources
+    from utils.boleto_duplicatas import extract_duplicatas_from_sources, resolve_duplicatas_uc
     from utils.duplicatas_protheus import build_duplicatas_protheus_payload
-    from utils.document_field_resolver import resolve_protheus_document_fields
+    from utils.document_field_resolver import (
+        normalize_documento_numero,
+        resolve_protheus_document_fields,
+    )
     from utils.ocr_identity import pick_matching_ocr_per_document
     from utils.pedido_request_body import (
         centro_custo_from_item_rb,
@@ -234,16 +240,21 @@ def _valor_total_documento_nota_ou_boleto(xml_data, ocr_data, bedrock_extraction
     if not ai and isinstance(ocr_data, dict):
         ai = ocr_data.get("documento_entrada_protheus") or {}
     itens_ai = ai.get("itens") if isinstance(ai.get("itens"), list) else []
-    acc = 0.0
-    for it in itens_ai:
-        if not isinstance(it, dict):
-            continue
-        q = _safe_float(it.get("quantidade"), 0.0)
-        vu = _safe_float(it.get("valorUnitario"), 0.0)
-        if q > 0 and vu > 0:
-            acc += q * vu
-        elif vu > 0:
-            acc += vu
+    try:
+        from utils.extraction_dedup import sum_itens_total
+
+        acc = sum_itens_total(itens_ai)
+    except ImportError:
+        acc = 0.0
+        for it in itens_ai:
+            if not isinstance(it, dict):
+                continue
+            q = _safe_float(it.get("quantidade"), 0.0)
+            vu = _safe_float(it.get("valorUnitario"), 0.0)
+            if q > 0 and vu > 0:
+                acc += q * vu
+            elif vu > 0:
+                acc += vu
     if acc > 0:
         return acc
     return 0.0
@@ -1895,6 +1906,7 @@ def lambda_handler(event, context):
         bedrock_extraction=bedrock_extraction,
         uso_merge=uso_merge,
     )
+    numero_documento = normalize_documento_numero(numero_documento)
     especie = map_especie_payload(especie, serie=serie)
 
     print(f"[7.2] Campos mapeados:")
@@ -2634,6 +2646,13 @@ def lambda_handler(event, context):
                 f"[8.5.1] {len(duplicatas)} duplicata(s) extraída(s) dos anexos "
                 f"(OCR/Bedrock, uso_consumo)"
             )
+            n_before = len(duplicatas)
+            duplicatas = resolve_duplicatas_uc(duplicatas, valor_total_doc=valor_total_doc)
+            if len(duplicatas) != n_before:
+                print(
+                    f"[8.5.1b] Duplicatas resolvidas (NF+boleto mesma parcela): "
+                    f"{n_before} → {len(duplicatas)}"
+                )
     
     if duplicatas and isinstance(duplicatas, list) and len(duplicatas) > 0:
         print(f"[8.5.2] Processando {len(duplicatas)} duplicata(s) de {duplicatas_source}")

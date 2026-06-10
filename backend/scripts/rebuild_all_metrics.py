@@ -50,6 +50,7 @@ from update_metrics.handler import (  # noqa: E402
     _extract_failure_identity,
     protheus_response_indicates_prenota,
 )
+from utils.metrics_process import effective_metrics_status_from_metadata  # noqa: E402
 from utils.metrics_rates import success_rate_pct  # noqa: E402
 
 
@@ -74,26 +75,13 @@ def _parse_after_ts(after: str) -> int:
 
 
 def _determine_metric_status(metadata: dict) -> str | None:
-    """Alinhado a fix_metrics.py — None = não contabilizar."""
-    metrics_status = metadata.get("METRICS_STATUS")
-    if metrics_status:
-        return str(metrics_status)
-    status = metadata.get("STATUS", "UNKNOWN")
-    status_map = {
-        "COMPLETED": "SUCCESS",
-        "SUCCESS": "SUCCESS",
-        "VALIDATED": "SUCCESS",
-        "FAILED": "FAILED",
-        "VALIDATION_FAILURE": "FAILED",
-        "PROCESSING": None,
-        "CREATED": None,
-    }
-    return status_map.get(status)
+    """Último STATUS do processo; METRICS_STATUS só se ainda em PROCESSING/CREATED."""
+    return effective_metrics_status_from_metadata(metadata)
 
 
 def _date_key_from_metadata(metadata: dict) -> tuple[str, int]:
     metrics_date = metadata.get("METRICS_DATE")
-    timestamp = metadata.get("TIMESTAMP", 0)
+    timestamp = metadata.get("METRICS_UPDATED_AT") or metadata.get("TIMESTAMP", 0)
     if metrics_date and len(str(metrics_date)) >= 10:
         date_key = str(metrics_date)[:10]
     elif timestamp:

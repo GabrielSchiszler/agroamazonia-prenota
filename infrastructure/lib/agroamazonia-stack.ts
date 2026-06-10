@@ -551,7 +551,15 @@ export class AgroAmazoniaStack extends cdk.Stack {
       functionName: name('lambda', 'list-attachments'),
       runtime: lambda.Runtime.PYTHON_3_12,
       handler: 'handler.handler',
-      code: lambda.Code.fromAsset('../backend/lambdas/list_attachments'),
+      code: lambda.Code.fromAsset(path.join(__dirname, '../../backend/lambdas'), {
+        bundling: {
+          image: lambda.Runtime.PYTHON_3_12.bundlingImage,
+          command: [
+            'bash', '-c',
+            'cd list_attachments && cp -au . /asset-output/ && cp -au ../utils /asset-output/utils',
+          ],
+        },
+      }),
       environment: {
         TABLE_NAME: documentTable.tableName
       },
@@ -585,7 +593,15 @@ export class AgroAmazoniaStack extends cdk.Stack {
       functionName: name('lambda', 'bedrock-extract-fields'),
       runtime: lambda.Runtime.PYTHON_3_12,
       handler: 'handler.handler',
-      code: lambda.Code.fromAsset('../backend/lambdas/bedrock_extract_fields'),
+      code: lambda.Code.fromAsset(path.join(__dirname, '../../backend/lambdas'), {
+        bundling: {
+          image: lambda.Runtime.PYTHON_3_12.bundlingImage,
+          command: [
+            'bash', '-c',
+            'cd bedrock_extract_fields && cp -au . /asset-output/ && cp -au ../utils /asset-output/utils',
+          ],
+        },
+      }),
       environment: {
         TABLE_NAME: documentTable.tableName,
         BEDROCK_MODEL_ID: process.env.BEDROCK_MODEL_ID || 'amazon.nova-pro-v1:0'

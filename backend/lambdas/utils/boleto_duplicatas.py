@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import re
+from datetime import datetime
 from typing import Any, Iterator
+
+_MONEY_TOL = 0.02
 
 _VEN = re.compile(r"(?is)vencimento[^\d]{0,60}(\d{2}/\d{2}/\d{4})")
 _VALOR_DOC = re.compile(
@@ -31,6 +34,18 @@ def _parse_br_money(value: Any) -> float | None:
     except (TypeError, ValueError):
         return None
     return v if v > 0 else None
+
+
+def document_source_kind(file_name: str | None) -> str:
+    """Classifica anexo: boleto | nf_nfs | unknown (para prioridade de vencimento)."""
+    fn = (file_name or "").lower()
+    if "boleto" in fn:
+        return "boleto"
+    if any(tok in fn for tok in ("nfse", "nfs-e", "nfs_e", "danfe", "nota", "nf_")):
+        return "nf_nfs"
+    if fn.startswith("nf") or "_nf" in fn or " nf" in fn:
+        return "nf_nfs"
+    return "unknown"
 
 
 def _parse_br_date(value: str) -> str | None:
@@ -117,6 +132,85 @@ def _iter_per_document_texts(ocr_data: dict | None) -> Iterator[tuple[str | None
         yield fn, text, {}
 
 
+def _dup_valor(dup: dict[str, Any]) -> float | None:
+    for key in ("valorVencimento", "valor", "valor_vencimento"):
+        v = _parse_br_money(dup.get(key))
+        if v is not None:
+            return v
+    return None
+
+
+def _money_close(a: float, b: float, tol: float = _MONEY_TOL) -> bool:
+    return abs(float(a) - float(b)) <= tol
+
+
+def _parse_iso_date(value: str) -> datetime | None:
+    s = str(value or "").strip()[:10]
+    try:
+        return datetime.strptime(s, "%Y-%m-%d")
+    except ValueError:
+        return None
+
+
+def _dates_within_days(d1: str, d2: str, days: int = 1) -> bool:
+    a, b = _parse_iso_date(d1), _parse_iso_date(d2)
+    if not a or not b:
+        return False
+    return abs((a.date() - b.date()).days) <= days
+
+
+def _public_dup(dup: dict[str, Any]) -> dict[str, Any]:
+    return {k: v for k, v in dup.items() if k != "source"}
+
+
+def resolve_duplicatas_uc(
+    duplicatas: list[dict[str, Any]] | None,
+    *,
+    valor_total_doc: float = 0.0,
+) -> list[dict[str, Any]]:
+    """
+    USO E CONSUMO: mesma parcela em NF (ex. domingo) e boleto (dia útil) → só boleto.
+    Parcelas reais (valores distintos que somam o total) ou split sem valor → mantém todas.
+    """
+    if not duplicatas:
+        return []
+
+    entries = [dict(d) for d in duplicatas if isinstance(d, dict) and d.get("vencimento")]
+    if len(entries) <= 1:
+        return [_public_dup(entries[0])] if entries else []
+
+    total_doc = float(valor_total_doc or 0)
+    vals = [_dup_valor(e) for e in entries]
+    n = len(entries)
+
+    def _pick_boleto_or_latest(cands: list[dict[str, Any]]) -> dict[str, Any]:
+        boletos = [e for e in cands if e.get("source") == "boleto"]
+        pool = boletos if boletos else cands
+        best = max(pool, key=lambda e: str(e.get("vencimento") or ""))
+        return _public_dup(best)
+
+    # Todas com valor explícito ≈ total do documento → mesma parcela em fontes diferentes
+    if total_doc > 0 and all(v is not None for v in vals):
+        if all(_money_close(v, total_doc) for v in vals):
+            return [_pick_boleto_or_latest(entries)]
+
+        # Valores iguais entre si (mas não necessariamente = total): NF + boleto mesma parcela
+        if n == 2 and vals[0] is not None and vals[1] is not None and _money_close(vals[0], vals[1]):
+            sources = {e.get("source") for e in entries}
+            if "boleto" in sources and ("nf_nfs" in sources or "unknown" in sources):
+                return [_pick_boleto_or_latest(entries)]
+            v0, v1 = entries[0], entries[1]
+            if _dates_within_days(
+                str(v0.get("vencimento")),
+                str(v1.get("vencimento")),
+                1,
+            ):
+                return [_pick_boleto_or_latest(entries)]
+
+    # Sem valor explícito: deixa build_duplicatas_protheus_payload fazer o split
+    return [_public_dup(e) for e in entries]
+
+
 def _merge_dup_entry(
     merged: dict[str, dict[str, Any]],
     dup: dict[str, Any],
@@ -129,17 +223,24 @@ def _merge_dup_entry(
         bucket["valorVencimento"] = dup["valorVencimento"]
     if dup.get("numero") is not None and bucket.get("numero") is None:
         bucket["numero"] = dup["numero"]
+    src = dup.get("source")
+    if src == "boleto":
+        bucket["source"] = "boleto"
+    elif src and not bucket.get("source"):
+        bucket["source"] = src
 
 
 def extract_duplicatas_from_ocr(ocr_data: dict | None) -> list[dict[str, Any]]:
     """Varre todos os anexos OCR; extrai duplicatas onde houver vencimento no texto."""
     merged: dict[str, dict[str, Any]] = {}
-    for _file_name, text, pd in _iter_per_document_texts(ocr_data) or []:
+    for file_name, text, pd in _iter_per_document_texts(ocr_data) or []:
         if not text.strip():
             continue
         hints = pd.get("protheus_hints") if isinstance(pd.get("protheus_hints"), dict) else {}
         valor_hint = hints.get("valorDocumento")
+        source = document_source_kind(str(file_name) if file_name else None)
         for dup in extract_duplicatas_from_document_text(text, valor_hint=valor_hint):
+            dup["source"] = source
             _merge_dup_entry(merged, dup)
     return list(merged.values())
 
@@ -167,6 +268,8 @@ def extract_duplicatas_from_bedrock(bedrock_extraction: dict | None) -> list[dic
                 break
         if item.get("numero") is not None:
             dup["numero"] = item.get("numero")
+        if item.get("source"):
+            dup["source"] = item["source"]
         _merge_dup_entry(merged, dup)
     return list(merged.values())
 

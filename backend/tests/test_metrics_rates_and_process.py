@@ -8,6 +8,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lambdas"))
 
 from utils.metrics_process import (  # noqa: E402
+    effective_metrics_status_from_metadata,
     outcome_matches_rate_counts,
     resolve_process_metrics,
 )
@@ -52,10 +53,27 @@ class TestMetricsOutcome:
         assert metrics_outcome_for_status("PROCESSING") is None
 
 
+class TestReprocessLatestStatus:
+    def test_completed_overrides_stale_metrics_failed(self):
+        meta = {
+            "STATUS": "COMPLETED",
+            "METRICS_STATUS": "FAILED",
+            "protheus_response": json_dumps_prenota(),
+        }
+        assert effective_metrics_status_from_metadata(meta) == "SUCCESS"
+        r = resolve_process_metrics(meta)
+        assert r["outcome"] == "success"
+        assert r["is_prenota"] is True
+
+    def test_processing_keeps_metrics_status_fallback(self):
+        meta = {"STATUS": "PROCESSING", "METRICS_STATUS": "FAILED"}
+        assert effective_metrics_status_from_metadata(meta) == "FAILED"
+
+
 class TestNewProcessResolve:
     def test_sucesso_com_prenota(self):
         meta = {
-            "STATUS": "SUCCESS",
+            "STATUS": "COMPLETED",
             "protheus_response": json_dumps_prenota(),
         }
         r = resolve_process_metrics(meta)

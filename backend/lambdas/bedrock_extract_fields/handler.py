@@ -303,7 +303,17 @@ def _merge_bedrock_extractions(
             elif v is not None and (k not in merged or merged[k] is None):
                 merged[k] = v
     if all_itens:
-        merged["itens"] = all_itens
+        try:
+            from utils.extraction_dedup import dedupe_extraction_itens
+
+            merged["itens"] = dedupe_extraction_itens(all_itens)
+        except ImportError:
+            merged["itens"] = all_itens
+
+    try:
+        from utils.boleto_duplicatas import document_source_kind
+    except ImportError:
+        document_source_kind = lambda _fn: "unknown"  # type: ignore[assignment]
 
     dup_merged: dict[str, dict[str, Any]] = {}
     for item in extractions:
@@ -312,6 +322,7 @@ def _merge_bedrock_extractions(
         _fn, ext = item
         if not isinstance(ext, dict):
             continue
+        source = document_source_kind(str(_fn))
         raw_dups = ext.get("duplicatas")
         if not isinstance(raw_dups, list):
             continue
@@ -322,7 +333,9 @@ def _merge_bedrock_extractions(
             if not ven:
                 continue
             key = str(ven)
-            bucket = dup_merged.setdefault(key, {"vencimento": key})
+            bucket = dup_merged.setdefault(key, {"vencimento": key, "source": source})
+            if source == "boleto":
+                bucket["source"] = "boleto"
             for vk in ("valorVencimento", "valor"):
                 if dup.get(vk) is not None:
                     bucket["valorVencimento"] = dup[vk]

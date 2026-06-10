@@ -105,9 +105,27 @@ def handler(event, context):
                 doc["protheus_hints"] = json.loads(hints_raw)
             except Exception:
                 pass
+        doc["timestamp"] = it.get("TIMESTAMP")
         textract_docs.append(doc)
         if doc["raw_text"]:
             combined_raw_text_parts.append(doc["raw_text"])
+
+    try:
+        from utils.extraction_dedup import dedupe_textract_documents
+
+        before = len(textract_docs)
+        textract_docs = dedupe_textract_documents(textract_docs)
+        if len(textract_docs) < before:
+            logger.info(
+                "Textract deduped: %d -> %d documento(s)",
+                before,
+                len(textract_docs),
+            )
+        combined_raw_text_parts = [
+            d["raw_text"] for d in textract_docs if d.get("raw_text")
+        ]
+    except ImportError:
+        pass
 
     logger.info(
         "Merging: nfe_xml=%s, textract_docs=%d",

@@ -23,6 +23,19 @@ def _non_empty_str(value: object) -> str | None:
     return s if s else None
 
 
+def normalize_documento_numero(value: object) -> str:
+    """
+    Número do documento Protheus: com 10+ dígitos e zeros à esquerda, reduz para 9
+    removendo zeros à esquerda (ex.: 0000001287 → 000001287).
+    """
+    s = _non_empty_str(value) or ""
+    if len(s) < 10 or not s.isdigit() or s[0] != "0":
+        return s
+    while len(s) > 9 and s.startswith("0"):
+        s = s[1:]
+    return s
+
+
 def _normalize_chave(value: object, *, require_dv: bool = False) -> str | None:
     blob = _digits(value)
     if not blob:
@@ -236,7 +249,7 @@ def resolve_protheus_document_fields(
         transform=lambda v: _non_empty_str(v),
     )
     if numero:
-        out.numero_documento = numero
+        out.numero_documento = normalize_documento_numero(numero)
         out.sources["documento"] = src or "?"
 
     serie, src = _first(

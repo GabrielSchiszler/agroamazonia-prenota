@@ -4,9 +4,11 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lambdas"))
 
 from utils.boleto_duplicatas import (  # noqa: E402
+    document_source_kind,
     extract_duplicatas_from_document_text,
     extract_duplicatas_from_ocr,
     extract_duplicatas_from_sources,
+    resolve_duplicatas_uc,
 )
 from utils.duplicatas_protheus import build_duplicatas_protheus_payload  # noqa: E402
 
@@ -80,6 +82,70 @@ def test_dedupe_repeated_vencimento():
     text = COBRANCA_SNIPPET + "\nVencimento\n25/06/2026\n"
     raw = extract_duplicatas_from_document_text(text)
     assert len(raw) == 1
+
+
+def test_document_source_kind():
+    assert document_source_kind("BOLETO_1287.pdf") == "boleto"
+    assert document_source_kind("NF_-_1287.pdf") == "nf_nfs"
+    assert document_source_kind("anexo.pdf") == "unknown"
+
+
+def test_resolve_nf_e_boleto_mesmo_valor_prefere_boleto():
+    """NF domingo 28/06 + boleto dia útil 29/06, mesmo valor = total → 1 duplicata."""
+    raw = [
+        {
+            "vencimento": "2026-06-28",
+            "valorVencimento": 5392.81,
+            "source": "nf_nfs",
+        },
+        {
+            "vencimento": "2026-06-29",
+            "valorVencimento": 5392.81,
+            "source": "boleto",
+        },
+    ]
+    out = resolve_duplicatas_uc(raw, valor_total_doc=5392.81)
+    assert len(out) == 1
+    assert out[0]["vencimento"] == "2026-06-29"
+    assert out[0]["valorVencimento"] == 5392.81
+    assert "source" not in out[0]
+
+
+def test_resolve_duas_parcelas_reais_mantem_ambas():
+    raw = [
+        {"vencimento": "2026-04-15", "valorVencimento": 500.0, "source": "boleto"},
+        {"vencimento": "2026-05-15", "valorVencimento": 500.0, "source": "boleto"},
+    ]
+    out = resolve_duplicatas_uc(raw, valor_total_doc=1000.0)
+    assert len(out) == 2
+
+
+def test_resolve_duas_datas_sem_valor_mantem_para_split():
+    raw = [
+        {"vencimento": "2026-04-15", "source": "nf_nfs"},
+        {"vencimento": "2026-05-15", "source": "boleto"},
+    ]
+    out = resolve_duplicatas_uc(raw, valor_total_doc=1000.0)
+    assert len(out) == 2
+    payload = build_duplicatas_protheus_payload(out, uso_consumo=True, valor_total_doc=1000.0)
+    assert sum(d["valor"] for d in payload) == 1000.0
+
+
+def test_uc_pipeline_nf_boleto_end_to_end():
+    bedrock = {
+        "duplicatas": [
+            {"vencimento": "2026-06-28", "valorVencimento": 5392.81, "source": "nf_nfs"},
+            {"vencimento": "2026-06-29", "valorVencimento": 5392.81, "source": "boleto"},
+        ],
+    }
+    resolved = resolve_duplicatas_uc(
+        extract_duplicatas_from_sources(None, bedrock, bedrock_first=True),
+        valor_total_doc=5392.81,
+    )
+    payload = build_duplicatas_protheus_payload(
+        resolved, uso_consumo=True, valor_total_doc=5392.81
+    )
+    assert payload == [{"vencimento": "2026-06-29", "valor": 5392.81}]
 
 
 def test_merge_vencimentos_de_multiplos_anexos():

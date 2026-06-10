@@ -11,6 +11,8 @@ import os
 
 import boto3
 
+from utils.extraction_dedup import dedupe_file_items_by_content_hash
+
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
@@ -36,13 +38,16 @@ def handler(event, context):
         ExpressionAttributeValues={":pk": pk},
     )["Items"]
 
+    file_items = [
+        it
+        for it in items
+        if str(it.get("SK", "")).startswith("FILE#") and it.get("FILE_KEY")
+    ]
+    file_items = dedupe_file_items_by_content_hash(file_items)
+
     attachments: list[dict] = []
-    for it in items:
+    for it in file_items:
         sk = it.get("SK", "")
-        if not sk.startswith("FILE#"):
-            continue
-        if not it.get("FILE_KEY"):
-            continue
         fname = it.get("FILE_NAME", "")
         lower = fname.lower()
         if lower.endswith(".xml"):

@@ -76,6 +76,40 @@ def test_build_failure_keys_uses_outros_and_pedido():
     assert keys == ["NF27|07467822000126|Outros|AACBKV"]
 
 
+def test_failure_keys_after_protheus_schema_rules_not_outros():
+    """Regressão: failure_keys deve usar regra Protheus/API, não Outros."""
+    import json
+
+    from utils.protheus_regras import build_failed_rules_for_metrics, load_api_regras_catalog
+
+    from update_metrics.handler import _build_failure_keys
+
+    meta = {
+        "STATUS": "FAILED",
+        "protheus_request_info": json.dumps(
+            {
+                "response_status_code": 400,
+                "response_body": {
+                    "errorCode": "SCHEMA_ITEM_002",
+                    "message": "O campo 'codigoOperacao' é obrigatório no item 1.",
+                },
+            }
+        ),
+    }
+    ocr_rules, _, skip, _ = build_failed_rules_for_metrics(
+        None,
+        meta,
+        validation_failed_rules=[],
+        api_catalog=load_api_regras_catalog(),
+    )
+    assert ocr_rules == ["SCHEMA_ITEM_002"]
+    keys = _build_failure_keys(
+        "04475055", "53113791000122", "AACHUY", ocr_rules, "FAILED"
+    )
+    assert keys == ["04475055|53113791000122|SCHEMA_ITEM_002|AACHUY"]
+    assert "Outros" not in keys[0]
+
+
 def test_daily_metrics_dedup_same_nf_cnpj_rule_pedido(monkeypatch):
     import update_metrics.handler as h
 

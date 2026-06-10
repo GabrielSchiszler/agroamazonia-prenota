@@ -181,26 +181,16 @@ def calculate_processing_time(metadata):
 
 
 def determine_status(metadata):
-    """Determina o status final do processo para métricas"""
-    status = metadata.get('STATUS', 'UNKNOWN')
-    metrics_status = metadata.get('METRICS_STATUS')
-    
-    # Se tem METRICS_STATUS, usar como referência (é o mais preciso)
-    if metrics_status:
-        return metrics_status
-    
-    # Mapear status do processo para status de métricas
-    status_map = {
-        'COMPLETED': 'SUCCESS',
-        'SUCCESS': 'SUCCESS',
-        'VALIDATED': 'SUCCESS',
-        'FAILED': 'FAILED',
-        'VALIDATION_FAILURE': 'FAILED',
-        'PROCESSING': None,  # Não contabilizar
-        'CREATED': None,     # Não contabilizar
-    }
-    
-    return status_map.get(status, None)
+    """Determina o status final do processo para métricas (última execução SFN)."""
+    import sys
+    from pathlib import Path
+
+    lambdas = Path(__file__).resolve().parents[1] / "lambdas"
+    if str(lambdas) not in sys.path:
+        sys.path.insert(0, str(lambdas))
+    from utils.metrics_process import effective_metrics_status_from_metadata
+
+    return effective_metrics_status_from_metadata(metadata)
 
 
 def main():

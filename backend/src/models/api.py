@@ -21,6 +21,10 @@ class XmlPresignedUrlRequest(BaseModel):
     file_name: str = Field(..., description="Nome do arquivo XML")
     file_type: str = Field(default="application/xml", description="Content-Type do arquivo")
     metadados: Optional[Dict[str, Any]] = Field(default=None, description="Metadados adicionais do arquivo (JSON)")
+    content_sha256: Optional[str] = Field(
+        default=None,
+        description="SHA-256 hex do arquivo (64 chars) — deduplica na listagem e no pipeline",
+    )
     
     class Config:
         schema_extra = {
@@ -41,6 +45,10 @@ class DocsPresignedUrlRequest(BaseModel):
     file_name: str = Field(..., description="Nome do arquivo")
     file_type: str = Field(default="application/pdf", description="Content-Type do arquivo")
     metadados: Optional[Dict[str, Any]] = Field(default={}, description="Metadados adicionais do arquivo")
+    content_sha256: Optional[str] = Field(
+        default=None,
+        description="SHA-256 hex do arquivo (64 chars) — deduplica na listagem e no pipeline",
+    )
     
     class Config:
         schema_extra = {
@@ -68,6 +76,10 @@ class DynamicPresignedUrlRequest(BaseModel):
     )
     metadados: Optional[Dict[str, Any]] = Field(
         default=None, description="Metadados adicionais do arquivo (JSON)"
+    )
+    content_sha256: Optional[str] = Field(
+        default=None,
+        description="SHA-256 hex do arquivo (64 chars) — deduplica na listagem e no pipeline",
     )
 
     class Config:
@@ -294,6 +306,10 @@ class BatchFileItem(BaseModel):
             "Opcional. Omitido: inferido de file_type/extensão (XML→DANFE/danfe; "
             "demais→ADDITIONAL/docs). Envio explícito mantém compatibilidade com integrações antigas."
         ),
+    )
+    content_sha256: Optional[str] = Field(
+        default=None,
+        description="SHA-256 hex do arquivo (64 chars) — deduplica na listagem e no pipeline",
     )
 
 

@@ -33,7 +33,12 @@ async def get_xml_presigned_url(request: XmlPresignedUrlRequest):
     try:
         logger.info("[get_xml_presigned_url] Chamando service.generate_presigned_url...")
         result = service.generate_presigned_url(
-            request.process_id, request.file_name, request.file_type, 'DANFE', request.metadados
+            request.process_id,
+            request.file_name,
+            request.file_type,
+            "DANFE",
+            request.metadados,
+            content_sha256=request.content_sha256,
         )
         logger.info(
             "[get_xml_presigned_url] fase=saida payload_log=%s",
@@ -68,7 +73,12 @@ async def get_docs_presigned_url(request: DocsPresignedUrlRequest):
     try:
         logger.info("[get_docs_presigned_url] Chamando service.generate_presigned_url...")
         result = service.generate_presigned_url(
-            request.process_id, request.file_name, request.file_type, "ADDITIONAL", request.metadados
+            request.process_id,
+            request.file_name,
+            request.file_type,
+            "ADDITIONAL",
+            request.metadados,
+            content_sha256=request.content_sha256,
         )
         logger.info(
             "[get_docs_presigned_url] fase=saida payload_log=%s",
@@ -156,6 +166,7 @@ async def get_presigned_url_by_path_kind(
             doc_type,
             request.metadados,
             upload_route_kind=normalized,
+            content_sha256=request.content_sha256,
         )
         logger.info(
             "[presigned-url/%s] fase=saida payload_log=%s",

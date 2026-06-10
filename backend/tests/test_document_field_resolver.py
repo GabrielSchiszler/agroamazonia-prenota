@@ -7,13 +7,35 @@ import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "lambdas"))
 
-from utils.document_field_resolver import resolve_protheus_document_fields  # noqa: E402
+from utils.document_field_resolver import (  # noqa: E402
+    normalize_documento_numero,
+    resolve_protheus_document_fields,
+)
 
 
 @pytest.fixture(autouse=True)
 def _env(monkeypatch):
     monkeypatch.setenv("TABLE_NAME", "test-table")
     monkeypatch.setenv("AWS_DEFAULT_REGION", "us-east-1")
+
+
+def test_normalize_documento_ten_digits_strips_leading_zero_to_nine_chars():
+    assert normalize_documento_numero("0000001287") == "000001287"
+    assert normalize_documento_numero("000001287") == "000001287"
+    assert normalize_documento_numero("878991") == "878991"
+    assert normalize_documento_numero("1234567890") == "1234567890"
+    assert normalize_documento_numero("00000001287") == "000001287"
+
+
+def test_resolver_normalizes_ten_digit_bedrock_documento():
+    out = resolve_protheus_document_fields(
+        bedrock_extraction={"documento": "0000001287", "cnpjEmitente": "30190475000159"},
+        xml_data={},
+        ocr_data={},
+        request_body_data={},
+        bedrock_first=True,
+    )
+    assert out.numero_documento == "000001287"
 
 
 def test_bedrock_cnpj_wins_over_boleto_ocr_hints():

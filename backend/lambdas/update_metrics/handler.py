@@ -318,6 +318,8 @@ def lambda_handler(event, context):
             previous_metrics_status = metadata_response['Item'].get('METRICS_STATUS')
             previous_metrics_date = metadata_response['Item'].get('METRICS_DATE')
             previous_failed_rules_str = metadata_response['Item'].get('METRICS_FAILED_RULES', '[]')
+            previous_failure_keys_str = metadata_response['Item'].get('METRICS_FAILURE_KEYS', '[]')
+            previous_failure_error_type = metadata_response['Item'].get('METRICS_FAILURE_ERROR_TYPE')
             
             try:
                 previous_failed_rules = json.loads(previous_failed_rules_str) if isinstance(previous_failed_rules_str, str) else previous_failed_rules_str
@@ -520,20 +522,16 @@ def lambda_handler(event, context):
     nf_numero, cnpj_fornecedor, pedido_numero = _extract_failure_identity(
         process_id, meta_item, process_type
     )
-    failure_keys = _build_failure_keys(
-        nf_numero, cnpj_fornecedor, pedido_numero, failed_rules, status
-    )
     print(
         f"Failure identity: nf={nf_numero}, cnpj={cnpj_fornecedor}, "
         f"pedido={pedido_numero}, type={process_type}"
     )
-    print(f"Failure keys: {failure_keys}")
-    
+
     # Data para agregação
     date_key = end_time.strftime('%Y-%m-%d')
     month_key = end_time.strftime('%Y-%m')
     hour = end_time.hour
-    
+
     api_catalog = load_api_regras_catalog()
     protheus_regras = []
     skip_metrics = False
@@ -550,6 +548,12 @@ def lambda_handler(event, context):
             )
             failed_rules = ocr_rules
             operacional_rules = op_rules
+
+    failure_keys = _build_failure_keys(
+        nf_numero, cnpj_fornecedor, pedido_numero, failed_rules, status
+    )
+    print(f"Failure keys: {failure_keys}")
+
     if skip_metrics:
         print(
             f"[METRICS] Processo ignorado nas métricas OCR ({skip_reason}): "

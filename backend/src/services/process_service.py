@@ -13,6 +13,11 @@ from src.utils.presigned_logging import (
     safe_presigned_url_preview,
 )
 from src.utils.failure_dedup import dedup_badge_label, format_failure_key_display
+from src.utils.extraction_dedup import (
+    clear_process_extractions,
+    dedupe_file_items_by_content_hash,
+    normalize_content_sha256,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -188,7 +193,7 @@ class ProcessService:
         })
         
         return {'process_id': process_id, 'process_type': process_type, 'status': 'CREATED'}
-    
+
     def generate_presigned_url(
         self,
         process_id: str,
@@ -197,6 +202,7 @@ class ProcessService:
         doc_type: str = "ADDITIONAL",
         metadados: Dict[str, Any] = None,
         upload_route_kind: Optional[str] = None,
+        content_sha256: Optional[str] = None,
     ) -> Dict[str, Any]:
         import re
 
@@ -281,6 +287,11 @@ class ProcessService:
                 safe_name,
             )
 
+            content_hash = normalize_content_sha256(content_sha256)
+            if not content_hash and isinstance(metadados, dict):
+                content_hash = normalize_content_sha256(
+                    metadados.get("content_sha256") or metadados.get("contentSha256")
+                )
             upload_id = _new_file_upload_id()
             file_sk = f"FILE#{upload_id}"
             folder = "danfe" if doc_type == "DANFE" else "docs"
@@ -340,9 +351,12 @@ class ProcessService:
                 'DOC_TYPE': doc_type,
                 'STATUS': 'PENDING',
                 'FILE_UPLOAD_ID': upload_id,
+                'TIMESTAMP': int(datetime.now().timestamp()),
             }
             if upload_route_kind:
                 file_data['UPLOAD_ROUTE_KIND'] = upload_route_kind
+            if content_hash:
+                file_data['CONTENT_SHA256'] = content_hash
             
             # Adicionar metadados se fornecidos
             if metadados:
@@ -494,6 +508,8 @@ class ProcessService:
                 )
             file_key = f"processes/{process_id}/{folder}/{upload_id}_{safe_name}"
 
+            content_hash = normalize_content_sha256(f.get("content_sha256"))
+
             s3_params = {
                 "Bucket": self.bucket_name,
                 "Key": file_key,
@@ -532,7 +548,10 @@ class ProcessService:
                 "STATUS": "PENDING",
                 "CONTENT_TYPE": f["file_type"],
                 "FILE_UPLOAD_ID": upload_id,
+                "TIMESTAMP": int(datetime.now().timestamp()),
             }
+            if content_hash:
+                file_data["CONTENT_SHA256"] = content_hash
             self.repository.put_item(pk, file_sk, file_data)
             emit_presigned_line(
                 logger,
@@ -704,6 +723,14 @@ class ProcessService:
             )
         
         self.repository.update_item(pk, 'METADATA', {'PROCESS_TYPE': process_type})
+
+        n_cleared = clear_process_extractions(self.repository.table, pk)
+        if n_cleared:
+            logger.info(
+                "Processo %s: %d registro(s) de extração anterior(is) removido(s) antes do SFN",
+                process_id,
+                n_cleared,
+            )
         
         # Não precisa mais passar arquivos para o Step Functions - apenas metadados JSON
         input_data = {
@@ -732,7 +759,9 @@ class ProcessService:
         if not metadata:
             raise ValueError(f"Metadados do processo {process_id} não encontrados")
         
-        files = [item for item in items if item['SK'].startswith('FILE#')]
+        files = dedupe_file_items_by_content_hash(
+            [item for item in items if item['SK'].startswith('FILE#')]
+        )
         danfe_files = [f for f in files if f.get('DOC_TYPE') == 'DANFE']
         # Filtrar apenas arquivos adicionais que têm FILE_KEY (arquivos físicos)
         # Metadados apenas (sem arquivo) não devem aparecer na listagem
@@ -888,6 +917,9 @@ class ProcessService:
                 except Exception as e:
                     logger.error(f"Erro ao parsear metadados: {e}")
                     file_data['metadados'] = {}
+            content_hash = normalize_content_sha256(file_item.get("CONTENT_SHA256"))
+            if content_hash:
+                file_data["content_sha256"] = content_hash
             
             return file_data
         

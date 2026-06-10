@@ -19,6 +19,30 @@ function inferMimeTypeForUpload(file) {
     return 'application/octet-stream';
 }
 
+/** SHA-256 hex do arquivo — usado para deduplicar na UI (mesmo conteúdo, upload repetido). */
+async function sha256HexFromFile(file) {
+    const buf = await file.arrayBuffer();
+    const hash = await crypto.subtle.digest('SHA-256', buf);
+    return Array.from(new Uint8Array(hash))
+        .map((b) => b.toString(16).padStart(2, '0'))
+        .join('');
+}
+
+/** Um arquivo por content_sha256; sem hash mantém todos (legado). */
+function dedupeFilesByContentHash(files) {
+    const seen = new Set();
+    const out = [];
+    for (const f of files || []) {
+        const h = (f.content_sha256 || '').trim().toLowerCase();
+        if (h) {
+            if (seen.has(h)) continue;
+            seen.add(h);
+        }
+        out.push(f);
+    }
+    return out;
+}
+
 let API_URL = normalizeApiUrl(localStorage.getItem('apiUrl') || window.ENV?.API_URL);
 let API_KEY = localStorage.getItem('apiKey') || window.ENV?.API_KEY;
 let selectedProcess = null;
@@ -1627,7 +1651,7 @@ function physicalAdditionalFiles(proc) {
 function allFiscalFilesList(proc) {
     const danfe = proc.files.danfe || [];
     const add = physicalAdditionalFiles(proc);
-    return [...danfe, ...add].sort((a, b) =>
+    return dedupeFilesByContentHash([...danfe, ...add]).sort((a, b) =>
         (a.file_name || '').localeCompare(b.file_name || '', 'pt', { sensitivity: 'base' })
     );
 }
@@ -1889,6 +1913,7 @@ async function uploadFile(file, docType, fileInput, userMetadata = null, batchMo
 
     try {
         const contentType = inferMimeTypeForUpload(file);
+        const contentSha256 = await sha256HexFromFile(file);
 
         let urlResponse, upload_url;
         let putContentType = contentType;
@@ -1906,7 +1931,8 @@ async function uploadFile(file, docType, fileInput, userMetadata = null, batchMo
             const requestBody = {
                 process_id: selectedProcess.process_id,
                 file_name: file.name,
-                file_type: contentType
+                file_type: contentType,
+                content_sha256: contentSha256
             };
             
             // Adicionar metadados se fornecidos pelo usuário
@@ -1948,6 +1974,7 @@ async function uploadFile(file, docType, fileInput, userMetadata = null, batchMo
                     process_id: selectedProcess.process_id,
                     file_name: file.name,
                     file_type: contentType,
+                    content_sha256: contentSha256,
                     metadados: metadados
                 })
             });
