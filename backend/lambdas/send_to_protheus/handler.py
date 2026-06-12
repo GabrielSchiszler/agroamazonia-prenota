@@ -264,20 +264,24 @@ def _valor_unitario_payload(produto_xml, quantidade, valor_total_doc, n_linhas, 
     """
     valorUnitario no Protheus.
 
-    AGROQUÍMICOS / demais tipos (legado): vProd÷qCom, vUnCom, ou vNF÷quantidade.
-    USO E CONSUMO: quando não há preço de linha e há uma única linha, usa o total
-    do documento como valor unitário (qty=1 na nota de serviço/boleto).
+    Prioriza vUnCom do XML (sem arredondar). Em split multi-lote a quantidade do
+    item é qLote, mas o unitário permanece o da linha da nota — não vProd÷qLote.
+    Sem vUnCom: vProd÷qCom; senão vNF÷quantidade (legado).
+    USO E CONSUMO: uma linha sem preço usa total do documento como unitário.
     """
     q = float(quantidade or 0)
     v_doc = float(valor_total_doc or 0)
     px = produto_xml if isinstance(produto_xml, dict) else {}
     v_un = _safe_float(px.get("valor_unitario"))
     v_prod_tot = _safe_float(px.get("valor_total"))
+    q_com = _safe_float(px.get("quantidade"))
 
-    if v_prod_tot > 0 and q > 0:
-        return v_prod_tot / q
     if v_un > 0:
         return v_un
+    if v_prod_tot > 0 and q_com > 0:
+        return v_prod_tot / q_com
+    if v_prod_tot > 0 and q > 0:
+        return v_prod_tot / q
     if uso_consumo and v_doc > 0 and n_linhas == 1:
         return v_doc
     if v_doc > 0 and q > 0:
